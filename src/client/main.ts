@@ -29,40 +29,59 @@ async function main(): Promise<void> {
   const canvas = renderer.app.canvas;
   const isTouch = 'ontouchstart' in window;
   let buildMode: string | null = null;
-  let uiBase = (): string => `infcanvas · ${isTouch ? '拖动平移 · 点选/长按移动' : '右键移动 · 左键选中'} · ${isTouch ? '双指缩放' : '滚轮缩放'} · B 建造`;
+  let uiBase = (): string => `infcanvas · ${isTouch ? '双指拖动 · 点选/长按移动' : '右键移动 · 左键选中'} · ${isTouch ? '双指缩放' : '滚轮缩放'} · B 建造`;
 
   // 手势状态
-  const pointers = new Map<number, { x: number; y: number }>();
-  let gestureMoved = false; // 本次手势是否已拖动过
-  let longPressTimer: ReturnType<typeof setTimeout> | null = null;
+  type Pt = { x: number; y: number };
+  const pointers = new Map<number, Pt>();
+  let touchActive = false; // 是否有触摸指针
+  let twoMoved = false; // 是否已进入双指/发生位移
+  let midPanch: Pt | null = null; // 双指手势起始中点
   let pinchDist = 0;
-  let panStartDist = 0;
+  let longPressTimer: ReturnType<typeof setTimeout> | null = null;
 
-  const screenPos = (e: { clientX: number; clientY: number }) => ({ x: e.clientX, y: e.clientY });
+  const screenPos = (e: { clientX: number; clientY: number }): Pt => ({ x: e.clientX, y: e.clientY });
 
-  const dist = (a: { x: number; y: number }, b: { x: number; y: number }) => Math.hypot(a.x - b.x, a.y - b.y);
+  const dist = (a: Pt, b: Pt) => Math.hypot(a.x - b.x, a.y - b.y);
+
+  const midpoint = (pts: Pt[]): Pt => {
+    const total = pts.reduce((acc, p) => ({ x: acc.x + p.x, y: acc.y + p.y }), { x: 0, y: 0 });
+    return { x: total.x / pts.length, y: total.y / pts.length };
+  };
 
   const clearLongPress = () => {
     if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
   };
 
-  function handleLongPress(start: { x: number; y: number }, pointerId: number) {
+  function startLongPress(start: Pt, pointerId: number) {
+    clearLongPress();
     longPressTimer = setTimeout(() => {
-      if (!gestureMoved && pointers.has(pointerId)) {
+      // 单指停在原地超过 400ms → 移动命令
+      if (pointers.size === 1 && !twoMoved && pointers.has(pointerId)) {
         const world = renderer.screenToWorld(start.x, start.y);
+        clearLongPress();
         sim.issueCommand({ type: 'move', x: world.x, y: world.y });
         ui.textContent = uiBase() + ' · 已下达移动命令';
+        pointers.delete(pointerId);
       }
     }, 400);
   }
 
   canvas.addEventListener('pointerdown', (e) => {
-    pointers.set(e.pointerId, screenPos(e));
-    gestureMoved = false;
+    const pos = screenPos(e);
+    pointers.set(e.pointerId, pos);
+    touchActive = touchActive || e.pointerType !== 'mouse';
 
-    if (pointers.size === 1 && e.pointerType !== 'mouse') {
-      // 触摸单指：起长按定时器（>400ms 触发移动命令）
-      handleLongPress(screenPos(e), e.pointerId);
+    if (pointers.size >= 2) {
+      // 第二指落下 → 进入双指手势
+      twoMoved = true;
+      clearLongPress();
+      const pts = [...pointers.values()];
+      midPanch = midpoint(pts);
+      pinchDist = dist(pts[0], pts[1]);
+    } else if (pointers.size === 1 && e.pointerType !== 'mouse') {
+      // 触摸单指：起长按（移动命令）
+      startLongPress(pos, e.pointerId);
     }
   });
 
@@ -70,36 +89,40 @@ async function main(): Promise<void> {
     const prev = pointers.get(e.pointerId);
     if (!prev) return;
     const cur = screenPos(e);
-
-    // 双指缩放
-    if (pointers.size === 2) {
-      const [p1, p2] = [...pointers.values()];
-      const d = dist(p1, p2);
-      if (panStartDist) {
-        renderer.zoomBy(d / panStartDist);
-      }
-      panStartDist = d;
-      pointers.set(e.pointerId, cur);
-      clearLongPress();
-      return;
-    }
-
-    // 单指/鼠标拖动平移
-    const moved = dist(prev, cur);
-    if (moved > 4) {
-      gestureMoved = true;
-      clearLongPress();
-      renderer.setCamera(cur.x - prev.x, cur.y - prev.y);
-    }
     pointers.set(e.pointerId, cur);
+
+    if (!touchActive) return; // 触摸手势只在触摸时处理
+
+    if (pointers.size === 2) {
+      // 双指：平移（中点位移）+ 缩放（距离比）
+      const pts = [...pointers.values()];
+      const mid = midpoint(pts);
+      const d = dist(pts[0], pts[1]);
+      if (midPanch) {
+        renderer.setCamera(mid.x - midPanch.x, mid.y - midPanch.y);
+      }
+      if (pinchDist > 0 && d > 0) {
+        renderer.zoomBy(d / pinchDist);
+      }
+      midPanch = mid;
+      pinchDist = d;
+    }
   });
 
   canvas.addEventListener('pointerup', (e) => {
     clearLongPress();
+    const wasTwoFinger = pointers.size >= 2;
     pointers.delete(e.pointerId);
 
-    // 触摸点按（未拖动）→ 选中/建造
-    if (!gestureMoved && e.pointerType !== 'mouse' && pointers.size === 0) {
+    if (wasTwoFinger) {
+      // 双指抬起一只 → 退出双指，重置
+      const remain = [...pointers.values()];
+      if (remain.length === 1) twoMoved = false;
+      return;
+    }
+
+    // 单指抬起：若未发生双指/未长按 → 视为点选/建造
+    if (!twoMoved && e.pointerType !== 'mouse' && pointers.size === 0) {
       handleTap(screenPos(e));
     }
   });
@@ -107,14 +130,15 @@ async function main(): Promise<void> {
   canvas.addEventListener('pointercancel', (e) => {
     clearLongPress();
     pointers.delete(e.pointerId);
+    if (pointers.size < 2) twoMoved = false;
   });
 
-  function handleTap(pos: { x: number; y: number }) {
+  function handleTap(pos: Pt) {
     const world = renderer.screenToWorld(pos.x, pos.y);
     if (buildMode) {
       sim.issueCommand({ type: 'build', x: world.x, y: world.y, buildingId: buildMode });
     }
-    // 选中交给 renderer 的 pawn pointerdown（若点到 pawn）
+    // 选中交给 pixi router 的 pawn pointerdown（若点到 pawn）
   }
 
   // 鼠标：右键移动 / 中键或右键拖动 / 滚轮缩放
