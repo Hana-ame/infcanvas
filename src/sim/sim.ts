@@ -40,6 +40,10 @@ export interface PawnState {
   urgent?: 'eat' | 'rest';
   mining?: { x: number; y: number; progress: number };
   mineTarget?: { x: number; y: number };
+  chopTarget?: { x: number; y: number }; // 砍树目标
+  chopXY?: { x: number; y: number };
+  chopProgress?: number;
+  job?: string; // 当前做的事（树/矿/建造/闲逛）
 }
 
 export interface SimOptions {
@@ -68,8 +72,8 @@ export class Sim {
   selected: number[] = [];
   private pawnList: number[] = [];
 
-  private buildQueue: { x: number; y: number; defId: string; progress: number; faction: string }[] = [];
-  stockpile: Record<string, number> = { wood: 0, ore: 0, food: 0 };
+  private buildQueue: { x: number; y: number; defId: string; progress: number; faction: string; cost?: { wood: number; ore: number } }[] = [];
+  stockpile: Record<string, number> = { wood: 50, ore: 0, food: 30 };
 
   constructor(opts: SimOptions = {}) {
     const seed = opts.seed ?? 12345;
@@ -109,6 +113,29 @@ export class Sim {
     return this.pawnList;
   }
 
+  // UI 读取建造队列
+  get buildCount(): number {
+    return this.buildQueue.length;
+  }
+
+  // UI 读取工作/状态
+  pawnJob(eid: number): string {
+    return this.pawnStates.get(eid)?.job ?? '';
+  }
+
+  // UI 读取需求
+  needsOf(eid: number): { food: number; rest: number; mood: number } | null {
+    return readNeeds(this.ecs, eid);
+  }
+
+  // UI 同步选中
+  get selectedIds(): number[] {
+    return this.selected;
+  }
+  set selectedIds(list: number[]) {
+    this.selected = list;
+  }
+
   private seedFor(eid: number): number {
     return (this.rng.int(1, 2 ** 31 - 1) ^ eid) >>> 0;
   }
@@ -137,6 +164,9 @@ export class Sim {
       st.pathIndex = 0;
       st.mineTarget = undefined;
       st.mining = undefined;
+      st.chopTarget = undefined;
+      st.chopXY = undefined;
+      st.chopProgress = undefined;
     }
   }
 
@@ -144,7 +174,10 @@ export class Sim {
     if (!this.world.canBuildAt(x, y)) return;
     const def = BUILDINGS[defId];
     if (!def) return;
-    this.buildQueue.push({ x, y, defId, progress: 0, faction: 'player' });
+    // 建造消耗木材+矿石（简单固定成本）
+    const cost = { wood: def.size.x * def.size.y * 2, ore: 0 };
+    if (this.stockpile.wood < cost.wood) return; // 木头不足，不给建
+    this.buildQueue.push({ x, y, defId, progress: 0, faction: 'player', cost });
   }
 
   private mineAt(eid: number, x: number, y: number): void {
@@ -248,8 +281,95 @@ export class Sim {
   }
 
   private doAction(eid: number, st: PawnState, pos: PositionData, dt: number): void {
-    // P0 简化：玩家命令驱动。空闲时原地不动，等右键指令。
-    void eid; void st; void pos; void dt;
+    void dt;
+    // 自主 AI：空闲时自动找活干
+    this.assignAutoWork(eid, st, pos);
+  }
+
+  // 自主找活干：优先级 = 建造 > 砍树 > 采矿 > 闲逛
+  private assignAutoWork(eid: number, st: PawnState, pos: PositionData): void {
+    // 已在干活（砍/采/建中）则不要打断
+    if (st.chopXY || st.mining) return;
+    const w = this.world;
+
+    // 1. 建造（有蓝图且附近有空闲耗时）
+    if (this.buildQueue.length > 0) {
+      const b = this.buildQueue[0];
+      const def = BUILDINGS[b.defId];
+      st.job = `建造:${def.name}`;
+      this.moveTo(eid, b.x, b.y);
+      return;
+    }
+
+    // 2. 砍树：找最近的树
+    const tree = this.findNearest(pos, (x, y) => w.getTile(x, y) === 'tree', true);
+    if (tree) {
+      st.job = '伐木';
+      st.chopTarget = tree;
+      this.moveAdjacent(eid, tree.x, tree.y);
+      return;
+    }
+
+    // 3. 采矿：找最近的矿
+    const ore = this.findNearest(pos, (x, y) => w.getTile(x, y) === 'ore', true);
+    if (ore) {
+      st.job = '采矿';
+      st.mineTarget = ore;
+      this.moveAdjacent(eid, ore.x, ore.y);
+      return;
+    }
+
+    // 4. 闲逛
+    st.job = '闲逛';
+  }
+
+  // 在半径内找最近的（allowNonPassable=true 时目标格本身可不可走无所谓）
+  private findNearest(pos: PositionData, cond: (x: number, y: number) => boolean, allowNonPassable = false): { x: number; y: number } | null {
+    const R = 15;
+    let best: { x: number; y: number } | null = null;
+    let bestDist = Infinity;
+    for (let r = 1; r <= R; r++) {
+      for (let dy = -r; dy <= r; dy++) {
+        for (let dx = -r; dx <= r; dx++) {
+          if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue;
+          const x = Math.round(pos.x) + dx;
+          const y = Math.round(pos.y) + dy;
+          if (!this.world.inBounds(x, y)) continue;
+          if (!allowNonPassable && !this.world.isPassable(x, y)) continue;
+          if (cond(x, y)) {
+            const d = dx * dx + dy * dy;
+            if (d < bestDist) { bestDist = d; best = { x, y }; }
+          }
+        }
+      }
+    }
+    return best;
+  }
+
+  // 移动到目标旁的一个可走格
+  private moveAdjacent(eid: number, tx: number, ty: number): void {
+    const pos = readPosition(this.ecs, eid);
+    if (!pos) return;
+    // 找 target 邻域可走格
+    let target: { x: number; y: number } | null = null;
+    let bestD = Infinity;
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (dx === 0 && dy === 0) continue;
+        const nx = tx + dx, ny = ty + dy;
+        if (!this.world.inBounds(nx, ny)) continue;
+        if (!this.world.isPassable(nx, ny)) continue;
+        const d = (nx - tx) * (nx - tx) + (ny - ty) * (ny - ty);
+        if (d < bestD) { bestD = d; target = { x: nx, y: ny }; }
+      }
+    }
+    if (!target) return;
+    const path = findPath(this.world, Math.round(pos.x), Math.round(pos.y), target.x, target.y);
+    const st = this.pawnStates.get(eid);
+    if (st) {
+      st.path = path;
+      st.pathIndex = 0;
+    }
   }
 
   private onArrive(eid: number, st: PawnState): void {
@@ -257,6 +377,12 @@ export class Sim {
       const { x, y } = st.mineTarget;
       st.mineTarget = undefined;
       st.mining = { x, y, progress: 0 };
+    } else if (st.chopTarget) {
+      // 到达树旁，开始砍树
+      const { x, y } = st.chopTarget;
+      st.chopTarget = undefined;
+      st.chopProgress = 0;
+      st.chopXY = { x, y };
     }
   }
 
@@ -266,6 +392,10 @@ export class Sim {
       b.progress += dt;
       const def = BUILDINGS[b.defId];
       if (b.progress >= def.buildTime) {
+        // 扣除成本（在完成时扣，简化）
+        if (b.cost) {
+          this.stockpile.wood -= b.cost.wood;
+        }
         this.world.placeBuilding(b.x, b.y, b.defId, b.faction);
         this.buildQueue.splice(i, 1);
       }
@@ -275,13 +405,26 @@ export class Sim {
   private updateMining(dt: number): void {
     for (const eid of this.pawnList) {
       const st = this.pawnStates.get(eid);
-      if (!st?.mining) continue;
-      st.mining.progress += dt;
-      if (st.mining.progress >= 3) {
-        const { x, y } = st.mining;
-        this.world.setTile(x, y, 'dirt');
-        this.stockpile.ore++;
-        st.mining = undefined;
+      // 采矿
+      if (st?.mining) {
+        st.mining.progress += dt;
+        if (st.mining.progress >= 3) {
+          const { x, y } = st.mining;
+          this.world.setTile(x, y, 'dirt');
+          this.stockpile.ore++;
+          st.mining = undefined;
+        }
+      }
+      // 砍树
+      if (st?.chopXY) {
+        st.chopProgress = (st.chopProgress ?? 0) + dt;
+        if (st.chopProgress >= 2.5) {
+          const { x, y } = st.chopXY;
+          this.world.setTile(x, y, 'grass');
+          this.stockpile.wood += 3;
+          st.chopXY = undefined;
+          st.chopProgress = undefined;
+        }
       }
     }
   }

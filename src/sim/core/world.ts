@@ -63,11 +63,12 @@ export class World {
         const wy = baseY + y;
         const r = rng.next();
         let tile: string;
-        if (r < 0.55) tile = 'grass';
+        if (r < 0.45) tile = 'grass';
+        else if (r < 0.65) tile = 'tree';
         else if (r < 0.75) tile = 'dirt';
-        else if (r < 0.85) tile = 'stone';
-        else if (r < 0.92) tile = 'ore';
-        else if (r < 0.96) tile = 'water';
+        else if (r < 0.83) tile = 'stone';
+        else if (r < 0.9) tile = 'ore';
+        else if (r < 0.95) tile = 'water';
         else tile = 'mountain';
         this.setTile(wx, wy, tile);
       }

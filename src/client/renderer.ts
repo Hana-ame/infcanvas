@@ -1,29 +1,35 @@
-// Pixi 渲染器 —— P0：地形 + 建筑 + 小人 + 相机
+// Pixi 渲染器 —— Emoji 图标: 地形/建筑/小人 + 相机
 import { Application, Container, Graphics, Text, TextStyle } from 'pixi.js';
 import { Sim } from '../sim/sim';
-import { TILES, BUILDINGS } from '../sim/defs';
+import { TILES, BUILDINGS, ITEM_EMOJI } from '../sim/defs';
 
-const TILE = 32; // 每格像素
+const TILE = 32;
+
+const terrainStyle = (s: number): TextStyle => new TextStyle({
+  fontSize: s,
+  fontFamily: 'system-ui, "Segoe UI Emoji", "Noto Color Emoji", sans-serif',
+});
 
 export class Renderer {
   app: Application;
   worldContainer: Container;
   sim: Sim;
-  private tileLayer: Graphics;
-  private buildingLayer: Graphics;
+  private terrainLayer: Container; // emoji 图标（树/矿/水）
+  private buildingLayer: Container;
   private pawnLayer: Container;
-  private pawnSprites = new Map<number, Graphics>();
+  private pawnTexts = new Map<number, Text>();
   private camera = { x: 0, y: 0, zoom: 1 };
   private selected = new Set<number>();
+  private tilesDrawn = false;
 
   constructor(sim: Sim) {
     this.sim = sim;
     this.app = new Application();
     this.worldContainer = new Container();
-    this.tileLayer = new Graphics();
-    this.buildingLayer = new Graphics();
+    this.terrainLayer = new Container();
+    this.buildingLayer = new Container();
     this.pawnLayer = new Container();
-    this.worldContainer.addChild(this.tileLayer);
+    this.worldContainer.addChild(this.terrainLayer);
     this.worldContainer.addChild(this.buildingLayer);
     this.worldContainer.addChild(this.pawnLayer);
   }
@@ -32,81 +38,104 @@ export class Renderer {
     await this.app.init({
       resizeTo: window,
       background: '#1a1a2e',
-      antialias: false,
+      antialias: true,
       resolution: Math.min(window.devicePixelRatio || 1, 2),
       autoDensity: true,
     });
     container.appendChild(this.app.canvas);
     this.app.stage.addChild(this.worldContainer);
 
-    // 相机初始位置：出生点中心
     const cx = this.sim.world.width / 2;
     const cy = this.sim.world.height / 2;
     this.camera.x = cx;
     this.camera.y = cy;
 
-    this.app.ticker.add(() => {
-      this.render();
-    });
+    this.app.ticker.add(() => this.render());
+    this.drawTileGround();
+    this.drawTerrainIcons();
+    this.drawBuildings();
   }
 
-  // 渲染一帧：只重绘可见范围（性能简化：P0 全量地形一次绘制，小人在相机变换中移动）
-  private render(): void {
-    const cam = this.camera;
-    // 世界容器变换
-    this.worldContainer.position.set(this.app.screen.width / 2, this.app.screen.height / 2);
-    this.worldContainer.scale.set(cam.zoom);
-    this.worldContainer.pivot.set(cam.x * TILE, cam.y * TILE);
-
-    this.renderPawns();
-  }
-
-  // 地形一次绘制（P0：世界小，全量画；后期改可见 chunk 增量）
-  drawTiles(): void {
+  // 地表色块（一次绘制，固定）
+  private drawTileGround(): void {
+    const g = new Graphics();
     const w = this.sim.world;
-    this.tileLayer.clear();
     for (let y = 0; y < w.height; y++) {
       for (let x = 0; x < w.width; x++) {
-        const tile = w.getTile(x, y);
-        const def = TILES[tile];
-        this.tileLayer.rect(x * TILE, y * TILE, TILE, TILE);
-        this.tileLayer.fill(def.color);
+        const def = TILES[w.getTile(x, y)];
+        g.rect(x * TILE, y * TILE, TILE, TILE);
+        g.fill(def.color);
+      }
+    }
+    this.terrainLayer.addChildAt(g, 0);
+  }
+
+  // 地形图标（树/矿/水）—— 用 Text emoji
+  private drawTerrainIcons(): void {
+    const w = this.sim.world;
+    for (let y = 0; y < w.height; y++) {
+      for (let x = 0; x < w.width; x++) {
+        const def = TILES[w.getTile(x, y)];
+        if (!def.emoji) continue;
+        const t = new Text({ text: def.emoji, style: terrainStyle(18) });
+        t.resolution = this.app.renderer.resolution;
+        t.anchor.set(0.5);
+        t.position.set(x * TILE + TILE / 2, y * TILE + TILE / 2);
+        this.terrainLayer.addChild(t);
       }
     }
   }
 
   drawBuildings(): void {
+    this.buildingLayer.removeChildren();
     const w = this.sim.world;
-    this.buildingLayer.clear();
     for (const [key, b] of w.buildings) {
       const x = key % w.width;
       const y = Math.floor(key / w.width);
-      this.buildingLayer.rect(x * TILE + 1, y * TILE + 1, TILE - 2, TILE - 2);
-      this.buildingLayer.fill(b.def.color);
+      // 底色
+      const bg = new Graphics();
+      bg.rect(x * TILE, y * TILE, TILE, TILE);
+      bg.fill(b.def.color);
+      this.buildingLayer.addChild(bg);
+      // emoji
+      if (b.def.emoji) {
+        const t = new Text({ text: b.def.emoji, style: terrainStyle(22) });
+        t.resolution = this.app.renderer.resolution;
+        t.anchor.set(0.5);
+        t.position.set(x * TILE + TILE / 2, y * TILE + TILE / 2);
+        this.buildingLayer.addChild(t);
+      }
     }
   }
 
+  private render(): void {
+    const cam = this.camera;
+    this.worldContainer.position.set(this.app.screen.width / 2, this.app.screen.height / 2);
+    this.worldContainer.scale.set(cam.zoom);
+    this.worldContainer.pivot.set(cam.x * TILE, cam.y * TILE);
+    this.renderPawns();
+  }
+
   private renderPawns(): void {
-    // 简化：P0 每个 pawn 一个 Graphics，位置跟随 sim
     for (const eid of this.sim.pawns) {
-      let g = this.pawnSprites.get(eid);
-      if (!g) {
-        g = new Graphics();
-        g.circle(0, 0, TILE * 0.35);
-        g.fill(0xffffff);
-        this.pawnLayer.addChild(g);
-        this.pawnSprites.set(eid, g);
-        g.eventMode = 'static';
-        g.on('pointerdown', (e) => {
+      let t = this.pawnTexts.get(eid);
+      if (!t) {
+        t = new Text({ text: '🧑', style: terrainStyle(24) });
+        t.resolution = this.app.renderer.resolution;
+        t.anchor.set(0.5);
+        this.pawnLayer.addChild(t);
+        this.pawnTexts.set(eid, t);
+        t.eventMode = 'static';
+        t.on('pointerdown', (e) => {
           e.stopPropagation();
           this.selectPawn(eid);
         });
       }
       const pos = this.sim.pawnPositions.get(eid);
       if (pos) {
-        g.position.set(pos.x * TILE, pos.y * TILE);
-        // 选中高亮
-        g.tint = this.selected.has(eid) ? 0xffd700 : 0xffffff;
+        t.position.set(pos.x * TILE, pos.y * TILE);
+        t.alpha = this.selected.has(eid) ? 1 : 0.9;
+        t.scale.set(this.selected.has(eid) ? 1.15 : 1);
       }
     }
   }
@@ -123,10 +152,9 @@ export class Renderer {
   }
 
   zoomBy(factor: number): void {
-    this.camera.zoom = Math.max(0.2, Math.min(4, this.camera.zoom * factor));
+    this.camera.zoom = Math.max(0.3, Math.min(4, this.camera.zoom * factor));
   }
 
-  // 屏幕坐标 -> 世界 tile 坐标
   screenToWorld(sx: number, sy: number): { x: number; y: number } {
     const cam = this.camera;
     const wx = cam.x + (sx - this.app.screen.width / 2) / (TILE * cam.zoom);

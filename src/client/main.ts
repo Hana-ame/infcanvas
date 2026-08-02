@@ -1,87 +1,138 @@
-// infcanvas 入口 —— P0 单机可玩版
+// infcanvas 入口 —— P0 单机可玩版 + HUD 菜单
 import { Sim } from '../sim/sim';
 import { Renderer } from './renderer';
 import { BUILDINGS } from '../sim/defs';
 
-// DOM UI 容器
-function createUI(): HTMLElement {
-  const el = document.createElement('div');
-  el.style.cssText = 'position:fixed;top:0;left:0;right:0;padding:8px 12px;background:rgba(0,0,0,.5);color:#eee;font:12px/1.4 system-ui;z-index:10;pointer-events:none;display:flex;gap:16px;align-items:center;';
-  document.body.appendChild(el);
-  return el;
+const nf = (v: number | undefined): string => (v === undefined ? '-' : Math.round(v).toString());
+
+function createHud(sim: Sim, onSelectBuild: (id: string | null) => void): { update: (bm: string | null) => void; hint: HTMLElement } {
+  const root = document.createElement('div');
+  root.style.cssText = 'position:fixed;inset:0;z-index:10;pointer-events:none;font:13px system-ui;color:#eee;';
+
+  // 顶部资源条
+  const stock = document.createElement('div');
+  stock.style.cssText = 'position:absolute;top:0;left:0;right:0;padding:8px 14px;background:rgba(0,0,0,.6);display:flex;gap:18px;align-items:center;font-weight:600;';
+  root.appendChild(stock);
+
+  // 底部建造菜单
+  const buildMenu = document.createElement('div');
+  buildMenu.style.cssText = 'position:absolute;bottom:12px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.72);border:1px solid #444;border-radius:10px;padding:8px;display:flex;gap:6px;pointer-events:auto;flex-wrap:wrap;justify-content:center;max-width:96%;';
+  root.appendChild(buildMenu);
+
+  // 选中面板
+  const selPanel = document.createElement('div');
+  selPanel.style.cssText = 'position:absolute;top:54px;left:12px;background:rgba(0,0,0,.55);border-radius:8px;padding:8px 12px;min-width:170px;display:none;line-height:1.6;';
+  root.appendChild(selPanel);
+
+  // 提示条
+  const hint = document.createElement('div');
+  hint.style.cssText = 'position:absolute;top:54px;right:12px;background:rgba(0,0,0,.5);border-radius:6px;padding:6px 10px;font-size:12px;text-align:right;';
+  root.appendChild(hint);
+
+  const update = (bm: string | null): void => {
+    // 资源条
+    const s = sim.stockpile;
+    const parts = [
+      `⏱️ ${Math.floor(sim.time / 60)}分`,
+      `🌲木头 ${s.wood}`, `🪨矿 ${s.ore}`, `🍖食物 ${s.food}`,
+      `👥 ${sim.pawns.length}人`,
+    ];
+    stock.textContent = parts.join('  ·  ');
+
+    // 选中
+    const sel = sim.selectedIds;
+    if (sel.length > 0) {
+      const eid = sel[0];
+      const nd = sim.needsOf(eid);
+      selPanel.style.display = 'block';
+      selPanel.innerHTML = `<b>🧑 小人 ${eid}</b><br>工作：${sim.pawnJob(eid) || '闲逛'}${nd ? `<br>饥饿 ${nf(nd.food)} / 精力 ${nf(nd.rest)} / 心情 ${nf(nd.mood)}` : ''}`;
+    } else {
+      selPanel.style.display = 'none';
+    }
+
+    // 提示
+    hint.textContent = bm ? `建造【${BUILDINGS[bm]?.name ?? bm}】——在地图点击放置` : '点击建造菜单选择，点地图放置';
+  };
+
+  // 建造菜单按钮
+  function mkBtn(emoji: string | undefined, label: string, id: string | null): HTMLElement {
+    const b = document.createElement('button');
+    b.textContent = `${emoji ?? '▪'} ${label}`;
+    b.style.cssText = 'border:1px solid #555;background:#333;color:#eee;border-radius:6px;padding:5px 9px;cursor:pointer;font:12px system-ui;';
+    b.addEventListener('click', () => onSelectBuild(id));
+    return b;
+  }
+  buildMenu.appendChild(mkBtn('🚫', '取消', null));
+  for (const id of Object.keys(BUILDINGS)) {
+    const d = BUILDINGS[id];
+    buildMenu.appendChild(mkBtn(d.emoji, d.name, id));
+  }
+
+  document.body.appendChild(root);
+  return { update, hint };
 }
 
 async function main(): Promise<void> {
   const container = document.getElementById('app')!;
+  const isTouch = 'ontouchstart' in window;
 
   const sim = new Sim({ seed: 20260803, pawnCount: 4 });
   const renderer = new Renderer(sim);
   await renderer.init(container);
 
-  // 地形/建筑一次性绘制
-  renderer.drawTiles();
-  renderer.drawBuildings();
-
-  const ui = createUI();
-  ui.textContent = `infcanvas · 4 个小人 · 右键移动 · 左键选中小人 · 滚轮缩放`;
-
-  // ---- 输入（Pointer Events 统一处理鼠标/触摸） ----
-  const canvas = renderer.app.canvas;
-  const isTouch = 'ontouchstart' in window;
   let buildMode: string | null = null;
-  let uiBase = (): string => `infcanvas · ${isTouch ? '双指拖动 · 点选/长按移动' : '右键移动 · 左键选中'} · ${isTouch ? '双指缩放' : '滚轮缩放'} · B 建造`;
+  const hud = createHud(sim, (id) => {
+    buildMode = id;
+    hud.update(buildMode);
+  });
 
-  // 手势状态
+  // ---- 输入（Pointer Events，鼠标/触摸统一） ----
+  const canvas = renderer.app.canvas;
+  const uiBase = `infcanvas · ${isTouch ? '双指拖动/缩放 · 点选/长按移动' : '右键移动 · 左键选中'} · 建造菜单在下方`;
+
   type Pt = { x: number; y: number };
   const pointers = new Map<number, Pt>();
-  let touchActive = false; // 是否有触摸指针
-  let twoMoved = false; // 是否已进入双指/发生位移
-  let midPanch: Pt | null = null; // 双指手势起始中点
+  let touchActive = false;
+  let twoMoved = false;
+  let midLast: Pt | null = null;
   let pinchDist = 0;
   let longPressTimer: ReturnType<typeof setTimeout> | null = null;
 
   const screenPos = (e: { clientX: number; clientY: number }): Pt => ({ x: e.clientX, y: e.clientY });
-
   const dist = (a: Pt, b: Pt) => Math.hypot(a.x - b.x, a.y - b.y);
-
-  const midpoint = (pts: Pt[]): Pt => {
-    const total = pts.reduce((acc, p) => ({ x: acc.x + p.x, y: acc.y + p.y }), { x: 0, y: 0 });
-    return { x: total.x / pts.length, y: total.y / pts.length };
+  const midPnt = (pts: Pt[]): Pt => {
+    const t = pts.reduce((a, p) => ({ x: a.x + p.x, y: a.y + p.y }), { x: 0, y: 0 });
+    return { x: t.x / pts.length, y: t.y / pts.length };
   };
+  const clearLP = () => { if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; } };
 
-  const clearLongPress = () => {
-    if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
+  const placeLong = (pos: Pt) => {
+    const world = renderer.screenToWorld(pos.x, pos.y);
+    if (buildMode) {
+      sim.issueCommand({ type: 'build', x: world.x, y: world.y, buildingId: buildMode });
+    } else if (sim.selectedIds.length > 0) {
+      sim.issueCommand({ type: 'move', x: world.x, y: world.y });
+    }
   };
-
-  function startLongPress(start: Pt, pointerId: number) {
-    clearLongPress();
-    longPressTimer = setTimeout(() => {
-      // 单指停在原地超过 400ms → 移动命令
-      if (pointers.size === 1 && !twoMoved && pointers.has(pointerId)) {
-        const world = renderer.screenToWorld(start.x, start.y);
-        clearLongPress();
-        sim.issueCommand({ type: 'move', x: world.x, y: world.y });
-        ui.textContent = uiBase() + ' · 已下达移动命令';
-        pointers.delete(pointerId);
-      }
-    }, 400);
-  }
 
   canvas.addEventListener('pointerdown', (e) => {
-    const pos = screenPos(e);
-    pointers.set(e.pointerId, pos);
+    pointers.set(e.pointerId, screenPos(e));
     touchActive = touchActive || e.pointerType !== 'mouse';
-
     if (pointers.size >= 2) {
-      // 第二指落下 → 进入双指手势
       twoMoved = true;
-      clearLongPress();
+      clearLP();
       const pts = [...pointers.values()];
-      midPanch = midpoint(pts);
+      midLast = midPnt(pts);
       pinchDist = dist(pts[0], pts[1]);
     } else if (pointers.size === 1 && e.pointerType !== 'mouse') {
-      // 触摸单指：起长按（移动命令）
-      startLongPress(pos, e.pointerId);
+      // 触摸单指：长按 = 移动
+      const start = screenPos(e);
+      longPressTimer = setTimeout(() => {
+        if (pointers.size === 1) {
+          placeLong(start);
+          pointers.delete(e.pointerId);
+        }
+      }, 400);
     }
   });
 
@@ -90,101 +141,48 @@ async function main(): Promise<void> {
     if (!prev) return;
     const cur = screenPos(e);
     pointers.set(e.pointerId, cur);
-
-    if (!touchActive) return; // 触摸手势只在触摸时处理
-
+    if (!touchActive) return;
     if (pointers.size === 2) {
-      // 双指：平移（中点位移）+ 缩放（距离比）
       const pts = [...pointers.values()];
-      const mid = midpoint(pts);
+      const mid = midPnt(pts);
       const d = dist(pts[0], pts[1]);
-      if (midPanch) {
-        renderer.setCamera(mid.x - midPanch.x, mid.y - midPanch.y);
-      }
-      if (pinchDist > 0 && d > 0) {
-        renderer.zoomBy(d / pinchDist);
-      }
-      midPanch = mid;
+      if (midLast) renderer.setCamera(mid.x - midLast.x, mid.y - midLast.y);
+      if (pinchDist > 0 && d > 0) renderer.zoomBy(d / pinchDist);
+      midLast = mid;
       pinchDist = d;
     }
   });
 
   canvas.addEventListener('pointerup', (e) => {
-    clearLongPress();
-    const wasTwoFinger = pointers.size >= 2;
+    clearLP();
+    const wasTwo = pointers.size >= 2;
     pointers.delete(e.pointerId);
-
-    if (wasTwoFinger) {
-      // 双指抬起一只 → 退出双指，重置
-      const remain = [...pointers.values()];
-      if (remain.length === 1) twoMoved = false;
-      return;
-    }
-
-    // 单指抬起：若未发生双指/未长按 → 视为点选/建造
+    if (wasTwo) return;
     if (!twoMoved && e.pointerType !== 'mouse' && pointers.size === 0) {
-      handleTap(screenPos(e));
+      placeLong(screenPos(e));
     }
   });
 
   canvas.addEventListener('pointercancel', (e) => {
-    clearLongPress();
+    clearLP();
     pointers.delete(e.pointerId);
     if (pointers.size < 2) twoMoved = false;
   });
 
-  function handleTap(pos: Pt) {
-    const world = renderer.screenToWorld(pos.x, pos.y);
-    if (buildMode) {
-      sim.issueCommand({ type: 'build', x: world.x, y: world.y, buildingId: buildMode });
-    }
-    // 选中交给 pixi router 的 pawn pointerdown（若点到 pawn）
-  }
-
-  // 鼠标：右键移动 / 中键或右键拖动 / 滚轮缩放
+  // 鼠标右键：移动（或放置）
   canvas.addEventListener('contextmenu', (e) => {
     e.preventDefault();
-    const world = renderer.screenToWorld(e.clientX, e.clientY);
-    if (buildMode) {
-      sim.issueCommand({ type: 'build', x: world.x, y: world.y, buildingId: buildMode });
-    } else {
-      sim.issueCommand({ type: 'move', x: world.x, y: world.y });
-    }
+    placeLong(screenPos(e));
   });
 
-  canvas.addEventListener('mousedown', (e) => {
-    if (e.button === 1) {
-      // 中键拖动
-      pointers.set(2, screenPos(e));
-    }
-  });
-  canvas.addEventListener('mousemove', (e) => {
-    const prev = pointers.get(2);
-    if (prev && e.buttons & 4) {
-      const cur = screenPos(e);
-      renderer.setCamera(cur.x - prev.x, cur.y - prev.y);
-      pointers.set(2, cur);
-    }
-  });
-  canvas.addEventListener('mouseup', (e) => {
-    if (e.button === 1) pointers.delete(2);
-  });
-
-  canvas.addEventListener('mouseup', (e) => {
-    if (e.button === 1) pointers.delete(2);
-  });
-
+  // 鼠标中键拖动 / 滚轮缩放
+  let midDrag = false;
+  canvas.addEventListener('mousedown', (e) => { if (e.button === 1) midDrag = true; });
+  canvas.addEventListener('mousemove', (e) => { if (midDrag) renderer.setCamera(e.movementX, e.movementY); });
+  canvas.addEventListener('mouseup', (e) => { if (e.button === 1) midDrag = false; });
   canvas.addEventListener('wheel', (e) => {
     e.preventDefault();
     renderer.zoomBy(e.deltaY > 0 ? 0.9 : 1.1);
-  });
-
-  // 键盘：B = 进入建造模式
-  window.addEventListener('keydown', (e) => {
-    if (e.key === 'b' || e.key === 'B') {
-      buildMode = buildMode === 'wall' ? null : 'wall';
-      ui.textContent = buildMode ? `建造模式：${BUILDINGS[buildMode].name}（左键/点按放置，B 取消）` : uiBase();
-    }
   });
 
   // ---- 主循环 ----
@@ -200,13 +198,11 @@ async function main(): Promise<void> {
       sim.step(tickMs / 1000);
       acc -= tickMs;
     }
+    hud.update(buildMode);
   });
 
-  // HMR
   if (import.meta.hot) {
-    import.meta.hot.dispose(() => {
-      renderer.destroy();
-    });
+    import.meta.hot.dispose(() => renderer.destroy());
   }
 }
 
