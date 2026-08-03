@@ -71,6 +71,8 @@ export class Sim {
   dayLength = 120;
   hasDayCycle = true;
   dayTime = 0; // 0..1
+  speed = 1; // 1x/2x/3x
+  paused = false;
 
   pawnStates = new Map<number, PawnState>();
   pawnPositions = new Map<number, { x: number; y: number }>();
@@ -260,6 +262,8 @@ export class Sim {
 
   // ---- 主循环 ----
   step(dt: number): void {
+    if (this.paused) return;
+    dt *= this.speed;
     this.time += dt;
     this.dayTime = (this.time % this.dayLength) / this.dayLength;
 

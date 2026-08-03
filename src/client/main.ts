@@ -19,6 +19,33 @@ function createHud(sim: Sim, onSelectBuild: (id: string | null) => void): { upda
   buildMenu.style.cssText = 'position:absolute;bottom:12px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.72);border:1px solid #444;border-radius:10px;padding:8px;display:flex;gap:6px;pointer-events:auto;flex-wrap:wrap;justify-content:center;max-width:96%;';
   root.appendChild(buildMenu);
 
+  // 速度控制条（左下角）
+  const speedBar = document.createElement('div');
+  speedBar.style.cssText = 'position:absolute;bottom:12px;left:12px;background:rgba(0,0,0,.72);border:1px solid #444;border-radius:10px;padding:6px;display:flex;gap:4px;pointer-events:auto;';
+  root.appendChild(speedBar);
+  const speeds = [0, 1, 2, 3];
+  speedBar.textContent = '';
+  for (const sp of speeds) {
+    const b = document.createElement('button');
+    b.textContent = sp === 0 ? '⏸' : `${sp}x`;
+    b.dataset.speed = String(sp);
+    b.style.cssText = 'border:1px solid #555;background:#333;color:#eee;border-radius:6px;padding:3px 9px;cursor:pointer;font:12px system-ui;';
+    b.addEventListener('click', () => {
+      sim.paused = sp === 0;
+      sim.speed = sp === 0 ? 1 : sp;
+      refreshSpeed();
+    });
+    speedBar.appendChild(b);
+  }
+  const refreshSpeed = () => {
+    const cur = sim.paused ? 0 : sim.speed;
+    for (const b of speedBar.querySelectorAll('button')) {
+      b.style.borderColor = Number(b.dataset.speed) === cur ? '#4cf' : '#555';
+      b.style.background = Number(b.dataset.speed) === cur ? 'rgba(68,204,255,.25)' : '#333';
+    }
+  };
+  refreshSpeed();
+
   // 选中面板
   const selPanel = document.createElement('div');
   selPanel.style.cssText = 'position:absolute;top:54px;left:12px;background:rgba(0,0,0,.55);border-radius:8px;padding:8px 12px;min-width:170px;display:none;line-height:1.6;';
