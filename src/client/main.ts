@@ -99,6 +99,10 @@ function createHud(sim: Sim, onSelectBuild: (id: string | null) => void): { upda
 
     // 提示
     hint.textContent = bm ? `建造【${BUILDINGS[bm]?.name ?? bm}】——在地图点击放置` : '点击建造菜单选择，点地图放置';
+
+    // 事件日志 feed（最近 5 条）
+    const recent = sim.events.slice(-5).map((e) => `${Math.floor(e.time)}s ${e.text}`);
+    feed.innerHTML = recent.map((t) => `<div>${t}</div>`).join('');
   };
 
   // 建造菜单按钮

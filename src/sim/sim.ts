@@ -14,7 +14,7 @@ import { BUILDINGS } from './defs';
 import type { SimContext } from './systems/context';
 import { SystemRegistry } from './systems/registry';
 import { NeedsSystem } from './systems/needsSystem';
-import { CardSystem } from './systems/cardSystem';
+import { BehaviorSystem } from './systems/cardSystem';
 import { GatherSystem } from './systems/gatherSystem';
 import { BuildSystem } from './systems/buildSystem';
 import { FarmSystem } from './systems/farmSystem';
@@ -55,6 +55,8 @@ export interface PawnState {
   chopTarget?: { x: number; y: number };
   chopXY?: { x: number; y: number };
   chopProgress?: number;
+  prayTarget?: { x: number; y: number }; // 祈祷点（篝火）
+  praying?: { x: number; y: number; progress: number };
   job?: string;
 }
 
@@ -118,7 +120,7 @@ export class Sim implements SimContext {
   private registerSystems(): void {
     this.registry
       .register(new NeedsSystem(this))
-      .register(new CardSystem(this))
+      .register(new BehaviorSystem(this))
       .register(new GatherSystem(this))
       .register(new BuildSystem(this))
       .register(new FarmSystem(this))

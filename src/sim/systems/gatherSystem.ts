@@ -14,6 +14,16 @@ export class GatherSystem implements GameSystem {
     for (const eid of this.ctx.pawnList) {
       const st = this.ctx.pawnStates.get(eid);
       if (!st) continue;
+      // 祈祷进度
+      if (st.praying) {
+        st.praying.progress += dt;
+        if (st.praying.progress >= 2) {
+          st.praying = undefined;
+          this.ctx.adjustMood(eid, 6);
+          this.ctx.logEvent('🕯 向篝火祈祷，心灵安宁');
+        }
+        continue;
+      }
       // 采矿
       if (st.mining) {
         st.mining.progress += dt;

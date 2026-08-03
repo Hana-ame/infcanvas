@@ -62,11 +62,12 @@ describe('DNA + slots', () => {
     const slots = initSlots(dna);
     const rng = new SimRng(1);
     const ctx = {
-      sim: {
+      view: {
         buildQueueCount: 0,
         stockpile: { wood: 0, ore: 0, food: 50 },
         needsOf: () => ({ food: 80, rest: 80, mood: 60 }),
         isNight: () => false,
+        hasCampfire: () => false,
       },
       eid: 1,
     };

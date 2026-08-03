@@ -122,6 +122,13 @@ export class World {
     return this.buildings.get(this.buildKey(x, y)) ?? null;
   }
 
+  hasBuilding(defId: string): boolean {
+    for (const [, b] of this.buildings) {
+      if (b.def.id === defId) return true;
+    }
+    return false;
+  }
+
   canBuildAt(x: number, y: number): boolean {
     const def = this.getTileDef(x, y);
     if (!def.buildable) return false;
