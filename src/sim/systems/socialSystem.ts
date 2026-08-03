@@ -19,6 +19,11 @@ export class SocialSystem implements GameSystem {
 
   update(dt: number): void {
     this.cd -= dt;
+    // 社交冷却递减（每个小人独立）
+    for (const eid of this.ctx.pawnList) {
+      const st = this.ctx.pawnStates.get(eid);
+      if (st && (st.socialCd ?? 0) > 0) st.socialCd = (st.socialCd ?? 0) - dt;
+    }
     if (this.cd > 0) return;
     this.cd = 2;
     this.tickSocial();
@@ -46,7 +51,14 @@ export class SocialSystem implements GameSystem {
     // 社交冷却：避免连续刷屏
     if (aCd > 0) return;
     const stA = this.ctx.pawnStates.get(a)!;
+    const stB = this.ctx.pawnStates.get(b);
     stA.socialCd = 15 + Math.floor(this.ctx.rng.next() * 10);
+
+    // 传教（信仰对抗，DESIGN §3 对抗检定）：高信仰者尝试说服邻居改信
+    if (stB && (stA.faith ?? 0) >= 30 && this.ctx.rng.next() < 0.15) {
+      this.preach(a, b);
+      return;
+    }
 
     const moodA = this.ctx.readNeeds(a)?.mood ?? 60;
     const moodB = this.ctx.readNeeds(b)?.mood ?? 60;
@@ -77,6 +89,42 @@ export class SocialSystem implements GameSystem {
     this.ctx.bus.emit({ type: 'social', eid: a, target: b, tone, topic: topic ?? undefined });
     if (this.ctx.rng.next() < 0.4 || tone !== 'neutral') {
       this.ctx.logEvent(`💬 #${a} ${line} #${b}${topic ? `（${topic}）` : ''}`);
+    }
+  }
+
+  // 传教：对抗检定（DESIGN §3）。传教者 魅力+信仰 vs 目标 意志
+  // 成功 → 目标信仰升 + 好感升；失败 → 目标反感，传教者受挫
+  private preach(a: number, b: number): void {
+    const stA = this.ctx.pawnStates.get(a)!;
+    const stB = this.ctx.pawnStates.get(b);
+    if (!stB) return;
+    const dnaA = this.ctx.dnaOf(a);
+    const dnaB = this.ctx.dnaOf(b);
+    const app = dnaA?.app ?? 40;
+    const faithA = stA.faith ?? 0;
+    const powB = dnaB?.pow ?? 40;
+    // 对抗：传教者 ATT（APP/2 + faith/2）vs 目标 守方（POW + 现有信仰抵抗）
+    const att = app / 2 + faithA / 2;
+    const def = powB + (stB.faith ?? 0) * 0.4;
+    const rollA = this.ctx.rng.int(1, 100) + att;
+    const rollB = this.ctx.rng.int(1, 100) + def;
+    const relA = stA.relationships ?? new Map<number, number>();
+    if (rollA > rollB) {
+      // 成功传教
+      stB.faith = Math.min(100, (stB.faith ?? 0) + 4);
+      stA.faith = Math.min(100, faithA + 1);
+      this.ctx.growSkill(a, 'social');
+      relA.set(b, Math.max(-50, Math.min(100, (relA.get(b) ?? 0) + 6)));
+      stA.relationships = relA;
+      this.ctx.bus.emit({ type: 'social', eid: a, target: b, tone: 'positive', topic: '布道' });
+      this.ctx.logEvent(`🙏 #${a} 向 #${b} 布道，对方听了进去`);
+    } else {
+      // 失败：目标无动于衷甚至反感
+      relA.set(b, Math.max(-50, Math.min(100, (relA.get(b) ?? 0) - 5)));
+      stA.relationships = relA;
+      this.ctx.adjustMood(a, -2);
+      this.ctx.bus.emit({ type: 'social', eid: a, target: b, tone: 'negative', topic: '布道' });
+      this.ctx.logEvent(`🙅 #${b} 对 #${a} 的说教无动于衷`);
     }
   }
 

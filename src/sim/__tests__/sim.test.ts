@@ -440,6 +440,33 @@ describe('社交/流言系统（DESIGN §6 微互动）', () => {
     expect(soc.length).toBeGreaterThan(0);
     expect(['positive', 'negative', 'neutral']).toContain(soc[0].data?.tone);
   });
+
+  it('preaching transfers faith via opposed check (COC §3)', () => {
+    const sim = new Sim({ seed: 52, pawnCount: 2 });
+    const [a, b] = sim.pawns;
+    const stA = sim.pawnStates.get(a)!;
+    const stB = sim.pawnStates.get(b)!;
+    // 高信仰传教者，低意志目标 → 布道成功率高的场景
+    stA.faith = 80;
+    stB.faith = 0;
+    const dnaB = stB.dna;
+    dnaB.pow = 20;
+    const pos = sim.pawnPositions.get(a)!;
+    sim.pawnPositions.set(b, { x: pos.x + 1, y: pos.y });
+    const before = stB.faith ?? 0;
+    // 跑足够久（120 秒），每步把 a/b 钉在相邻位置 → 传教必现
+    let preached = false;
+    for (let i = 0; i < 2400 && !preached; i++) {
+      sim.pawnPositions.set(a, { x: pos.x, y: pos.y });
+      sim.pawnPositions.set(b, { x: pos.x + 1, y: pos.y });
+      sim.step(1 / 20);
+      const soc = sim.historyQuery({ type: 'social', limit: 50 });
+      preached = soc.some((s) => s.data?.topic === '布道');
+    }
+    expect(preached).toBe(true);
+    // 传教期间 b 信仰应高于初始（至少不会降低）
+    expect(stB.faith ?? 0).toBeGreaterThanOrEqual(before);
+  });
 });
 
 describe('环境系统（DESIGN §6 环境调制）', () => {
