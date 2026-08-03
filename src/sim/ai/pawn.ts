@@ -36,6 +36,8 @@ export interface CardView {
   env?: { raining: boolean; temperature: number };
   // 马尔可夫偏置（DESIGN §6）：上一事件系列 → 本轮权重偏置
   lastSeries?: string;
+  // 派系优先级（用户 Q8：AI 按环境下达工作优先指令）：workType → 权重倍率
+  factionPriority?: Record<string, number>;
 }
 
 export interface CardContext {
@@ -301,6 +303,9 @@ function effectiveWeight(card: BehaviorCard, pawn: PawnLike, ctx?: CardContext):
   if (last && MARKOV_BIAS[last]?.[card.series] !== undefined) {
     w *= MARKOV_BIAS[last][card.series];
   }
+  // 派系优先级（用户 Q8）：环境评估下达的工作优先指令，调制对应工作卡权重
+  const pri = ctx?.view.factionPriority?.[card.id];
+  if (pri !== undefined) w *= pri;
   return w;
 }
 

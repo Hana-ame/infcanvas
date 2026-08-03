@@ -652,6 +652,72 @@ describe('社会关系效应（用户 Q8：关系支持协作/战争）', () => 
   });
 });
 
+describe('派系优先级（用户 Q8：AI 按环境下达工作指令）', () => {
+  it('food shortage raises farm/chop priority', () => {
+    const sim = new Sim({ seed: 95, pawnCount: 1 });
+    sim.stockpile.food = 10; // 短缺
+    sim.stockpile.wood = 200;
+    sim.stockpile.ore = 100;
+    for (let i = 0; i < 300; i++) sim.step(1 / 20); // 15 秒 > 评估周期
+    expect(sim.factionPriority.farm).toBeGreaterThan(1);
+  });
+
+  it('build queue raises build priority', () => {
+    const sim = new Sim({ seed: 96, pawnCount: 0 });
+    const cx = Math.floor(sim.world.width / 2);
+    const cy = Math.floor(sim.world.height / 2);
+    sim.issueCommand({ type: 'build', x: cx + 1, y: cy, buildingId: 'wall' });
+    // 队列存在期间（wall buildTime=3s，10 秒内），priority 应升
+    let sawBoost = false;
+    for (let i = 0; i < 200 && !sawBoost; i++) {
+      sim.step(1 / 20);
+      if (sim.factionPriority.build > 1) sawBoost = true;
+    }
+    expect(sawBoost).toBe(true);
+  });
+
+  it('priority modulates chop card draw weight', () => {
+    // 构造：chop(权重6) 与 8 张 weight=4 的竞争卡 → 不饱和，偏置可测
+    const chop = BASE_CARDS.find((c) => c.id === 'chop')!;
+    const filler = (id: string, series: 'work' | 'physio' | 'leisure'): BehaviorCard => ({
+      id, name: id, series, weight: 4,
+      utility: () => 0,
+      decide: () => ({ action: 'idle', label: id }),
+    });
+    const slots: (BehaviorCard | null)[] = [
+      chop,
+      filler('f1', 'work'), filler('f2', 'work'), filler('f3', 'work'),
+      filler('f4', 'physio'), filler('f5', 'physio'),
+      filler('f6', 'work'), filler('f7', 'work'),
+    ];
+    const dna = generateDna(5);
+    const rng = new SimRng(3);
+    const mkCtx = (prio: Record<string, number>) => ({
+      view: {
+        buildQueueCount: 0,
+        stockpile: { wood: 0, ore: 0, food: 50 },
+        needsOf: () => ({ food: 80, rest: 80, mood: 60, san: 100 }),
+        isNight: () => false,
+        hasCampfire: () => false,
+        hasCave: () => false,
+        factionPriority: prio,
+      },
+      eid: 1,
+    });
+    const countChop = (prio: Record<string, number>): number => {
+      let n = 0;
+      for (let i = 0; i < 500; i++) {
+        const drawn = drawCards({ dna, slots }, rng, 3, mkCtx(prio));
+        n += drawn.filter((c) => c.id === 'chop').length;
+      }
+      return n;
+    };
+    const shortage = countChop({ chop: 1.8 });
+    const baseline = countChop({ chop: 1 });
+    expect(shortage).toBeGreaterThan(baseline);
+  });
+});
+
 describe('叙事压力（DESIGN §6）', () => {
   it('long peace builds narrative pressure and enlarges raids', () => {
     const sim = new Sim({ seed: 80, pawnCount: 4 });

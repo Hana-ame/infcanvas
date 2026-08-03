@@ -35,6 +35,7 @@ export interface SimContext {
   dayTime: number;
   pawnList: readonly number[];
   env: { raining: boolean; temperature: number };
+  factionPriority: Record<string, number>; // 派系工作优先级（用户 Q8）
 
   isNight(): boolean;
   // 读组件

@@ -131,6 +131,9 @@ export class Sim implements SimContext {
   paused = false;
   events: { time: number; text: string }[] = [];
   env: EnvState = initEnv(); // 天气/气温（DESIGN §6）
+  // 派系优先级（用户 Q8：AI 按环境下达工作优先指令）：卡 id → 权重倍率
+  factionPriority: Record<string, number> = {};
+  private prioTimer = 0;
 
   pawnStates = new Map<number, PawnState>();
   pawnPositions = new Map<number, { x: number; y: number }>();
@@ -465,6 +468,27 @@ export class Sim implements SimContext {
     st.mineTarget = { x, y };
   }
 
+  private updateFactionPriority(dt: number): void {
+    this.prioTimer -= dt;
+    if (this.prioTimer > 0) return;
+    this.prioTimer = 10; // 每 10 秒评估一次环境 → 派系工作优先级
+    const s = this.stockpile;
+    const pri: Record<string, number> = {};
+    // 基线 1.0，短缺的资源对应工作权重升高（AI 下达优先指令）
+    const foodLow = (s.food ?? 0) < 60 ? 1.6 : 1;
+    const woodLow = s.wood < 40 ? 1.5 : 1;
+    const oreLow = s.ore < 15 ? 1.4 : 1;
+    const building = this.buildQueue.length > 0 ? 1.8 : 1;
+    pri.farm = foodLow;
+    pri.chop = woodLow;
+    pri.mine = oreLow;
+    pri.caveMine = oreLow;
+    pri.build = building;
+    // 饥饿紧急时优先生产食物
+    if ((s.food ?? 0) < 20) pri.farm = 2.4;
+    this.factionPriority = pri;
+  }
+
   // ---- 主循环 ----
   step(dt: number): void {
     if (this.paused) return;
@@ -472,6 +496,7 @@ export class Sim implements SimContext {
     this.time += dt;
     this.dayTime = (this.time % this.dayLength) / this.dayLength;
     tickEnv(this.env, dt, this.dayTime, this.rng);
+    this.updateFactionPriority(dt);
     this.registry.updateAll(dt);
   }
 

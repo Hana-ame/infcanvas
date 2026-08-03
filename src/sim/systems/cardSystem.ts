@@ -95,6 +95,7 @@ export class BehaviorSystem implements GameSystem {
       desiresOf: (e) => this.ctx.pawnStates.get(e)?.desires ?? null,
       env: this.ctx.env,
       lastSeries: st.lastSeries,
+      factionPriority: this.ctx.factionPriority,
       buildQueueCount: this.ctx.buildQueue.length,
       stockpile: this.ctx.stockpile,
     };
