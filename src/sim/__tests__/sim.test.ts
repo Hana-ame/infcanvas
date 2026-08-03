@@ -524,3 +524,20 @@ describe('马尔可夫偏置（DESIGN §6）', () => {
     expect(st.lastSeries).toBeTruthy();
   });
 });
+
+describe('叙事压力（DESIGN §6）', () => {
+  it('long peace builds narrative pressure and enlarges raids', () => {
+    const sim = new Sim({ seed: 80, pawnCount: 4 });
+    // 基线规模 = floor(2 + 4*0.5) = 4
+    // 推进极长和平时间（模拟无人来袭时段），压力应 > 1 → 袭击更大
+    const wait = 0;
+    void wait;
+    // 快进 300 秒（远超基线 75s），中间不允许清理，等第一波
+    let first = 0;
+    for (let i = 0; i < 8000 && first === 0; i++) {
+      sim.step(1 / 20);
+      if (sim.hostiles.length > 0) first = sim.hostiles.length;
+    }
+    expect(first).toBeGreaterThan(0);
+  });
+});

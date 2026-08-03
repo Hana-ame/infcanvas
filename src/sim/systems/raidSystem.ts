@@ -6,6 +6,8 @@ import type { EventBus } from '../core/events';
 export class RaidSystem implements GameSystem {
   id = 'raid';
   private raidTimer = 60;
+  private peaceTime = 0; // 距上次袭击的和平时长（叙事压力，DESIGN §6）
+  private baseInterval = 75; // 基线袭击间隔（秒）
 
   constructor(private ctx: SimContext) {}
 
@@ -16,24 +18,34 @@ export class RaidSystem implements GameSystem {
     this.updateCombat(dt);
   }
 
+  // 叙事压力（DESIGN §6）：和平越久 → 战斗压力越高
+  // 压力 = 超出基线的和平时长比例，缩短间隔 + 放大袭击
+  private narrativePressure(): number {
+    return Math.min(2, 1 + this.peaceTime / (this.baseInterval * 3));
+  }
+
   private updateRaids(dt: number): void {
     if (this.ctx.pawnList.length === 0) return;
     if (this.ctx.hostiles.length === 0 && this.raidTimer <= 0) {
-      // 上一波结束，安排下一波
-      this.raidTimer = 75;
+      // 上一波结束，安排下一波（间隔受叙事压力缩短）
+      this.raidTimer = this.baseInterval / this.narrativePressure();
     }
     if (this.ctx.hostiles.length === 0) {
+      this.peaceTime += dt;
       this.raidTimer -= dt;
       if (this.raidTimer <= 0) {
-        const count = Math.floor(2 + this.ctx.pawnList.length * 0.5);
-        this.spawnRaid(count);
+        // 和平越久袭击越猛
+        const pressure = this.narrativePressure();
+        const count = Math.floor((2 + this.ctx.pawnList.length * 0.5) * pressure);
+        this.spawnRaid(count, pressure);
+        this.peaceTime = 0;
         this.ctx.bus.emit({ type: 'raid_started', count });
-        this.ctx.logEvent(`⚠ 野狼来袭！${count} 只`);
+        this.ctx.logEvent(`⚠ 野狼来袭！${count} 只${pressure > 1.3 ? '（积怨已久，规模更大）' : ''}`);
       }
     }
   }
 
-  private spawnRaid(count: number): void {
+  private spawnRaid(count: number, pressure = 1): void {
     const w = this.ctx.world;
     const edge = Math.floor(this.ctx.rng.next() * 4);
     const cx = Math.floor(w.width / 2);
@@ -44,7 +56,7 @@ export class RaidSystem implements GameSystem {
       else if (edge === 1) { x = this.ctx.rng.int(0, w.width - 1); y = w.height - 1; }
       else if (edge === 2) { x = 0; y = this.ctx.rng.int(0, w.height - 1); }
       else { x = w.width - 1; y = this.ctx.rng.int(0, w.height - 1); }
-      this.ctx.hostiles.push({ x, y, hp: 60, maxHp: 60, targetX: cx, targetY: cy });
+      this.ctx.hostiles.push({ x, y, hp: 60 * pressure, maxHp: 60 * pressure, targetX: cx, targetY: cy });
     }
   }
 
