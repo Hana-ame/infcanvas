@@ -11,11 +11,13 @@ import { initNeeds } from './core/needs';
 import { EventBus } from './core/events';
 import { HistoryLog } from './core/history';
 import { generateDna, initSlots, type Dna, type SkillId } from './ai/pawn';
+import { initDesires, type DesireId } from './core/desires';
 import { BUILDINGS } from './defs';
 import type { SimContext } from './systems/context';
 import { SystemRegistry } from './systems/registry';
 import { NeedsSystem } from './systems/needsSystem';
 import { SanSystem } from './systems/sanSystem';
+import { DesireSystem } from './systems/desireSystem';
 import { BehaviorSystem } from './systems/cardSystem';
 import { GatherSystem } from './systems/gatherSystem';
 import { BuildSystem } from './systems/buildSystem';
@@ -70,6 +72,7 @@ export interface PawnState {
   defyCd?: number; // 违抗后的冷却时间（秒）
   crazyCooldown?: number; // 狂乱乱跑冷却
   skills?: Partial<Record<SkillId, number>>; // COC 技能（百分制，越用越强）
+  desires?: Record<DesireId, number>; // 七宗罪满足度（DESIGN §3）
   job?: string;
   // 最近决策记录（设计文档：小人闪过哪3个念头、选了哪个）
   lastDecision?: { drawn: string[]; picked: string; time: number };
@@ -101,6 +104,7 @@ export interface SaveData {
     needs: NeedsData | null; health: HealthData | null;
     faith?: number;
     skills?: Partial<Record<SkillId, number>>;
+    desires?: Record<DesireId, number>;
   }[];
 }
 
@@ -155,6 +159,7 @@ export class Sim implements SimContext {
     this.registry
       .register(new NeedsSystem(this))
       .register(new SanSystem(this))
+      .register(new DesireSystem(this))
       .register(new BehaviorSystem(this))
       .register(new GatherSystem(this))
       .register(new BuildSystem(this))
@@ -281,6 +286,7 @@ export class Sim implements SimContext {
       path: [],
       pathIndex: 0,
       skills: { work: 20 + intBase, fight: 15 + intBase, craft: 15 + intBase, social: 10 + intBase, faith: 10 + intBase },
+      desires: initDesires(this.rng),
     });
     this._pawnList.push(eid);
     this.pawnPositions.set(eid, { x, y });
@@ -438,6 +444,7 @@ export class Sim implements SimContext {
     needs: NeedsData | null; health: HealthData | null; pos: { x: number; y: number };
     faith: number;
     skills: Partial<Record<SkillId, number>>;
+    desires: Record<DesireId, number>;
     lastDecision?: { drawn: string[]; picked: string; time: number };
   } | null {
     const st = this.pawnStates.get(eid);
@@ -448,6 +455,7 @@ export class Sim implements SimContext {
       pos: this.pawnPositions.get(eid) ?? { x: 0, y: 0 },
       faith: st.faith ?? 0,
       skills: st.skills ?? {},
+      desires: st.desires ?? initDesires(this.rng),
       lastDecision: st.lastDecision,
     };
   }
@@ -478,6 +486,7 @@ export class Sim implements SimContext {
           health: this.readHealth(eid),
           faith: st.faith ?? 0,
           skills: st.skills ?? {},
+          desires: st.desires ?? initDesires(this.rng),
         };
       }),
     };
@@ -500,6 +509,7 @@ export class Sim implements SimContext {
         st.slots = p.slots;
         st.faith = p.faith ?? 0;
         st.skills = p.skills ?? {};
+        st.desires = p.desires ?? initDesires(this.rng);
         if (p.needs) this.setNeeds(eid, p.needs);
         if (p.health) this.setHealth(eid, p.health);
       }

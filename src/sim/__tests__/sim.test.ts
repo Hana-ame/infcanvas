@@ -251,3 +251,44 @@ describe('结构化历史日志（DESIGN §3）', () => {
     expect(deaths[0].cause).toBe('starvation');
   });
 });
+
+describe('七宗罪欲望系统（DESIGN §3）', () => {
+  it('pawns start with desires initialized and DNA has sin weights', () => {
+    const sim = new Sim({ seed: 20, pawnCount: 2 });
+    for (const eid of sim.pawns) {
+      const p = sim.pawnProfile(eid)!;
+      expect(p.desires.gluttony).toBeGreaterThanOrEqual(0);
+      expect(p.desires.gluttony).toBeLessThanOrEqual(100);
+      expect(p.dna.sins.wrath).toBeGreaterThanOrEqual(0);
+      expect(p.dna.sins.wrath).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it('eating fulfills gluttony desire', () => {
+    const sim = new Sim({ seed: 21, pawnCount: 1 });
+    const eid = sim.pawns[0];
+    const st = sim.pawnStates.get(eid)!;
+    st.desires = { gluttony: 40, sloth: 60, greed: 60, envy: 60, pride: 60, wrath: 60, lust: 60 };
+    // 食物压低 → 小人会抽到进食卡
+    const n = sim.readNeeds(eid)!;
+    n.food = 20;
+    sim.setNeeds(eid, n);
+    sim.stockpile.food = 50;
+    const before = st.desires.gluttony;
+    for (let i = 0; i < 400; i++) sim.step(1 / 20); // 20 秒
+    expect(st.desires.gluttony).toBeGreaterThanOrEqual(before);
+  });
+
+  it('desires persist through save/load', () => {
+    const sim = new Sim({ seed: 22, pawnCount: 1 });
+    const eid = sim.pawns[0];
+    const st = sim.pawnStates.get(eid)!;
+    st.desires = { gluttony: 11, sloth: 22, greed: 33, envy: 44, pride: 55, wrath: 66, lust: 77 };
+    const data = sim.save();
+    const sim2 = new Sim({ seed: 23, pawnCount: 1 });
+    sim2.load(data);
+    const p = sim2.pawnProfile(sim2.pawns[0])!;
+    expect(p.desires.gluttony).toBe(11);
+    expect(p.desires.lust).toBe(77);
+  });
+});

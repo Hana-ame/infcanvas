@@ -3,6 +3,7 @@
 // 加新卡 = 定义一张卡（含 condition/utility/intent），不改任何分发逻辑。
 
 import { SimRng } from '../core/rng';
+import type { DesireId } from '../core/desires';
 
 export type SkillId = 'work' | 'fight' | 'social' | 'faith' | 'craft';
 
@@ -13,6 +14,7 @@ export interface Dna {
   traits: string[];
   maxSlots: number;
   skillBonuses: Partial<Record<SkillId, number>>;
+  sins: Partial<Record<DesireId, number>>; // 罪孽倾向（个性权重 0-1）
 }
 
 // 卡决策可读的 sim 信息（只读，决策用）
@@ -24,6 +26,7 @@ export interface CardView {
   hasCave(): boolean;
   buildQueueCount: number;
   stockpile: Record<string, number>;
+  desiresOf?(eid: number): Record<DesireId, number> | null;
 }
 
 export interface CardContext {
@@ -131,7 +134,23 @@ export function generateDna(seed: number): Dna {
     traits,
     maxSlots: 2 + rng.int(0, 2),
     skillBonuses: {},
+    sins: {},
   };
+
+  // 天赋 → 罪孽倾向（个性权重 0-1）
+  const sins: Dna['sins'] = {};
+  sins.gluttony = 0.3 + rng.next() * 0.4;
+  sins.sloth = 0.3 + rng.next() * 0.4;
+  sins.greed = 0.3 + rng.next() * 0.4;
+  sins.envy = 0.2 + rng.next() * 0.4;
+  sins.pride = 0.3 + rng.next() * 0.4;
+  sins.wrath = 0.2 + rng.next() * 0.4;
+  sins.lust = 0.2 + rng.next() * 0.4;
+  if (traits.includes('懒惰')) sins.sloth = Math.min(1, sins.sloth + 0.3);
+  if (traits.includes('好斗')) sins.wrath = Math.min(1, sins.wrath + 0.3);
+  if (traits.includes('热爱工作')) sins.sloth = Math.max(0.1, sins.sloth - 0.3);
+  if (traits.includes('虔诚')) sins.pride = Math.max(0.1, sins.pride - 0.2);
+  dna.sins = sins;
 
   if (traits.includes('热爱工作')) dna.skillBonuses.work = 1.5;
   if (traits.includes('好斗')) dna.skillBonuses.fight = 1.5;
@@ -211,7 +230,7 @@ export function drawCards(pawn: PawnLike, rng: SimRng, n: number, ctx: CardConte
   const pool = [...available];
   const drawn: BehaviorCard[] = [];
   while (pool.length > 0 && drawn.length < n) {
-    const weights = pool.map((c) => effectiveWeight(c, pawn));
+    const weights = pool.map((c) => effectiveWeight(c, pawn, ctx));
     const pick = rng.weightedPick(pool, weights);
     drawn.push(pick);
     pool.splice(pool.indexOf(pick), 1);
@@ -219,12 +238,34 @@ export function drawCards(pawn: PawnLike, rng: SimRng, n: number, ctx: CardConte
   return drawn;
 }
 
-function effectiveWeight(card: BehaviorCard, pawn: PawnLike): number {
+function effectiveWeight(card: BehaviorCard, pawn: PawnLike, ctx?: CardContext): number {
   let w = card.weight;
   if (pawn.dna.traits.includes('热爱工作') && card.series === 'work') w *= 1.8;
   if (pawn.dna.traits.includes('懒惰') && card.series === 'work') w *= 0.5;
+  // 欲望驱动：未满足的欲望 → 对应系列卡权重升高（DESIGN §3）
+  if (ctx?.view.desiresOf) {
+    const desire = seriesToDesire(card.series);
+    if (desire) {
+      const d = ctx.view.desiresOf(ctx.eid);
+      if (d && d[desire] !== undefined) {
+        const hunger = 100 - d[desire];
+        if (hunger > 40) w *= 1 + (hunger - 40) / 100; // 匮乏(>40%) → 权重升
+      }
+    }
+  }
   return w;
 }
+
+const seriesToDesire = (series: BehaviorCard['series']): DesireId | null => {
+  switch (series) {
+    case 'physio': return 'gluttony';
+    case 'leisure': return 'sloth';
+    case 'work': return 'greed';
+    case 'combat': return 'wrath';
+    case 'religion': return 'pride';
+    default: return null;
+  }
+};
 
 // 挑收益最高
 export function pickBest(drawn: BehaviorCard[], ctx: CardContext): BehaviorCard | null {

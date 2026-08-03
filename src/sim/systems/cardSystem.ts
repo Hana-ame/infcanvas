@@ -7,6 +7,7 @@ import type { PawnState } from '../sim';
 import type { BehaviorCard, CardContext, CardView, BehaviorIntent } from '../ai/pawn';
 import { drawCards, pickBest } from '../ai/pawn';
 import { BUILDINGS } from '../defs';
+import { fulfill } from '../core/desires';
 
 // 意图执行器：mod 可注册新意图
 export type IntentExecutor = (ctx: SimContext, eid: number, st: PawnState, intent: BehaviorIntent) => void;
@@ -91,6 +92,7 @@ export class BehaviorSystem implements GameSystem {
       isNight: () => this.ctx.isNight(),
       hasCampfire: () => this.ctx.world.hasBuilding('campfire'),
       hasCave: () => this.ctx.world.hasBuilding('cave'),
+      desiresOf: (e) => this.ctx.pawnStates.get(e)?.desires ?? null,
       buildQueueCount: this.ctx.buildQueue.length,
       stockpile: this.ctx.stockpile,
     };
@@ -164,21 +166,23 @@ export class BehaviorSystem implements GameSystem {
     }
   }
 
-  private execEat(c: SimContext, eid: number, _st: PawnState, _intent: BehaviorIntent): void {
+  private execEat(c: SimContext, eid: number, st: PawnState, _intent: BehaviorIntent): void {
     const n = c.readNeeds(eid);
     if (n && c.stockpile.food > 0) {
       c.stockpile.food--;
       n.food = Math.min(100, n.food + 40);
       c.setNeeds(eid, n);
+      if (st.desires) fulfill(st.desires, 'gluttony', 12);
       c.bus.emit({ type: 'eat', eid });
     }
   }
 
-  private execRest(c: SimContext, eid: number, _st: PawnState, _intent: BehaviorIntent): void {
+  private execRest(c: SimContext, eid: number, st: PawnState, _intent: BehaviorIntent): void {
     const n = c.readNeeds(eid);
     if (n) {
       n.rest = Math.min(100, n.rest + 40);
       c.setNeeds(eid, n);
+      if (st.desires) fulfill(st.desires, 'sloth', 10);
       c.bus.emit({ type: 'rest', eid });
     }
   }
@@ -217,11 +221,13 @@ export class BehaviorSystem implements GameSystem {
       this.ctx.stockpile.food--;
       n.food = Math.min(100, n.food + 50);
       this.ctx.setNeeds(eid, n);
+      if (st.desires) fulfill(st.desires, 'gluttony', 12);
       this.ctx.bus.emit({ type: 'eat', eid });
       st.urgent = undefined;
     } else if (st.urgent === 'rest') {
       n.rest = Math.min(100, n.rest + 40);
       this.ctx.setNeeds(eid, n);
+      if (st.desires) fulfill(st.desires, 'sloth', 10);
       this.ctx.bus.emit({ type: 'rest', eid });
       st.urgent = undefined;
     }
