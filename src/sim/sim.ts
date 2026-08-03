@@ -81,6 +81,7 @@ export interface PawnState {
   job?: string;
   // 最近决策记录（设计文档：小人闪过哪3个念头、选了哪个）
   lastDecision?: { drawn: string[]; picked: string; time: number };
+  lastSeries?: string; // 上一轮执行的卡系列（马尔可夫偏置，DESIGN §6）
 }
 
 export interface SimOptions {

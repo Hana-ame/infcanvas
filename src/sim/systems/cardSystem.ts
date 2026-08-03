@@ -94,6 +94,7 @@ export class BehaviorSystem implements GameSystem {
       hasCave: () => this.ctx.world.hasBuilding('cave'),
       desiresOf: (e) => this.ctx.pawnStates.get(e)?.desires ?? null,
       env: this.ctx.env,
+      lastSeries: st.lastSeries,
       buildQueueCount: this.ctx.buildQueue.length,
       stockpile: this.ctx.stockpile,
     };
@@ -122,12 +123,13 @@ export class BehaviorSystem implements GameSystem {
       }
     }
     if (st.defyCd) st.defyCd--;
-    // 记录决策（狗屁倒灶日志素材）
+    // 记录决策（狗屁倒灶日志素材）+ 马尔可夫偏置源（DESIGN §6）
     st.lastDecision = {
       drawn: drawn.map((c) => c.name),
       picked: chosen.name,
       time: this.ctx.time,
     };
+    st.lastSeries = chosen.series;
     return chosen.decide(ctx);
   }
 

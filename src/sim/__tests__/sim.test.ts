@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { Sim } from '../sim';
 import { SimRng } from '../core/rng';
-import { generateDna, initSlots, drawCards, pickBest } from '../ai/pawn';
+import { generateDna, initSlots, drawCards, pickBest, BASE_CARDS, type BehaviorCard } from '../ai/pawn';
 import { World } from '../core/world';
 import type { GameSystem } from '../systems/registry';
 
@@ -468,5 +468,59 @@ describe('环境系统（DESIGN §6 环境调制）', () => {
     }
     // 雨天娱乐卡出现频率应显著（雨天权重 1.6）
     expect(leisure).toBeGreaterThan(10);
+  });
+});
+
+describe('马尔可夫偏置（DESIGN §6）', () => {
+  it('after work, leisure cards are drawn more often', () => {
+    const dna = generateDna(70);
+    // 构造一个不饱和的卡池：1 张休闲 + 1 张工作 + 10 张低权重占位
+    const idle = BASE_CARDS.find((c) => c.series === 'leisure')!;
+    const work = BASE_CARDS.find((c) => c.series === 'work')!;
+    const filler = (id: string, series: 'work' | 'physio' | 'leisure'): BehaviorCard => ({
+      id, name: id, series, weight: 0.01,
+      utility: () => 0,
+      decide: () => ({ action: 'idle', label: id }),
+    });
+    const slots: (BehaviorCard | null)[] = [
+      idle, work,
+      filler('f1', 'work'), filler('f2', 'work'), filler('f3', 'work'),
+      filler('f4', 'physio'), filler('f5', 'physio'), filler('f6', 'physio'),
+      filler('f7', 'work'), filler('f8', 'work'),
+    ];
+    const rng = new SimRng(2);
+    const mkCtx = (lastSeries: string | undefined) => ({
+      view: {
+        buildQueueCount: 0,
+        stockpile: { wood: 0, ore: 0, food: 50 },
+        needsOf: () => ({ food: 80, rest: 80, mood: 60, san: 100 }),
+        isNight: () => false,
+        hasCampfire: () => false,
+        hasCave: () => false,
+        lastSeries,
+      },
+      eid: 1,
+    });
+    // 统计 leisure 卡被抽中的次数（markov 偏置提升 leisure 权重）
+    const countLeisure = (last: string | undefined): number => {
+      let n = 0;
+      for (let i = 0; i < 500; i++) {
+        const drawn = drawCards({ dna, slots }, rng, 3, mkCtx(last));
+        n += drawn.filter((c) => c.series === 'leisure').length;
+      }
+      return n;
+    };
+    const afterWork = countLeisure('work');
+    const baseline = countLeisure(undefined);
+    expect(afterWork).toBeGreaterThan(baseline);
+  });
+
+  it('lastSeries is recorded when a card is chosen', () => {
+    const sim = new Sim({ seed: 71, pawnCount: 1 });
+    const eid = sim.pawns[0];
+    const st = sim.pawnStates.get(eid)!;
+    // 跑一段时间后 lastSeries 应有值（某系列）
+    for (let i = 0; i < 200; i++) sim.step(1 / 20);
+    expect(st.lastSeries).toBeTruthy();
   });
 });
