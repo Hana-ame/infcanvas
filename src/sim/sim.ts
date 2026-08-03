@@ -61,6 +61,7 @@ export interface PawnState {
   praying?: { x: number; y: number; progress: number };
   healTarget?: { x: number; y: number }; // 疗伤点
   healing?: { progress: number };
+  commandCooldown?: number; // 玩家命令后的一段时间不自动决策
   job?: string;
   // 最近决策记录（设计文档：小人闪过哪3个念头、选了哪个）
   lastDecision?: { drawn: string[]; picked: string; time: number };
@@ -193,6 +194,8 @@ export class Sim implements SimContext {
       st.praying = undefined;
       st.healTarget = undefined;
       st.healing = undefined;
+      // 玩家命令优先：3 秒内不自动决策
+      st.commandCooldown = 3;
     }
   }
 

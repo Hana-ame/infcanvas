@@ -43,6 +43,9 @@ export class BehaviorSystem implements GameSystem {
       // 工作中（采集/祈祷/疗伤/建造进度）不打断
       if (st.mining || st.chopXY || st.praying || st.healing) continue;
 
+      // 玩家命令冷却递减
+      if ((st.commandCooldown ?? 0) > 0) st.commandCooldown = (st.commandCooldown ?? 0) - dt;
+
       // 紧急需求优先
       if (st.urgent) {
         this.handleUrgent(eid, st, dt);
@@ -52,6 +55,12 @@ export class BehaviorSystem implements GameSystem {
       // 走路
       if (st.path && st.pathIndex < st.path.length) {
         this.walk(eid, st, pos, dt);
+        continue;
+      }
+
+      // 玩家命令冷却中：空闲等待（不自动决策，尊重玩家指挥）
+      if ((st.commandCooldown ?? 0) > 0) {
+        st.job = '听从指令';
         continue;
       }
 
