@@ -62,6 +62,7 @@ export interface PawnState {
   healTarget?: { x: number; y: number }; // 疗伤点
   healing?: { progress: number };
   commandCooldown?: number; // 玩家命令后的一段时间不自动决策
+  faith?: number; // 信仰度（祈祷积累，影响违抗与心情）
   job?: string;
   // 最近决策记录（设计文档：小人闪过哪3个念头、选了哪个）
   lastDecision?: { drawn: string[]; picked: string; time: number };
@@ -91,6 +92,7 @@ export interface SaveData {
     eid: number; x: number; y: number;
     dna: Dna; slots: ReturnType<typeof initSlots>;
     needs: NeedsData | null; health: HealthData | null;
+    faith?: number;
   }[];
 }
 
@@ -387,6 +389,7 @@ export class Sim implements SimContext {
   pawnProfile(eid: number): {
     dna: Dna; slots: ReturnType<typeof initSlots>; job: string;
     needs: NeedsData | null; health: HealthData | null; pos: { x: number; y: number };
+    faith: number;
     lastDecision?: { drawn: string[]; picked: string; time: number };
   } | null {
     const st = this.pawnStates.get(eid);
@@ -395,6 +398,7 @@ export class Sim implements SimContext {
       dna: st.dna, slots: st.slots, job: st.job ?? '',
       needs: this.readNeeds(eid), health: this.readHealth(eid),
       pos: this.pawnPositions.get(eid) ?? { x: 0, y: 0 },
+      faith: st.faith ?? 0,
       lastDecision: st.lastDecision,
     };
   }
@@ -417,6 +421,7 @@ export class Sim implements SimContext {
           slots: st.slots,
           needs: this.readNeeds(eid),
           health: this.readHealth(eid),
+          faith: st.faith ?? 0,
         };
       }),
     };
@@ -437,6 +442,7 @@ export class Sim implements SimContext {
         const st = this.pawnStates.get(eid)!;
         st.dna = p.dna;
         st.slots = p.slots;
+        st.faith = p.faith ?? 0;
         if (p.needs) this.setNeeds(eid, p.needs);
         if (p.health) this.setHealth(eid, p.health);
       }

@@ -100,7 +100,9 @@ export class BehaviorSystem implements GameSystem {
       const n = this.ctx.readNeeds(eid);
       const lazy = st.dna.traits.includes('懒惰');
       const moodLow = (n?.mood ?? 60) < 30;
-      const base = (lazy ? 0.5 : 0) + (moodLow ? 0.35 : 0);
+      // 信仰度抑制违抗（虔诚的小人更服从）
+      const faithReduce = (st.faith ?? 0) * 0.003;
+      const base = Math.max(0, (lazy ? 0.5 : 0) + (moodLow ? 0.35 : 0) - faithReduce);
       if (base > 0 && this.ctx.rng.next() < base) {
         chosen = idCard;
         this.ctx.logEvent('😒 小人违抗了安排');

@@ -22,6 +22,7 @@ export class GatherSystem implements GameSystem {
         if (st.praying.progress >= 2) {
           st.praying = undefined;
           this.ctx.adjustMood(eid, 6);
+          st.faith = Math.min(100, (st.faith ?? 0) + 5);
           this.ctx.logEvent('🕯 向篝火祈祷，心灵安宁');
         }
         continue;
