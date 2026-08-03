@@ -370,6 +370,9 @@ export class Sim implements SimContext {
   // ---- UI 读取 ----
   get pawns(): readonly number[] { return this._pawnList; }
   get buildCount(): number { return this.buildQueue.length; }
+  get buildQueueItems(): { x: number; y: number; defId: string; progress: number }[] {
+    return this.buildQueue.map((b) => ({ x: b.x, y: b.y, defId: b.defId, progress: b.progress }));
+  }
   buildingAt(x: number, y: number): { defId: string; hp: number; maxHp: number; faction: string } | null {
     const b = this.world.getBuilding(x, y);
     if (!b) return null;

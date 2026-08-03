@@ -29,6 +29,9 @@ export class Renderer {
   private ghost: Graphics;
   private ghostPos: { x: number; y: number } | null = null;
   private ghostColor = 0x4cf;
+  // 蓝图层（排队中的建造）
+  private blueprintLayer: Graphics;
+  private lastBuildQueueVersion = -1;
   // 飘字反馈（资源获得等）
   private floaters: { text: Text; life: number; vy: number }[] = [];
 
@@ -41,7 +44,10 @@ export class Renderer {
     this.pawnLayer = new Container();
     this.ghost = new Graphics();
     this.ghost.eventMode = 'none';
+    this.blueprintLayer = new Graphics();
+    this.blueprintLayer.eventMode = 'none';
     this.worldContainer.addChild(this.terrainLayer);
+    this.worldContainer.addChild(this.blueprintLayer);
     this.worldContainer.addChild(this.buildingLayer);
     this.worldContainer.addChild(this.pawnLayer);
     this.worldContainer.addChild(this.ghost);
@@ -149,6 +155,12 @@ export class Renderer {
       this.lastBuildingVersion = ver;
       this.drawRebuildings();
     }
+    // 蓝图变化时重绘
+    const bq = this.sim.buildCount;
+    if (bq !== this.lastBuildQueueVersion) {
+      this.lastBuildQueueVersion = bq;
+      this.drawBlueprints();
+    }
     this.renderPawns();
     this.renderHostiles();
     this.renderGhost();
@@ -163,7 +175,6 @@ export class Renderer {
   // 只重绘有变化的建筑层
   private drawRebuildings(): void {
     const w = this.sim.world;
-    // 移除多余节点，重建建筑层（P0 数据量小，全量可行）
     this.buildingLayer.removeChildren();
     for (const [key, b] of w.buildings) {
       const x = key % w.width;
@@ -184,6 +195,20 @@ export class Renderer {
         this.buildingLayer.addChild(t);
       }
     }
+  }
+
+  // 蓝图（排队中的建造）半透明显示
+  private drawBlueprints(): void {
+    this.blueprintLayer.clear();
+    const w = this.sim.world;
+    for (const b of this.sim.buildQueueItems) {
+      const x = b.x * TILE;
+      const y = b.y * TILE;
+      this.blueprintLayer.rect(x + 1, y + 1, TILE - 2, TILE - 2);
+      this.blueprintLayer.fill(0x4cf);
+      this.blueprintLayer.alpha = 0.45;
+    }
+    void w;
   }
 
   private renderPawns(): void {
