@@ -34,6 +34,7 @@ export interface SimContext {
   time: number;
   dayTime: number;
   pawnList: readonly number[];
+  env: { raining: boolean; temperature: number };
 
   isNight(): boolean;
   // 读组件

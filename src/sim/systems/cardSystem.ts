@@ -93,6 +93,7 @@ export class BehaviorSystem implements GameSystem {
       hasCampfire: () => this.ctx.world.hasBuilding('campfire'),
       hasCave: () => this.ctx.world.hasBuilding('cave'),
       desiresOf: (e) => this.ctx.pawnStates.get(e)?.desires ?? null,
+      env: this.ctx.env,
       buildQueueCount: this.ctx.buildQueue.length,
       stockpile: this.ctx.stockpile,
     };

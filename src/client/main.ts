@@ -3,6 +3,7 @@ import { Sim } from '../sim/sim';
 import { Renderer } from './renderer';
 import { SvgAssets } from './svgLoader';
 import { BUILDINGS } from '../sim/defs';
+import { weatherLabel } from '../sim/core/env';
 import { loadSave, writeSave } from './storage';
 
 const nf = (v: number | undefined): string => (v === undefined ? '-' : Math.round(v).toString());
@@ -142,6 +143,7 @@ function createHud(sim: Sim, onSelectBuild: (id: string | null) => void, onZoom?
     const pauseMark = sim.paused ? ' ⏸暂停' : ` ${sim.speed}x`;
     const parts = [
       `${dayIcon} ${Math.floor(sim.time / 60)}分${pauseMark}`,
+      weatherLabel(sim.env),
       `🌲木头 ${s.wood}`, `🪨矿 ${s.ore}`, `🍖食物 ${s.food}`,
       `🛠️ ${s.tools ?? 0}`, `👥 ${sim.pawns.length}人`,
     ];

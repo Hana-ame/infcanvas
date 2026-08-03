@@ -12,6 +12,7 @@ import { EventBus } from './core/events';
 import { HistoryLog } from './core/history';
 import { generateDna, initSlots, type Dna, type SkillId, BASE_CARDS } from './ai/pawn';
 import { initDesires, type DesireId } from './core/desires';
+import { initEnv, tickEnv, type EnvState } from './core/env';
 import { BUILDINGS, TILES, ITEMS } from './defs';
 import { ModRegistry } from './mods/registry';
 import type { SimContext } from './systems/context';
@@ -126,6 +127,7 @@ export class Sim implements SimContext {
   speed = 1;
   paused = false;
   events: { time: number; text: string }[] = [];
+  env: EnvState = initEnv(); // 天气/气温（DESIGN §6）
 
   pawnStates = new Map<number, PawnState>();
   pawnPositions = new Map<number, { x: number; y: number }>();
@@ -465,6 +467,7 @@ export class Sim implements SimContext {
     dt *= this.speed;
     this.time += dt;
     this.dayTime = (this.time % this.dayLength) / this.dayLength;
+    tickEnv(this.env, dt, this.dayTime, this.rng);
     this.registry.updateAll(dt);
   }
 

@@ -32,6 +32,8 @@ export interface CardView {
   buildQueueCount: number;
   stockpile: Record<string, number>;
   desiresOf?(eid: number): Record<DesireId, number> | null;
+  // 环境调制（DESIGN §6）：下雨 → 户外工作低、娱乐高；酷暑/严寒 → 户外工作低
+  env?: { raining: boolean; temperature: number };
 }
 
 export interface CardContext {
@@ -267,6 +269,18 @@ function effectiveWeight(card: BehaviorCard, pawn: PawnLike, ctx?: CardContext):
         const hunger = 100 - d[desire];
         if (hunger > 40) w *= 1 + (hunger - 40) / 100; // 匮乏(>40%) → 权重升
       }
+    }
+  }
+  // 环境调制（DESIGN §6）：下雨/酷暑/严寒 → 户外工作低，娱乐高
+  const env = ctx?.view.env;
+  if (env) {
+    if (card.series === 'work') {
+      if (env.raining) w *= 0.5;
+      if (env.temperature > 32 || env.temperature < 0) w *= 0.6;
+    } else if (card.series === 'leisure') {
+      if (env.raining) w *= 1.6;
+    } else if (card.series === 'physio') {
+      if (env.temperature > 32 || env.temperature < 0) w *= 1.3; // 极端天气更想进食/休息
     }
   }
   return w;

@@ -423,3 +423,50 @@ describe('社交/流言系统（DESIGN §6 微互动）', () => {
     expect(['positive', 'negative', 'neutral']).toContain(soc[0].data?.tone);
   });
 });
+
+describe('环境系统（DESIGN §6 环境调制）', () => {
+  it('temperature oscillates across the day cycle', () => {
+    const sim = new Sim({ seed: 60, pawnCount: 1 });
+    let maxT = -Infinity;
+    let minT = Infinity;
+    // 跑完一整天（120 秒）
+    for (let i = 0; i < 2400; i++) {
+      sim.step(1 / 20);
+      maxT = Math.max(maxT, sim.env.temperature);
+      minT = Math.min(minT, sim.env.temperature);
+    }
+    expect(maxT).toBeGreaterThan(minT); // 昼夜温差
+    expect(sim.env.temperature).toBeGreaterThan(-20);
+    expect(sim.env.temperature).toBeLessThan(50);
+  });
+
+  it('rain increases leisure card weight and reduces work weight', () => {
+    const sim = new Sim({ seed: 61, pawnCount: 1 });
+    // 强制降雨
+    sim.env.raining = true;
+    sim.env.rainLeft = 30;
+    const dna = generateDna(5);
+    const slots = initSlots(dna);
+    const rng = new SimRng(1);
+    // 统计 60 次抽卡中 work vs leisure 出现次数
+    const ctx = {
+      view: {
+        buildQueueCount: 0,
+        stockpile: { wood: 0, ore: 0, food: 50 },
+        needsOf: () => ({ food: 80, rest: 80, mood: 60, san: 100 }),
+        isNight: () => false,
+        hasCampfire: () => false,
+        hasCave: () => false,
+        env: { raining: true, temperature: 15 },
+      },
+      eid: 1,
+    };
+    let leisure = 0;
+    for (let i = 0; i < 200; i++) {
+      const drawn = drawCards({ dna, slots }, rng, 3, ctx);
+      if (drawn.some((c) => c.series === 'leisure')) leisure++;
+    }
+    // 雨天娱乐卡出现频率应显著（雨天权重 1.6）
+    expect(leisure).toBeGreaterThan(10);
+  });
+});
