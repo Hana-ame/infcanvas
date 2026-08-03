@@ -51,6 +51,31 @@ export class World {
         this.setTile(cx + dx, cy + dy, 'grass');
       }
     }
+    // 出生点近圈资源保证（饥荒式开局）：树/矿/石/水，确定性
+    this.ensureSpawnResources(cx, cy);
+  }
+
+  // 出生点近圈撒资源：保证开局可采集（树、矿、石、水）
+  private ensureSpawnResources(cx: number, cy: number): void {
+    const rng = new SimRng(this.seed ^ 0x5eed);
+    const place = (id: string) => {
+      for (let tries = 0; tries < 24; tries++) {
+        const r = 3 + rng.int(0, 5); // 距离 3-7
+        const a = rng.next() * Math.PI * 2;
+        const x = cx + Math.round(Math.cos(a) * r);
+        const y = cy + Math.round(Math.sin(a) * r);
+        if (!this.inBounds(x, y)) continue;
+        const cur = this.getTile(x, y);
+        if (cur === 'grass' || cur === 'tree' || cur === 'dirt') {
+          this.setTile(x, y, id);
+          return;
+        }
+      }
+    };
+    // 至少各放几处，保证开局资源不枯竭
+    for (let i = 0; i < 4; i++) place('tree');
+    for (let i = 0; i < 3; i++) place('ore');
+    for (let i = 0; i < 3; i++) place('stone');
   }
 
   inBounds(x: number, y: number): boolean {

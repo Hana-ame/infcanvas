@@ -49,6 +49,24 @@ describe('World generation', () => {
       }
     }
   });
+
+  it('guarantees mineable resources near spawn for opening', () => {
+    const w = new World(123);
+    const cx = Math.floor(w.width / 2);
+    const cy = Math.floor(w.height / 2);
+    let ore = 0;
+    let stone = 0;
+    for (let dy = -8; dy <= 8; dy++) {
+      for (let dx = -8; dx <= 8; dx++) {
+        if (Math.hypot(dx, dy) < 3) continue; // 出生点草圈
+        const t = w.getTile(cx + dx, cy + dy);
+        if (t === 'ore') ore++;
+        else if (t === 'stone') stone++;
+      }
+    }
+    expect(ore).toBeGreaterThan(0);
+    expect(stone).toBeGreaterThan(0);
+  });
 });
 
 describe('DNA + slots', () => {
