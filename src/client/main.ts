@@ -115,6 +115,20 @@ async function main(): Promise<void> {
     }
   };
 
+  // 鼠标左键：选中（或放置建造）
+  canvas.addEventListener('click', (e) => {
+    if (e.button !== 0) return;
+    const pos = screenPos(e);
+    if (buildMode) {
+      // 建造放置
+      const world = renderer.screenToWorld(pos.x, pos.y);
+      sim.issueCommand({ type: 'build', x: world.x, y: world.y, buildingId: buildMode });
+    } else {
+      // 选最近 pawn
+      renderer.selectNearest(pos.x, pos.y, 26);
+    }
+  });
+
   canvas.addEventListener('pointerdown', (e) => {
     pointers.set(e.pointerId, screenPos(e));
     touchActive = touchActive || e.pointerType !== 'mouse';

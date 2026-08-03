@@ -1,5 +1,5 @@
 // Pixi 渲染器 —— Emoji 图标: 地形/建筑/小人 + 相机
-import { Application, Container, Graphics, Text, TextStyle } from 'pixi.js';
+import { Application, Container, Graphics, Rectangle, Text, TextStyle } from 'pixi.js';
 import { Sim } from '../sim/sim';
 import { TILES, BUILDINGS, ITEM_EMOJI } from '../sim/defs';
 
@@ -120,12 +120,13 @@ export class Renderer {
     for (const eid of this.sim.pawns) {
       let t = this.pawnTexts.get(eid);
       if (!t) {
-        t = new Text({ text: '🧑', style: terrainStyle(24) });
+        t = new Text({ text: '🐁', style: terrainStyle(24) });
         t.resolution = this.app.renderer.resolution;
         t.anchor.set(0.5);
         this.pawnLayer.addChild(t);
         this.pawnTexts.set(eid, t);
         t.eventMode = 'static';
+        t.hitArea = new Rectangle(-14, -14, 28, 28);
         t.on('pointerdown', (e) => {
           e.stopPropagation();
           this.selectPawn(eid);
@@ -144,6 +145,25 @@ export class Renderer {
     this.selected.clear();
     this.selected.add(eid);
     this.sim.selected = [eid];
+  }
+
+  // 点选最近的 pawn（半径内），返回是否选中
+  selectNearest(sx: number, sy: number, radiusPix = 24): boolean {
+    const world = this.screenToWorld(sx, sy);
+    let best: { eid: number; d: number } | null = null;
+    for (const eid of this.sim.pawns) {
+      const pos = this.sim.pawnPositions.get(eid);
+      if (!pos) continue;
+      const d = Math.hypot(pos.x - world.x, pos.y - world.y);
+      if (d * TILE <= radiusPix && (!best || d < best.d)) best = { eid, d };
+    }
+    if (best) {
+      this.selectPawn(best.eid);
+      return true;
+    }
+    this.selected.clear();
+    this.sim.selected = [];
+    return false;
   }
 
   setCamera(dx: number, dy: number): void {
