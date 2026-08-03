@@ -105,12 +105,44 @@ export function generateDna(seed: number): Dna {
   return dna;
 }
 
-// 初始卡池：填满基础卡（后续神谕/成长可替换/插入天赋卡）
+// 天赋卡：DNA 天赋产生的专属卡（被动修正/附加行为），占用槽位，不可移除
+export const TRAIT_CARDS: Record<string, BehaviorCard> = {
+  '夜猫子': { id: 'trait:夜猫子', name: '夜猫子', series: 'physio', weight: 1, action: 'rest',
+    condition: (c) => c.sim.isNight() && (c.sim.needsOf(c.eid)?.rest ?? 0) < 70,
+    utility: (c) => 40 - (c.sim.needsOf(c.eid)?.rest ?? 0) },
+  '热爱工作': { id: 'trait:热爱工作', name: '热爱工作', series: 'work', weight: 0, action: 'idle',
+    // 被动：工作卡权重加成（见 initSlots 里 workBonus 处理）
+    utility: () => 0 },
+  '好斗': { id: 'trait:好斗', name: '好斗', series: 'combat', weight: 2, action: 'idle',
+    condition: () => false, // 战斗行为后续接入
+    utility: () => 0 },
+  '虔诚': { id: 'trait:虔诚', name: '虔诚', series: 'religion', weight: 3, action: 'pray',
+    condition: (c) => c.sim.needsOf(c.eid)?.mood !== undefined && (c.sim.needsOf(c.eid)?.mood ?? 0) < 50,
+    utility: (c) => 10 },
+  '懒惰': { id: 'trait:懒惰', name: '懒惰', series: 'leisure', weight: 4, action: 'idle',
+    utility: () => 12 },
+  '强壮': { id: 'trait:强壮', name: '强壮', series: 'work', weight: 0, action: 'idle',
+    utility: () => 0 },
+  '机灵': { id: 'trait:机灵', name: '机灵', series: 'work', weight: 0, action: 'idle',
+    utility: () => 0 },
+};
+
+// 初始卡池：基础卡 + 天赋卡（天赋卡占槽位，不可移除）
 export function initSlots(dna: Dna): (BehaviorCard | null)[] {
   const slots: (BehaviorCard | null)[] = [];
-  for (let i = 0; i < dna.maxSlots; i++) {
-    const card = i < BASE_CARDS.length ? BASE_CARDS[i] : null;
-    slots.push(card);
+  // 天赋卡优先占槽
+  const traitCards = dna.traits
+    .map((t) => TRAIT_CARDS[t])
+    .filter((c): c is BehaviorCard => c !== undefined);
+  for (const tc of traitCards) slots.push(tc);
+  // 剩余槽位填基础卡
+  let baseIdx = 0;
+  while (slots.length < dna.maxSlots && baseIdx < BASE_CARDS.length) {
+    slots.push(BASE_CARDS[baseIdx++]);
+  }
+  // 槽位不足则补基础卡（P0 简单）
+  while (slots.length < dna.maxSlots) {
+    slots.push(BASE_CARDS[0]);
   }
   return slots;
 }
@@ -127,12 +159,20 @@ export function drawCards(pawn: PawnLike, rng: SimRng, n: number, ctx: CardConte
   const pool = [...available];
   const drawn: BehaviorCard[] = [];
   while (pool.length > 0 && drawn.length < n) {
-    const weights = pool.map((c) => c.weight);
+    const weights = pool.map((c) => effectiveWeight(c, pawn));
     const pick = rng.weightedPick(pool, weights);
     drawn.push(pick);
     pool.splice(pool.indexOf(pick), 1);
   }
   return drawn;
+}
+
+// 天赋被动修正：热爱工作 → 工作系卡权重加成
+function effectiveWeight(card: BehaviorCard, pawn: PawnLike): number {
+  let w = card.weight;
+  if (pawn.dna.traits.includes('热爱工作') && card.series === 'work') w *= 1.8;
+  if (pawn.dna.traits.includes('懒惰') && card.series === 'work') w *= 0.5;
+  return w;
 }
 
 // 挑收益最高的 1 张执行
