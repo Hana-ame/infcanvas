@@ -168,6 +168,8 @@ export class Sim implements SimContext {
       st.chopTarget = undefined;
       st.chopXY = undefined;
       st.chopProgress = undefined;
+      st.prayTarget = undefined;
+      st.praying = undefined;
     }
   }
 
