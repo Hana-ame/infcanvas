@@ -129,7 +129,17 @@ export class BehaviorSystem implements GameSystem {
       else st.job = '闲逛';
     } else if (intent.workType === 'build') {
       if (c.buildQueue.length > 0) {
-        const b = c.buildQueue[0];
+        // 找最近的蓝图（而不是永远第一个）
+        const pos = c.readPosition(eid);
+        let best: (typeof c.buildQueue)[number] | null = null;
+        let bestD = Infinity;
+        if (pos) {
+          for (const b of c.buildQueue) {
+            const d = (b.x - pos.x) ** 2 + (b.y - pos.y) ** 2;
+            if (d < bestD) { bestD = d; best = b; }
+          }
+        }
+        const b = best ?? c.buildQueue[0];
         const def = BUILDINGS[b.defId];
         st.job = `建造:${def.name}`;
         c.moveTo(eid, b.x, b.y);
