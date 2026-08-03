@@ -55,7 +55,7 @@ export class SocialSystem implements GameSystem {
     stA.socialCd = 15 + Math.floor(this.ctx.rng.next() * 10);
 
     // 传教（信仰对抗，DESIGN §3 对抗检定）：高信仰者尝试说服邻居改信
-    if (stB && (stA.faith ?? 0) >= 30 && this.ctx.rng.next() < 0.15) {
+    if (stB && (stA.faith ?? 0) >= 30 && this.ctx.rng.next() < 0.25) {
       this.preach(a, b);
       return;
     }

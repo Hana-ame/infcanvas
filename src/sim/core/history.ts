@@ -74,6 +74,9 @@ export class HistoryLog {
         base.eid = ev.eid;
         base.data = { target: ev.target, tone: ev.tone, topic: ev.topic };
         break;
+      case 'event_happened':
+        base.data = { eventId: ev.eventId };
+        break;
     }
     this.entries.push(base);
     if (this.entries.length > this.cap) this.entries.splice(0, this.entries.length - this.cap);

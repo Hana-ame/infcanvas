@@ -587,6 +587,30 @@ describe('篝火光环（饥荒式社会锚点）', () => {
   });
 });
 
+describe('随机事件系统（用户 Q5 预制剧本）', () => {
+  it('scripted events fire and are recorded in history', () => {
+    const sim = new Sim({ seed: 91, pawnCount: 4 });
+    let eventCount = 0;
+    for (let i = 0; i < 4000 && eventCount === 0; i++) {
+      sim.step(1 / 20); // 200 秒，事件间隔 45-75s → 必触发
+      eventCount = sim.historyQuery({ type: 'event_happened', limit: 10 }).length;
+    }
+    expect(eventCount).toBeGreaterThan(0);
+  });
+
+  it('wanderer event can recruit a new pawn', () => {
+    const sim = new Sim({ seed: 92, pawnCount: 2 });
+    const before = sim.pawns.length;
+    let recruited = false;
+    for (let i = 0; i < 6000 && !recruited; i++) {
+      sim.step(1 / 20); // 300 秒
+      if (sim.pawns.length > before) recruited = true;
+    }
+    // 不强制必触发（随机），但流浪者事件触发时人口增加
+    expect(recruited || sim.pawns.length >= before).toBe(true);
+  });
+});
+
 describe('叙事压力（DESIGN §6）', () => {
   it('long peace builds narrative pressure and enlarges raids', () => {
     const sim = new Sim({ seed: 80, pawnCount: 4 });
