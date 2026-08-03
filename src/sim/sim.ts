@@ -77,6 +77,19 @@ export interface Command {
   buildingId?: string;
 }
 
+export interface SaveData {
+  time: number;
+  dayTime: number;
+  stockpile: Record<string, number>;
+  tiles: string[];
+  buildings: { key: number; defId: string; hp: number; faction: string }[];
+  pawns: {
+    eid: number; x: number; y: number;
+    dna: Dna; slots: ReturnType<typeof initSlots>;
+    needs: NeedsData | null; health: HealthData | null;
+  }[];
+}
+
 export class Sim implements SimContext {
   ecs: EcsWorld;
   world: World;
@@ -367,5 +380,49 @@ export class Sim implements SimContext {
       pos: this.pawnPositions.get(eid) ?? { x: 0, y: 0 },
       lastDecision: st.lastDecision,
     };
+  }
+
+  // ---- 存档 ----
+  save(): SaveData {
+    return {
+      time: this.time,
+      dayTime: this.dayTime,
+      stockpile: { ...this.stockpile },
+      tiles: this.world.serializeTiles(),
+      buildings: this.world.serializeBuildings(),
+      pawns: this._pawnList.map((eid) => {
+        const st = this.pawnStates.get(eid)!;
+        const pos = this.readPosition(eid)!;
+        return {
+          eid,
+          x: pos.x, y: pos.y,
+          dna: st.dna,
+          slots: st.slots,
+          needs: this.readNeeds(eid),
+          health: this.readHealth(eid),
+        };
+      }),
+    };
+  }
+
+  load(data: SaveData): void {
+    this.time = data.time ?? 0;
+    this.dayTime = data.dayTime ?? 0;
+    if (data.stockpile) this.stockpile = { wood: 50, ore: 0, food: 30, tools: 0, ...data.stockpile };
+    if (data.tiles) this.world.loadTiles(data.tiles);
+    if (data.buildings) this.world.loadBuildings(data.buildings);
+    // 重建小人
+    for (const eid of this._pawnList) this.killPawn(eid);
+    if (data.pawns) {
+      for (const p of data.pawns) {
+        const eid = this.spawnPawn(Math.round(p.x), Math.round(p.y));
+        if (eid === -1) continue;
+        const st = this.pawnStates.get(eid)!;
+        st.dna = p.dna;
+        st.slots = p.slots;
+        if (p.needs) this.setNeeds(eid, p.needs);
+        if (p.health) this.setHealth(eid, p.health);
+      }
+    }
   }
 }

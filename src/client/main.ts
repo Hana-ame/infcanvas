@@ -130,8 +130,20 @@ async function main(): Promise<void> {
   const isTouch = 'ontouchstart' in window;
 
   const sim = new Sim({ seed: 20260803, pawnCount: 4 });
+  // 读取存档（localStorage）
+  try {
+    const raw = localStorage.getItem('infcanvas-save');
+    if (raw) sim.load(JSON.parse(raw));
+  } catch { /* 存档损坏则忽略 */ }
   const renderer = new Renderer(sim);
   await renderer.init(container);
+
+  // 自动存档（每 30 秒）
+  setInterval(() => {
+    try {
+      localStorage.setItem('infcanvas-save', JSON.stringify(sim.save()));
+    } catch { /* 忽略写失败 */ }
+  }, 30000);
 
   let buildMode: string | null = null;
   const hud = createHud(sim, (id) => {

@@ -96,6 +96,40 @@ export class World {
     this.tileIndex[this.idx(x, y)] = this.tileIdToIndex(tileId);
   }
 
+  // 序列化：导出全部 tile id + 建筑（存档用）
+  serializeTiles(): string[] {
+    const out: string[] = new Array(this.width * this.height);
+    for (let i = 0; i < this.tileIndex.length; i++) {
+      out[i] = this.tileKeys[this.tileIndex[i]];
+    }
+    return out;
+  }
+
+  loadTiles(tiles: string[]): void {
+    if (tiles.length !== this.width * this.height) return;
+    for (let i = 0; i < tiles.length; i++) {
+      const id = TILES[tiles[i]] ? tiles[i] : 'grass';
+      this.tileIndex[i] = this.tileIdToIndex(id);
+    }
+  }
+
+  serializeBuildings(): { key: number; defId: string; hp: number; faction: string }[] {
+    return [...this.buildings.entries()].map(([key, b]) => ({ key, defId: b.def.id, hp: b.hp, faction: b.faction }));
+  }
+
+  loadBuildings(data: { key: number; defId: string; hp: number; faction: string }[]): void {
+    this.buildings.clear();
+    for (const d of data) {
+      const def = BUILDINGS[d.defId];
+      if (!def) continue;
+      const x = d.key % this.width;
+      const y = Math.floor(d.key / this.width);
+      this.buildings.set(this.buildKey(x, y), { def, hp: d.hp, faction: d.faction });
+    }
+    this.buildingVersion++;
+    this.recomputeLight();
+  }
+
   getTileDef(x: number, y: number): (typeof TILES)[string] {
     return TILES[this.getTile(x, y)];
   }
