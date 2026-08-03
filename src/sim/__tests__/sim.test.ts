@@ -570,6 +570,23 @@ describe('马尔可夫偏置（DESIGN §6）', () => {
   });
 });
 
+describe('篝火光环（饥荒式社会锚点）', () => {
+  it('campfire aura lifts mood for nearby pawns', () => {
+    const sim = new Sim({ seed: 90, pawnCount: 1 });
+    const eid = sim.pawns[0];
+    const cx = Math.floor(sim.world.width / 2);
+    const cy = Math.floor(sim.world.height / 2);
+    sim.world.placeBuilding(cx, cy, 'campfire', 'player');
+    // 压心情低，让提升可测
+    const n = sim.readNeeds(eid)!;
+    n.mood = 30;
+    sim.setNeeds(eid, n);
+    sim.pawnPositions.set(eid, { x: cx, y: cy + 1 }); // 篝火旁
+    for (let i = 0; i < 100; i++) sim.step(1 / 20); // 5 秒
+    expect(sim.readNeeds(eid)!.mood).toBeGreaterThan(30);
+  });
+});
+
 describe('叙事压力（DESIGN §6）', () => {
   it('long peace builds narrative pressure and enlarges raids', () => {
     const sim = new Sim({ seed: 80, pawnCount: 4 });
