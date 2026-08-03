@@ -1,6 +1,7 @@
 // 世界 chunk 生成 —— P0 用种子生成有限地图（含 chunk 结构，后期扩无限）
 import { SimRng } from './rng';
 import { TILES, BUILDINGS } from '../defs';
+import { generateBiomeMap } from './noise';
 
 export const CHUNK_SIZE = 32; // 每 chunk 的 tile 数（32x32）
 export const WORLD_CHUNKS = 6; // P0 世界 = 6x6 chunks = 192x192 tiles
@@ -36,43 +37,18 @@ export class World {
     return this.tileKeys.indexOf(id);
   }
 
-  // 确定性：按 chunk 顺序生成，每个 chunk 用固定坐标 seed
+  // 确定性地形生成（Minecraft-like）：值噪声 + 海拔/湿度双轴 → 生物群系
   private generate(): void {
-    const perChunkRng = new SimRng(this.seed);
-    for (let cy = 0; cy < this.chunkRows; cy++) {
-      for (let cx = 0; cx < this.chunkCols; cx++) {
-        const chunkSeed = perChunkRng.int(1, 2 ** 31 - 1);
-        this.generateChunk(cx, cy, chunkSeed);
-      }
+    const biomeMap = generateBiomeMap(this.width, this.height, this.seed);
+    for (let i = 0; i < biomeMap.length; i++) {
+      this.tileIndex[i] = this.tileIdToIndex(biomeMap[i]);
     }
     // 保证出生点是一块草地
     const cx = Math.floor(this.width / 2);
     const cy = Math.floor(this.height / 2);
-    for (let dy = -2; dy <= 2; dy++) {
-      for (let dx = -2; dx <= 2; dx++) {
+    for (let dy = -3; dy <= 3; dy++) {
+      for (let dx = -3; dx <= 3; dx++) {
         this.setTile(cx + dx, cy + dy, 'grass');
-      }
-    }
-  }
-
-  private generateChunk(cx: number, cy: number, chunkSeed: number): void {
-    const rng = new SimRng(chunkSeed);
-    const baseX = cx * CHUNK_SIZE;
-    const baseY = cy * CHUNK_SIZE;
-    for (let y = 0; y < CHUNK_SIZE; y++) {
-      for (let x = 0; x < CHUNK_SIZE; x++) {
-        const wx = baseX + x;
-        const wy = baseY + y;
-        const r = rng.next();
-        let tile: string;
-        if (r < 0.45) tile = 'grass';
-        else if (r < 0.65) tile = 'tree';
-        else if (r < 0.75) tile = 'dirt';
-        else if (r < 0.83) tile = 'stone';
-        else if (r < 0.9) tile = 'ore';
-        else if (r < 0.95) tile = 'water';
-        else tile = 'mountain';
-        this.setTile(wx, wy, tile);
       }
     }
   }

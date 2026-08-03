@@ -36,7 +36,9 @@ export interface ItemDef {
 export const TILES: Record<string, TileDef> = {
   grass: { id: 'grass', name: '草地', passable: true, buildable: true, color: '#3a7d44' },
   dirt: { id: 'dirt', name: '泥土', passable: true, buildable: true, color: '#8b6f47' },
-  water: { id: 'water', name: '水', passable: false, buildable: false, color: '#5d8fd4', emoji: '💧' },
+  sand: { id: 'sand', name: '沙滩', passable: true, buildable: true, color: '#d9c98a' },
+  desert: { id: 'desert', name: '沙漠', passable: true, buildable: true, color: '#c2b280' },
+  water: { id: 'water', name: '水', passable: false, buildable: false, color: '#2a6bb0', emoji: '💧' },
   stone: { id: 'stone', name: '石头', passable: true, buildable: true, color: '#8a8a8a', emoji: '🪨' },
   mountain: { id: 'mountain', name: '山地', passable: false, buildable: false, color: '#4a4a4a' },
   tree: {
