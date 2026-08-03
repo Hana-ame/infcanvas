@@ -40,6 +40,13 @@ export class BehaviorSystem implements GameSystem {
       const pos = this.ctx.readPosition(eid);
       if (!pos) continue;
 
+      // 理智崩溃：狂乱行为由 SanSystem 接管（发呆/乱跑），不自动决策
+      const n = this.ctx.readNeeds(eid);
+      if (n && n.san < 25) {
+        st.job = '理智崩溃';
+        continue;
+      }
+
       // 工作中（采集/祈祷/疗伤/建造进度）不打断
       if (st.mining || st.chopXY || st.praying || st.healing || st.caveWork) continue;
 

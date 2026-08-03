@@ -17,7 +17,7 @@ export interface Dna {
 
 // 卡决策可读的 sim 信息（只读，决策用）
 export interface CardView {
-  needsOf(eid: number): { food: number; rest: number; mood: number } | null;
+  needsOf(eid: number): { food: number; rest: number; mood: number; san: number } | null;
   healthOf?(eid: number): { hp: number; maxHp: number } | null;
   isNight(): boolean;
   hasCampfire(): boolean;

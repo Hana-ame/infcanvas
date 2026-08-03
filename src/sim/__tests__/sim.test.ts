@@ -65,7 +65,7 @@ describe('DNA + slots', () => {
       view: {
         buildQueueCount: 0,
         stockpile: { wood: 0, ore: 0, food: 50 },
-        needsOf: () => ({ food: 80, rest: 80, mood: 60 }),
+        needsOf: () => ({ food: 80, rest: 80, mood: 60, san: 100 }),
         isNight: () => false,
         hasCampfire: () => false,
         hasCave: () => false,
@@ -146,5 +146,32 @@ describe('Sim basic loop', () => {
     for (let i = 0; i < 300; i++) sim.step(1 / 20); // 15 秒
     expect(sim.world.getTile(oreX, oreY)).toBe('dirt');
     expect(sim.stockpile.ore).toBeGreaterThan(0);
+  });
+});
+
+describe('SAN 理智系统', () => {
+  it('witnessing a death drains nearby pawn sanity', () => {
+    const sim = new Sim({ seed: 11, pawnCount: 2 });
+    const [a, b] = sim.pawns;
+    const posA = sim.pawnPositions.get(a)!;
+    sim.pawnPositions.set(b, { x: posA.x + 1, y: posA.y }); // 相邻
+    const before = sim.readNeeds(b)!.san;
+    sim.bus.emit({ type: 'pawn_died', eid: a, x: posA.x, y: posA.y, cause: 'combat' });
+    const after = sim.readNeeds(b)!.san;
+    expect(after).toBeLessThan(before);
+  });
+
+  it('sleeping near campfire restores sanity', () => {
+    const sim = new Sim({ seed: 12, pawnCount: 1 });
+    const eid = sim.pawns[0];
+    const n = sim.readNeeds(eid)!;
+    n.san = 40;
+    sim.setNeeds(eid, n);
+    const cx = Math.floor(sim.world.width / 2);
+    const cy = Math.floor(sim.world.height / 2);
+    sim.world.placeBuilding(cx, cy, 'campfire', 'player');
+    sim.pawnPositions.set(eid, { x: cx, y: cy });
+    for (let i = 0; i < 60; i++) sim.step(1 / 20); // 3 秒
+    expect(sim.readNeeds(eid)!.san).toBeGreaterThan(40);
   });
 });

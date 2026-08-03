@@ -150,7 +150,7 @@ function createHud(sim: Sim, onSelectBuild: (id: string | null) => void, onZoom?
           `天赋：${p.dna.traits.join('、') || '无'}<br>` +
           `插槽(${p.slots.filter((c) => c !== null).length}/${p.dna.maxSlots})：${slotCards}<br>` +
           (dec ? `<span style="color:#caa">${dec}</span><br>` : '') +
-          (nd ? `饥饿 ${nf(nd.food)} · 精力 ${nf(nd.rest)} · 心情 ${nf(nd.mood)}` : '');
+          (nd ? `饥饿 ${nf(nd.food)} · 精力 ${nf(nd.rest)} · 心情 ${nf(nd.mood)} · 理智 ${nf(nd.san)}` : '');
       } else {
         selPanel.style.display = 'none';
       }

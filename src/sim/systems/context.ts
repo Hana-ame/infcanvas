@@ -37,10 +37,10 @@ export interface SimContext {
   isNight(): boolean;
   // 读组件
   readPosition(eid: number): { x: number; y: number } | null;
-  readNeeds(eid: number): { food: number; rest: number; mood: number } | null;
+  readNeeds(eid: number): { food: number; rest: number; mood: number; san: number } | null;
   readHealth(eid: number): { hp: number; maxHp: number } | null;
   readSpeed(eid: number): { v: number } | null;
-  setNeeds(eid: number, n: { food: number; rest: number; mood: number }): void;
+  setNeeds(eid: number, n: { food: number; rest: number; mood: number; san: number }): void;
   setHealth(eid: number, h: { hp: number; maxHp: number }): void;
   setPosition(eid: number, p: { x: number; y: number }): void;
   // 命令/移动

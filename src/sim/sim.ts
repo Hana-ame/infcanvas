@@ -14,6 +14,7 @@ import { BUILDINGS } from './defs';
 import type { SimContext } from './systems/context';
 import { SystemRegistry } from './systems/registry';
 import { NeedsSystem } from './systems/needsSystem';
+import { SanSystem } from './systems/sanSystem';
 import { BehaviorSystem } from './systems/cardSystem';
 import { GatherSystem } from './systems/gatherSystem';
 import { BuildSystem } from './systems/buildSystem';
@@ -25,13 +26,13 @@ import { PopulationSystem } from './systems/populationSystem';
 
 // ---- ECS 组件定义 ----
 export interface PositionData { x: number; y: number }
-export interface NeedsData { food: number; rest: number; mood: number }
+export interface NeedsData { food: number; rest: number; mood: number; san: number }
 export interface SpeedData { v: number }
 export interface HealthData { hp: number; maxHp: number }
 
 export const Position = { x: [] as number[], y: [] as number[] };
 export const Pawn = {} as { _flag?: number[] };
-export const NeedsComp = { food: [] as number[], rest: [] as number[], mood: [] as number[] };
+export const NeedsComp = { food: [] as number[], rest: [] as number[], mood: [] as number[], san: [] as number[] };
 export const Speed = { v: [] as number[] };
 export const Health = { hp: [] as number[], maxHp: [] as number[] };
 
@@ -66,6 +67,7 @@ export interface PawnState {
   commandCooldown?: number; // 玩家命令后的一段时间不自动决策
   faith?: number; // 信仰度（祈祷积累，影响违抗与心情）
   defyCd?: number; // 违抗后的冷却时间（秒）
+  crazyCooldown?: number; // 狂乱乱跑冷却
   job?: string;
   // 最近决策记录（设计文档：小人闪过哪3个念头、选了哪个）
   lastDecision?: { drawn: string[]; picked: string; time: number };
@@ -145,6 +147,7 @@ export class Sim implements SimContext {
   private registerSystems(): void {
     this.registry
       .register(new NeedsSystem(this))
+      .register(new SanSystem(this))
       .register(new BehaviorSystem(this))
       .register(new GatherSystem(this))
       .register(new BuildSystem(this))
@@ -164,7 +167,7 @@ export class Sim implements SimContext {
   }
   readNeeds(eid: number): NeedsData | null {
     if (NeedsComp.food[eid] === undefined) return null;
-    return { food: NeedsComp.food[eid], rest: NeedsComp.rest[eid], mood: NeedsComp.mood[eid] };
+    return { food: NeedsComp.food[eid], rest: NeedsComp.rest[eid], mood: NeedsComp.mood[eid], san: NeedsComp.san[eid] ?? 100 };
   }
   readHealth(eid: number): HealthData | null {
     if (Health.hp[eid] === undefined) return null;
