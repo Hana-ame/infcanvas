@@ -18,6 +18,7 @@ export class Renderer {
   private buildingLayer: Container;
   private pawnLayer: Container;
   private pawnTexts = new Map<number, Text>();
+  private pawnJobIcons = new Map<number, Text>();
   private camera = { x: 0, y: 0, zoom: 1 };
   private selected = new Set<number>();
   private lastBuildingVersion = -1;
@@ -123,6 +124,9 @@ export class Renderer {
   }
 
   private renderPawns(): void {
+    const jobEmoji: Record<string, string> = {
+      '伐木': '🪓', '采矿': '⛏️', '建造': '🧱', '闲逛': '', '': '',
+    };
     for (const eid of this.sim.pawns) {
       let t = this.pawnTexts.get(eid);
       if (!t) {
@@ -147,7 +151,24 @@ export class Renderer {
         const hk = this.sim.healthOf(eid);
         if (hk && hk.hp / hk.maxHp < 0.4) {
           t.alpha = Math.max(0.35, hk.hp / hk.maxHp);
-          t.style = terrainStyle(24); // 保持字号
+        }
+        // 工作图标（显示在头顶）
+        const job = this.sim.pawnJob(eid);
+        const icon = jobEmoji[job] ?? '';
+        let jt = this.pawnJobIcons.get(eid);
+        if (icon) {
+          if (!jt) {
+            jt = new Text({ text: '', style: terrainStyle(12) });
+            jt.resolution = this.app.renderer.resolution;
+            jt.anchor.set(0.5, 1);
+            this.pawnLayer.addChild(jt);
+            this.pawnJobIcons.set(eid, jt);
+          }
+          jt.text = icon;
+          jt.position.set(pos.x * TILE, pos.y * TILE - 14);
+          jt.visible = true;
+        } else if (jt) {
+          jt.visible = false;
         }
       }
     }
