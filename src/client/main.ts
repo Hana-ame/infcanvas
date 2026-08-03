@@ -148,6 +148,7 @@ async function main(): Promise<void> {
   let buildMode: string | null = null;
   const hud = createHud(sim, (id) => {
     buildMode = id;
+    if (!id) renderer.clearGhost();
     hud.update(buildMode);
   });
 
@@ -198,6 +199,12 @@ async function main(): Promise<void> {
       if (mouseDragging) {
         renderer.setCamera(e.movementX, e.movementY);
       }
+    }
+    // 建造模式：显示幽灵预览
+    if (buildMode && !mouseDragging) {
+      const wt = renderer.screenToWorld(e.clientX, e.clientY);
+      const can = sim.world.canBuildAt(wt.x, wt.y);
+      renderer.setGhost(wt, can ? 0x4cf : 0xf44);
     }
   });
   window.addEventListener('mouseup', () => {

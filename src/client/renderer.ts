@@ -25,6 +25,10 @@ export class Renderer {
   private lastBuildingVersion = -1;
   private tilesDrawn = false;
   private nightOverlay!: Graphics;
+  // 建造幽灵预览
+  private ghost: Graphics;
+  private ghostPos: { x: number; y: number } | null = null;
+  private ghostColor = 0x4cf;
 
   constructor(sim: Sim) {
     this.sim = sim;
@@ -33,9 +37,12 @@ export class Renderer {
     this.terrainLayer = new Container();
     this.buildingLayer = new Container();
     this.pawnLayer = new Container();
+    this.ghost = new Graphics();
+    this.ghost.eventMode = 'none';
     this.worldContainer.addChild(this.terrainLayer);
     this.worldContainer.addChild(this.buildingLayer);
     this.worldContainer.addChild(this.pawnLayer);
+    this.worldContainer.addChild(this.ghost);
   }
 
   async init(container: HTMLElement): Promise<void> {
@@ -112,6 +119,7 @@ export class Renderer {
     }
     this.renderPawns();
     this.renderHostiles();
+    this.renderGhost();
     // 夜晚遮罩跟随屏幕大小 + 夜色
     this.nightOverlay.clear();
     this.nightOverlay.rect(0, 0, this.app.screen.width, this.app.screen.height);
@@ -227,6 +235,27 @@ export class Renderer {
     this.selected.clear();
     this.selected.add(eid);
     this.sim.selected = [eid];
+  }
+
+  // 建造幽灵预览
+  setGhost(worldTile: { x: number; y: number }, color?: number): void {
+    this.ghostPos = worldTile;
+    if (color) this.ghostColor = color;
+  }
+
+  clearGhost(): void {
+    this.ghostPos = null;
+    this.ghost.clear();
+  }
+
+  private renderGhost(): void {
+    this.ghost.clear();
+    if (!this.ghostPos) return;
+    const gx = this.ghostPos.x * TILE;
+    const gy = this.ghostPos.y * TILE;
+    this.ghost.rect(gx, gy, TILE, TILE);
+    this.ghost.fill(this.ghostColor);
+    this.ghost.alpha = 0.4;
   }
 
   // 点选最近的 pawn（半径内），返回是否选中
