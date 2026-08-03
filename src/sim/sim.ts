@@ -440,7 +440,10 @@ export class Sim {
         const dist = Math.hypot(dx, dy);
         const sp = readSpeed(this.ecs, eid);
         const speed = sp?.v ?? 4;
-        const move = speed * dt;
+        // 心情影响行动效率：沮丧走得慢，愉快走得快（0.6x - 1.2x）
+        const nd = readNeeds(this.ecs, eid);
+        const moodFactor = nd ? 0.6 + (nd.mood / 100) * 0.6 : 1;
+        const move = speed * moodFactor * dt;
         if (dist <= move) {
           pos.x = target.x;
           pos.y = target.y;
@@ -500,6 +503,13 @@ export class Sim {
     // 已在干活（砍/采/建中）则不要打断
     if (st.chopXY || st.mining) return;
     const w = this.world;
+
+    // 心情崩溃 → 拒绝工作（意图失真：小人不想干活就不干）
+    const nd = readNeeds(this.ecs, eid);
+    if (nd && nd.mood < 15) {
+      st.job = '心情崩溃';
+      return;
+    }
 
     // 1. 建造（有蓝图且附近有空闲耗时）
     if (this.buildQueue.length > 0) {
