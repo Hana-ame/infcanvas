@@ -59,6 +59,8 @@ export interface PawnState {
   chopProgress?: number;
   prayTarget?: { x: number; y: number }; // 祈祷点（篝火）
   praying?: { x: number; y: number; progress: number };
+  healTarget?: { x: number; y: number }; // 疗伤点
+  healing?: { progress: number };
   job?: string;
   // 最近决策记录（设计文档：小人闪过哪3个念头、选了哪个）
   lastDecision?: { drawn: string[]; picked: string; time: number };
@@ -189,6 +191,8 @@ export class Sim implements SimContext {
       st.chopProgress = undefined;
       st.prayTarget = undefined;
       st.praying = undefined;
+      st.healTarget = undefined;
+      st.healing = undefined;
     }
   }
 

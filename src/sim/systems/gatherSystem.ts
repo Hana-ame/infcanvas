@@ -26,6 +26,21 @@ export class GatherSystem implements GameSystem {
         }
         continue;
       }
+      // 疗伤回血
+      if (st.healing) {
+        st.healing.progress += dt;
+        const hk = this.ctx.readHealth(eid);
+        if (hk) {
+          hk.hp = Math.min(hk.maxHp, hk.hp + 12 * dt);
+          this.ctx.setHealth(eid, hk);
+          if (hk.hp >= hk.maxHp || st.healing.progress >= 4) {
+            st.healing = undefined;
+            st.job = '闲逛';
+            this.ctx.logEvent('🩹 伤势痊愈');
+          }
+        }
+        continue;
+      }
       // 采矿
       if (st.mining) {
         st.mining.progress += dt;

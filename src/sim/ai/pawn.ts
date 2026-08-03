@@ -18,6 +18,7 @@ export interface Dna {
 // 卡决策可读的 sim 信息（只读，决策用）
 export interface CardView {
   needsOf(eid: number): { food: number; rest: number; mood: number } | null;
+  healthOf?(eid: number): { hp: number; maxHp: number } | null;
   isNight(): boolean;
   hasCampfire(): boolean;
   buildQueueCount: number;
@@ -30,7 +31,7 @@ export interface CardContext {
 }
 
 // 行为意图：卡决策产出，由 BehaviorSystem 执行
-export type IntentAction = 'walkAndWork' | 'eat' | 'rest' | 'pray' | 'idle';
+export type IntentAction = 'walkAndWork' | 'eat' | 'rest' | 'pray' | 'heal' | 'idle';
 
 export interface BehaviorIntent {
   action: IntentAction;
@@ -89,6 +90,12 @@ export const BASE_CARDS: BehaviorCard[] = [
     condition: (c) => c.view.hasCampfire(),
     utility: () => 6,
     decide: () => ({ action: 'pray', label: '祈祷' }),
+  },
+  {
+    id: 'heal', name: '疗伤', series: 'physio', weight: 6,
+    condition: (c) => (c.view.healthOf ? (c.view.healthOf(c.eid)?.hp ?? 100) < 70 : false),
+    utility: (c) => 70 - (c.view.healthOf ? (c.view.healthOf(c.eid)?.hp ?? 100) : 100),
+    decide: () => ({ action: 'heal', label: '疗伤' }),
   },
   {
     id: 'idle', name: '闲逛', series: 'leisure', weight: 2,

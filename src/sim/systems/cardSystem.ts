@@ -20,6 +20,7 @@ export class BehaviorSystem implements GameSystem {
     this.intentExecutors.set('walkAndWork', (c, eid, st, intent) => this.execWalkAndWork(c, eid, st, intent));
     this.intentExecutors.set('eat', (c, eid, st, intent) => this.execEat(c, eid, st, intent));
     this.intentExecutors.set('rest', (c, eid, st, intent) => this.execRest(c, eid, st, intent));
+    this.intentExecutors.set('heal', (c, eid, st, intent) => this.execHeal(c, eid, st, intent));
     this.intentExecutors.set('pray', (c, eid, st, intent) => this.execPray(c, eid, st, intent));
     this.intentExecutors.set('idle', (c, eid, st) => { st.job = '闲逛'; });
   }
@@ -39,8 +40,8 @@ export class BehaviorSystem implements GameSystem {
       const pos = this.ctx.readPosition(eid);
       if (!pos) continue;
 
-      // 工作中（采集/祈祷/建造进度）不打断
-      if (st.mining || st.chopXY || st.praying) continue;
+      // 工作中（采集/祈祷/疗伤/建造进度）不打断
+      if (st.mining || st.chopXY || st.praying || st.healing) continue;
 
       // 紧急需求优先
       if (st.urgent) {
@@ -70,6 +71,7 @@ export class BehaviorSystem implements GameSystem {
   private decide(eid: number, st: PawnState): BehaviorIntent | null {
     const view: CardView = {
       needsOf: (e) => this.ctx.readNeeds(e),
+      healthOf: (e) => this.ctx.readHealth(e),
       isNight: () => this.ctx.isNight(),
       hasCampfire: () => this.ctx.world.hasBuilding('campfire'),
       buildQueueCount: this.ctx.buildQueue.length,
@@ -127,6 +129,20 @@ export class BehaviorSystem implements GameSystem {
       n.rest = Math.min(100, n.rest + 40);
       c.setNeeds(eid, n);
       c.bus.emit({ type: 'rest', eid });
+    }
+  }
+
+  // 疗伤：去篝火旁休息回血
+  private execHeal(c: SimContext, eid: number, st: PawnState, _intent: BehaviorIntent): void {
+    const pos = c.readPosition(eid);
+    if (!pos) return;
+    const fire = c.findNearest(pos, (x, y) => c.world.getBuilding(x, y)?.def.id === 'campfire', true);
+    if (fire) {
+      st.healTarget = fire;
+      c.moveAdjacent(eid, fire.x, fire.y);
+    } else {
+      // 无篝火则原地休养
+      st.healing = { progress: 0 };
     }
   }
 
@@ -199,6 +215,9 @@ export class BehaviorSystem implements GameSystem {
       const { x, y } = st.prayTarget;
       st.prayTarget = undefined;
       st.praying = { x, y, progress: 0 };
+    } else if (st.healTarget) {
+      st.healTarget = undefined;
+      st.healing = { progress: 0 };
     }
   }
 }
