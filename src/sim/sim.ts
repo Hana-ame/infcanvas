@@ -67,6 +67,10 @@ export class Sim {
   rng: SimRng;
   tickHz: number;
   time = 0;
+  // 昼夜：一天 = 120 秒（现实时间），dayTime 0[深夜]-0.25[凌晨]-0.5[正午]-0.75[黄昏]
+  dayLength = 120;
+  hasDayCycle = true;
+  dayTime = 0; // 0..1
 
   pawnStates = new Map<number, PawnState>();
   pawnPositions = new Map<number, { x: number; y: number }>();
@@ -144,6 +148,10 @@ export class Sim {
 
   healthOf(eid: number): { hp: number; maxHp: number } | null {
     return readHealth(this.ecs, eid);
+  }
+
+  isNight(): boolean {
+    return this.dayTime > 0.72 || this.dayTime < 0.22;
   }
 
   // UI 同步选中
@@ -249,6 +257,7 @@ export class Sim {
   // ---- 主循环 ----
   step(dt: number): void {
     this.time += dt;
+    this.dayTime = (this.time % this.dayLength) / this.dayLength;
 
     // 1. 需求衰减 + 紧急需求 + 饥饿伤害
     const pawnIds = query(this.ecs, [Pawn, NeedsComp]);
@@ -257,6 +266,8 @@ export class Sim {
       const n = readNeeds(this.ecs, eid);
       if (!n) continue;
       tickNeeds(n, dt);
+      // 夜晚：精力消耗加快（夜深人困）
+      if (this.isNight()) n.rest -= 0.12 * dt;
       setComponent(this.ecs, eid, NeedsComp, n);
       // 饿死：食物耗尽持续掉血
       const h = readHealth(this.ecs, eid);

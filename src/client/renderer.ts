@@ -23,6 +23,7 @@ export class Renderer {
   private selected = new Set<number>();
   private lastBuildingVersion = -1;
   private tilesDrawn = false;
+  private nightOverlay!: Graphics;
 
   constructor(sim: Sim) {
     this.sim = sim;
@@ -55,6 +56,16 @@ export class Renderer {
     this.app.ticker.add(() => this.render());
     this.drawTileGround();
     this.drawTerrainIcons();
+
+    // 夜晚遮罩（屏幕层，覆盖整个世界）
+    this.nightOverlay = new Graphics();
+    this.nightOverlay.eventMode = 'none';
+    this.app.stage.addChild(this.nightOverlay);
+    this.nightOverlay.rect(0, 0, 1000, 1000);
+    this.nightOverlay.fill(0x0a1030);
+    this.nightOverlay.alpha = 0;
+    this.nightOverlay.zIndex = 999;
+    this.app.stage.sortableChildren = true;
   }
 
   // 地表色块（一次绘制，固定）
@@ -99,6 +110,11 @@ export class Renderer {
       this.drawRebuildings();
     }
     this.renderPawns();
+    // 夜晚遮罩跟随屏幕大小 + 夜色
+    this.nightOverlay.clear();
+    this.nightOverlay.rect(0, 0, this.app.screen.width, this.app.screen.height);
+    this.nightOverlay.fill(0x0a1030);
+    this.nightOverlay.alpha = this.sim.isNight() ? 0.45 : 0;
   }
 
   // 只重绘有变化的建筑层
