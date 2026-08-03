@@ -19,6 +19,7 @@ import { SystemRegistry } from './systems/registry';
 import { NeedsSystem } from './systems/needsSystem';
 import { SanSystem } from './systems/sanSystem';
 import { DesireSystem } from './systems/desireSystem';
+import { SocialSystem } from './systems/socialSystem';
 import { BehaviorSystem } from './systems/cardSystem';
 import { GatherSystem } from './systems/gatherSystem';
 import { BuildSystem } from './systems/buildSystem';
@@ -74,6 +75,8 @@ export interface PawnState {
   crazyCooldown?: number; // 狂乱乱跑冷却
   skills?: Partial<Record<SkillId, number>>; // COC 技能（百分制，越用越强）
   desires?: Record<DesireId, number>; // 七宗罪满足度（DESIGN §3）
+  relationships?: Map<number, number>; // 对其他小人的好感度（社交系统）
+  socialCd?: number; // 社交冷却
   job?: string;
   // 最近决策记录（设计文档：小人闪过哪3个念头、选了哪个）
   lastDecision?: { drawn: string[]; picked: string; time: number };
@@ -193,6 +196,7 @@ export class Sim implements SimContext {
       .register(new SanSystem(this))
       .register(new DesireSystem(this))
       .register(this.behavior)
+      .register(new SocialSystem(this))
       .register(new GatherSystem(this))
       .register(new BuildSystem(this))
       .register(new FarmSystem(this))

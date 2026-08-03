@@ -390,3 +390,36 @@ describe('mod 注册表（DESIGN §7 扩展性原则）', () => {
     }).toThrow(/已存在/);
   });
 });
+
+describe('社交/流言系统（DESIGN §6 微互动）', () => {
+  it('nearby pawns generate social events and history entries', () => {
+    const sim = new Sim({ seed: 50, pawnCount: 2 });
+    const [a, b] = sim.pawns;
+    // 让两个小人站一起
+    const pos = sim.pawnPositions.get(a)!;
+    sim.pawnPositions.set(b, { x: pos.x + 1, y: pos.y });
+    // 快进触发社交节流（2s）
+    let found = false;
+    for (let i = 0; i < 120 && !found; i++) {
+      sim.step(1 / 20); // 6 秒
+      const soc = sim.historyQuery({ type: 'social', limit: 5 });
+      if (soc.length > 0) found = true;
+    }
+    expect(found).toBe(true);
+  });
+
+  it('social interactions record tone and build relationships', () => {
+    const sim = new Sim({ seed: 51, pawnCount: 2 });
+    const [a, b] = sim.pawns;
+    const pos = sim.pawnPositions.get(a)!;
+    sim.pawnPositions.set(b, { x: pos.x + 1, y: pos.y });
+    for (let i = 0; i < 300; i++) sim.step(1 / 20); // 15 秒
+    const stA = sim.pawnStates.get(a)!;
+    const rel = stA.relationships?.get(b);
+    // 至少发生过互动 → 好感度被写入
+    expect(rel).toBeDefined();
+    const soc = sim.historyQuery({ type: 'social', limit: 10 });
+    expect(soc.length).toBeGreaterThan(0);
+    expect(['positive', 'negative', 'neutral']).toContain(soc[0].data?.tone);
+  });
+});

@@ -13,7 +13,8 @@ export type GameEvent =
   | { type: 'pawn_recruited'; eid: number }
   | { type: 'eat'; eid: number }
   | { type: 'rest'; eid: number }
-  | { type: 'mood_changed'; eid: number; delta: number };
+  | { type: 'mood_changed'; eid: number; delta: number }
+  | { type: 'social'; eid: number; target: number; tone: 'positive' | 'negative' | 'neutral'; topic?: string };
 
 export type GameEventHandler = (ev: GameEvent) => void;
 

@@ -70,6 +70,10 @@ export class HistoryLog {
         base.eid = ev.eid;
         if (ev.type === 'mood_changed') base.data = { delta: ev.delta };
         break;
+      case 'social':
+        base.eid = ev.eid;
+        base.data = { target: ev.target, tone: ev.tone, topic: ev.topic };
+        break;
     }
     this.entries.push(base);
     if (this.entries.length > this.cap) this.entries.splice(0, this.entries.length - this.cap);
