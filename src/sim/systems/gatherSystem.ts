@@ -13,6 +13,11 @@ export class GatherSystem implements GameSystem {
   update(dt: number): void {
     // 工具加成：每把工具 +30% 采集产出
     const toolBonus = (this.ctx.stockpile.tools ?? 0) > 0 ? 1.3 : 1;
+    // STR 力量加成：采集产出（COC §3）
+    const strBonusOf = (eid: number): number => {
+      const dna = this.ctx.dnaOf(eid);
+      return dna ? 1 + Math.max(0, (dna.str - 40)) / 100 : 1;
+    };
     for (const eid of this.ctx.pawnList) {
       const st = this.ctx.pawnStates.get(eid);
       if (!st) continue;
@@ -22,7 +27,10 @@ export class GatherSystem implements GameSystem {
         if (st.praying.progress >= 2) {
           st.praying = undefined;
           this.ctx.adjustMood(eid, 6);
-          st.faith = Math.min(100, (st.faith ?? 0) + 5);
+          // APP 外貌：魅力高 → 信仰传播效果好（COC §3）
+          const dna = this.ctx.dnaOf(eid);
+          const appBoost = dna ? 1 + Math.max(0, (dna.app - 40)) / 50 : 1;
+          st.faith = Math.min(100, (st.faith ?? 0) + 5 * appBoost);
           this.ctx.logEvent('🕯 向篝火祈祷，心灵安宁');
         }
         continue;
@@ -56,7 +64,7 @@ export class GatherSystem implements GameSystem {
         if (st.caveWork.progress >= 4) {
           st.caveWork.progress = 0;
           const ev = this.ctx.rollEventSkill(eid, 70, 'work');
-          const gain = Math.round((ev.success ? 2 : 1) * toolBonus);
+          const gain = Math.round((ev.success ? 2 : 1) * toolBonus * strBonusOf(eid));
           this.ctx.stockpile.ore += gain;
           this.ctx.growSkill(eid, 'work');
           this.ctx.bus.emit({ type: 'resource_gained', eid, item: 'ore', amount: gain });
@@ -72,7 +80,7 @@ export class GatherSystem implements GameSystem {
           const { x, y } = st.mining;
           this.ctx.world.setTile(x, y, 'dirt');
           const ev = this.ctx.rollEventSkill(eid, 60, 'work');
-          const gain = Math.round((ev.success ? 3 : 1) * toolBonus);
+          const gain = Math.round((ev.success ? 3 : 1) * toolBonus * strBonusOf(eid));
           this.ctx.stockpile.ore += gain;
           this.ctx.growSkill(eid, 'work');
           this.ctx.bus.emit({ type: 'resource_gained', eid, item: 'ore', amount: gain });
@@ -90,7 +98,7 @@ export class GatherSystem implements GameSystem {
           const { x, y } = st.chopXY;
           this.ctx.world.setTile(x, y, 'grass');
           const ev = this.ctx.rollEventSkill(eid, 55, 'work');
-          const gain = Math.round((ev.success ? 5 : 2) * toolBonus);
+          const gain = Math.round((ev.success ? 5 : 2) * toolBonus * strBonusOf(eid));
           this.ctx.stockpile.wood += gain;
           this.ctx.growSkill(eid, 'work');
           this.ctx.bus.emit({ type: 'resource_gained', eid, item: 'wood', amount: gain });

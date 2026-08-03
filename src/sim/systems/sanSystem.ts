@@ -26,8 +26,10 @@ export class SanSystem implements GameSystem {
           if (d <= WITNESS_RADIUS) {
             const n = this.ctx.readNeeds(eid);
             if (n) {
-              // 近处目睹冲击大
-              const shock = 12 * Math.max(0.4, 1 - d / WITNESS_RADIUS);
+              // POW 意志抗压：高意志对死亡冲击耐受（COC §3）
+              const dna = this.ctx.dnaOf(eid);
+              const resist = dna ? 1 - Math.max(0, (dna.pow - 40)) / 100 : 1;
+              const shock = 12 * Math.max(0.4, 1 - d / WITNESS_RADIUS) * Math.max(0.4, resist);
               n.san -= shock;
               n.mood -= 4;
               this.ctx.setNeeds(eid, n);
@@ -49,9 +51,11 @@ export class SanSystem implements GameSystem {
       const pos = this.ctx.pawnPositions.get(eid);
       if (!pos) continue;
 
-      // 黑夜 + 远离篝火 → 黑暗恐惧，理智流失
+      // 黑夜 + 远离篝火 → 黑暗恐惧，理智流失（POW 高更镇定）
       if (this.ctx.isNight() && !this.nearCampfire(pos.x, pos.y)) {
-        n.san -= 0.35 * dt;
+        const dna = this.ctx.dnaOf(eid);
+        const resist = dna ? 1 - Math.max(0, (dna.pow - 40)) / 100 : 1;
+        n.san -= 0.35 * Math.max(0.4, resist) * dt;
       }
 
       // 篝火旁休息 → 理智恢复

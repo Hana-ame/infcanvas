@@ -8,9 +8,14 @@ import type { DesireId } from '../core/desires';
 export type SkillId = 'work' | 'fight' | 'social' | 'faith' | 'craft';
 
 export interface Dna {
-  str: number;
-  con: number;
-  int: number;
+  str: number;   // 力量：近战/搬运/建造
+  con: number;   // 体质：HP/抗病
+  int: number;   // 智力：技能学习/施工精度
+  siz: number;   // 体型：HP/负重
+  dex: number;   // 敏捷：闪避/命中/手工
+  app: number;   // 外貌：社交/信仰传播
+  pow: number;   // 意志：对抗欲望/抗压/SAN
+  edu: number;   // 教育：技能起点/科技
   traits: string[];
   maxSlots: number;
   skillBonuses: Partial<Record<SkillId, number>>;
@@ -131,11 +136,21 @@ export function generateDna(seed: number): Dna {
     str: roll(30, 70),
     con: roll(30, 70),
     int: roll(30, 70),
+    siz: roll(30, 70),
+    dex: roll(30, 70),
+    app: roll(30, 70),
+    pow: roll(30, 70),
+    edu: roll(30, 70),
     traits,
     maxSlots: 2 + rng.int(0, 2),
     skillBonuses: {},
     sins: {},
   };
+
+  // 天赋 → 属性微调（COC 属性卡，DESIGN §3）
+  if (traits.includes('强壮')) { dna.str = Math.min(90, dna.str + 12); dna.siz = Math.min(90, dna.siz + 6); }
+  if (traits.includes('机灵')) { dna.int = Math.min(90, dna.int + 10); dna.dex = Math.min(90, dna.dex + 6); }
+  if (traits.includes('夜猫子')) dna.pow = Math.min(90, dna.pow + 8);
 
   // 天赋 → 罪孽倾向（个性权重 0-1）
   const sins: Dna['sins'] = {};

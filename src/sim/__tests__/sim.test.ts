@@ -292,3 +292,43 @@ describe('七宗罪欲望系统（DESIGN §3）', () => {
     expect(p.desires.lust).toBe(77);
   });
 });
+
+describe('COC 八属性（DESIGN §3）', () => {
+  it('generates all eight attributes deterministically', () => {
+    const a = generateDna(300);
+    const b = generateDna(300);
+    for (const k of ['str', 'con', 'int', 'siz', 'dex', 'app', 'pow', 'edu'] as const) {
+      expect(a[k]).toBe(b[k]);
+      expect(a[k]).toBeGreaterThanOrEqual(30);
+      expect(a[k]).toBeLessThanOrEqual(90);
+    }
+  });
+
+  it('strong trait boosts STR and SIZ', () => {
+    // 反复生成直到出现强壮天赋（确定性 seed 搜索）
+    let found = false;
+    for (let s = 1; s < 500 && !found; s++) {
+      const dna = generateDna(s);
+      if (dna.traits.includes('强壮')) {
+        found = true;
+        expect(dna.str).toBeGreaterThanOrEqual(42); // 30+12 保底
+      }
+    }
+    expect(found).toBe(true);
+  });
+
+  it('HP scales with CON+SIZ', () => {
+    const sim = new Sim({ seed: 31, pawnCount: 3 });
+    for (const eid of sim.pawns) {
+      const dna = sim.dnaOf(eid)!;
+      const hk = sim.healthOf(eid)!;
+      expect(hk.maxHp).toBe(40 + Math.floor((dna.con + dna.siz) / 2));
+    }
+  });
+
+  it('dnaOf returns all attributes via SimContext', () => {
+    const sim = new Sim({ seed: 32, pawnCount: 1 });
+    const dna = sim.dnaOf(sim.pawns[0])!;
+    expect(Object.keys(dna).sort()).toEqual(['app', 'con', 'dex', 'edu', 'int', 'pow', 'siz', 'str']);
+  });
+});

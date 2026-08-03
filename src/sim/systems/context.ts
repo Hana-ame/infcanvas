@@ -51,6 +51,8 @@ export interface SimContext {
   // 实体
   spawnPawn(x: number, y: number): number;
   killPawn(eid: number): void;
+  // 属性（COC）
+  dnaOf(eid: number): { str: number; con: number; int: number; siz: number; dex: number; app: number; pow: number; edu: number } | null;
   // 事件/骰子/日志
   rollEvent(eid: number, dc: number): { success: boolean; roll: number };
   rollEventSkill(eid: number, dc: number, skill: SkillId): { success: boolean; roll: number };

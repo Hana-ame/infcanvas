@@ -275,11 +275,12 @@ export class Sim implements SimContext {
     setComponent(this.ecs, eid, NeedsComp, initNeeds());
     addComponent(this.ecs, eid, Speed);
     setComponent(this.ecs, eid, Speed, { v: 4 });
-    addComponent(this.ecs, eid, Health);
-    setComponent(this.ecs, eid, Health, { hp: 100, maxHp: 100 });
     const dna = generateDna(this.seedFor(eid));
-    // COC 技能初始值：INT 高 → 起点高（百分制）
-    const intBase = Math.floor((dna.int - 30) / 4);
+    addComponent(this.ecs, eid, Health);
+    const maxHp = 40 + Math.floor((dna.con + dna.siz) / 2);
+    setComponent(this.ecs, eid, Health, { hp: maxHp, maxHp });
+    // COC 技能初始值：INT + EDU 高 → 起点高（百分制）
+    const intBase = Math.floor((dna.int - 30) / 4) + Math.floor((dna.edu - 30) / 8);
     this.pawnStates.set(eid, {
       dna,
       slots: initSlots(dna),
@@ -315,6 +316,14 @@ export class Sim implements SimContext {
     const roll = this.rng.int(1, 100);
     const bonus = Math.floor((this.skillOf(eid, skill) - 10) / 10);
     return { success: roll <= dc + bonus, roll };
+  }
+
+  // COC 八属性读取
+  dnaOf(eid: number) {
+    const st = this.pawnStates.get(eid);
+    if (!st) return null;
+    const { str, con, int, siz, dex, app, pow, edu } = st.dna;
+    return { str, con, int, siz, dex, app, pow, edu };
   }
 
   adjustMood(eid: number, delta: number): void {

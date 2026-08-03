@@ -44,9 +44,13 @@ export class DesireSystem implements GameSystem {
       const { scarce, critical } = starvingDesires(st.desires);
       if (critical.length > 0) this.ctx.adjustMood(eid, -8);
       else if (scarce.length >= 2) this.ctx.adjustMood(eid, -3);
-      // 恶意槽：长期匮乏的反社会行为
-      if (critical.length > 0 && this.ctx.rng.next() < 0.12) {
-        this.malintent(eid, st, critical);
+      // 恶意槽：长期匮乏的反社会行为（POW 意志压制，DESIGN §3）
+      if (critical.length > 0) {
+        const dna = this.ctx.dnaOf(eid);
+        const powResist = dna ? 1 - Math.max(0, (dna.pow - 40)) / 100 : 1;
+        if (this.ctx.rng.next() < 0.12 * Math.max(0.3, powResist)) {
+          this.malintent(eid, st, critical);
+        }
       }
     }
   }

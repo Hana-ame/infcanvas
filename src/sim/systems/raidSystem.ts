@@ -90,7 +90,11 @@ export class RaidSystem implements GameSystem {
         }
         const hk = this.ctx.readHealth(nearest);
         if (hk) {
-          const dmg = Math.min(hk.hp, 5 * dt);
+          // DEX 敏捷闪避（COC §3）：高敏捷有一定几率闪开野狼咬
+          const dna = this.ctx.dnaOf(nearest);
+          const dodgeChance = dna ? Math.max(0.05, (dna.dex - 30) / 100) : 0;
+          const dodge = dna && this.ctx.rng.next() < dodgeChance;
+          const dmg = dodge ? 0 : Math.min(hk.hp, 5 * dt);
           hk.hp -= dmg;
           if (hk.hp <= 0) {
             this.ctx.setHealth(nearest, { hp: 0, maxHp: hk.maxHp });
