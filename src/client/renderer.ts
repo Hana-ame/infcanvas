@@ -160,7 +160,7 @@ export class Renderer {
     for (const eid of this.sim.pawns) {
       let t = this.pawnTexts.get(eid);
       if (!t) {
-        t = new Text({ text: '🐭', style: terrainStyle(24) });
+        t = new Text({ text: this.pawnEmoji(eid), style: terrainStyle(24) });
         t.resolution = this.app.renderer.resolution;
         t.anchor.set(0.5);
         this.pawnLayer.addChild(t);
@@ -235,6 +235,19 @@ export class Renderer {
     this.selected.clear();
     this.selected.add(eid);
     this.sim.selected = [eid];
+  }
+
+  // 根据 DNA 天赋选不同 emoji（小人差异化，看出性格）
+  private pawnEmoji(eid: number): string {
+    const p = this.sim.pawnProfile(eid);
+    if (!p) return '🐭';
+    const t = p.dna.traits;
+    if (t.includes('强壮')) return '🐗';
+    if (t.includes('虔诚')) return '🐰';
+    if (t.includes('懒惰')) return '🐨';
+    if (t.includes('热爱工作')) return '🐺';
+    if (t.includes('夜猫子')) return '🦉';
+    return '🐭';
   }
 
   // 建造幽灵预览

@@ -66,8 +66,9 @@ function createHud(sim: Sim, onSelectBuild: (id: string | null) => void): { upda
     const s = sim.stockpile;
     const foodWarn = s.food < 30 ? ` <span style="color:#f66">⚠食物告急!</span>` : '';
     const raidWarn = sim.hostiles.length > 0 ? ` <span style="color:#f66">⚔ 袭击！${sim.hostiles.length} 只野狼</span>` : '';
+    const dayIcon = sim.isNight() ? '🌙' : '☀️';
     const parts = [
-      `⏱️ ${Math.floor(sim.time / 60)}分`,
+      `${dayIcon} ${Math.floor(sim.time / 60)}分`,
       `🌲木头 ${s.wood}`, `🪨矿 ${s.ore}`, `🍖食物 ${s.food}`,
       `🛠️ ${s.tools ?? 0}`, `👥 ${sim.pawns.length}人`,
     ];
