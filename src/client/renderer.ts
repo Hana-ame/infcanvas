@@ -29,6 +29,8 @@ export class Renderer {
   private ghost: Graphics;
   private ghostPos: { x: number; y: number } | null = null;
   private ghostColor = 0x4cf;
+  // 飘字反馈（资源获得等）
+  private floaters: { text: Text; life: number; vy: number }[] = [];
 
   constructor(sim: Sim) {
     this.sim = sim;
@@ -61,7 +63,7 @@ export class Renderer {
     this.camera.x = cx;
     this.camera.y = cy;
 
-    this.app.ticker.add(() => this.render());
+    this.app.ticker.add(() => this.render(this.app.ticker.deltaMS / 1000));
     this.drawTileGround();
     this.drawTerrainIcons();
 
@@ -74,6 +76,36 @@ export class Renderer {
     this.nightOverlay.alpha = 0;
     this.nightOverlay.zIndex = 999;
     this.app.stage.sortableChildren = true;
+
+    // 订阅事件：资源获得飘字
+    this.sim.bus.on('resource_gained', (ev) => {
+      if (ev.type !== 'resource_gained') return;
+      const pos = this.sim.pawnPositions.get(ev.eid) ?? { x: 0, y: 0 };
+      this.spawnFloater(pos.x, pos.y, `+${ev.amount}`, ev.item === 'ore' ? '#ffd966' : '#aed581');
+    });
+  }
+
+  // 生成飘字
+  private spawnFloater(wx: number, wy: number, text: string, color: string): void {
+    const t = new Text({ text, style: new TextStyle({ fontSize: 14, fill: color, fontFamily: 'system-ui' }) });
+    t.resolution = this.app.renderer.resolution;
+    t.anchor.set(0.5);
+    t.position.set(wx * TILE, wy * TILE);
+    this.pawnLayer.addChild(t);
+    this.floaters.push({ text: t, life: 1.2, vy: -30 });
+  }
+
+  private updateFloaters(dt: number): void {
+    for (let i = this.floaters.length - 1; i >= 0; i--) {
+      const f = this.floaters[i];
+      f.life -= dt;
+      f.text.y += f.vy * dt;
+      f.text.alpha = Math.max(0, f.life / 1.2);
+      if (f.life <= 0) {
+        this.pawnLayer.removeChild(f.text);
+        this.floaters.splice(i, 1);
+      }
+    }
   }
 
   // 地表色块（一次绘制，固定）
@@ -106,7 +138,7 @@ export class Renderer {
     }
   }
 
-  private render(): void {
+  private render(dt = 0.016): void {
     const cam = this.camera;
     this.worldContainer.position.set(this.app.screen.width / 2, this.app.screen.height / 2);
     this.worldContainer.scale.set(cam.zoom);
@@ -120,6 +152,7 @@ export class Renderer {
     this.renderPawns();
     this.renderHostiles();
     this.renderGhost();
+    this.updateFloaters(dt);
     // 夜晚遮罩跟随屏幕大小 + 夜色
     this.nightOverlay.clear();
     this.nightOverlay.rect(0, 0, this.app.screen.width, this.app.screen.height);
