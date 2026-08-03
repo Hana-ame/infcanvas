@@ -10,9 +10,10 @@ import { SimRng } from './core/rng';
 import { initNeeds } from './core/needs';
 import { EventBus } from './core/events';
 import { HistoryLog } from './core/history';
-import { generateDna, initSlots, type Dna, type SkillId } from './ai/pawn';
+import { generateDna, initSlots, type Dna, type SkillId, BASE_CARDS } from './ai/pawn';
 import { initDesires, type DesireId } from './core/desires';
-import { BUILDINGS } from './defs';
+import { BUILDINGS, TILES, ITEMS } from './defs';
+import { ModRegistry } from './mods/registry';
 import type { SimContext } from './systems/context';
 import { SystemRegistry } from './systems/registry';
 import { NeedsSystem } from './systems/needsSystem';
@@ -82,6 +83,7 @@ export interface SimOptions {
   seed?: number;
   pawnCount?: number;
   tickHz?: number;
+  mods?: (m: ModRegistry) => void; // mod 挂载：构造时注册系统/卡/意图（DESIGN §7）
 }
 
 export interface Command {
@@ -134,6 +136,16 @@ export class Sim implements SimContext {
   private registry = new SystemRegistry();
   // 结构化历史日志（仿真日志：事实来自 sim，LLM 只润色）
   history = new HistoryLog();
+  // mod 注册表（DESIGN §7 扩展性原则）
+  mods = new ModRegistry({
+    tiles: TILES,
+    buildings: BUILDINGS,
+    items: ITEMS,
+    cards: BASE_CARDS,
+    intents: [],
+  });
+  private behavior: BehaviorSystem;
+  private _started = false;
 
   constructor(opts: SimOptions = {}) {
     const seed = opts.seed ?? 12345;
@@ -150,9 +162,29 @@ export class Sim implements SimContext {
     // 所有事件 → 结构化历史
     this.bus.onAny((ev) => this.history.record(ev, this.time, this.time / this.dayLength));
 
+    this.behavior = new BehaviorSystem(this);
+    // 应用 mod（在 spawn 前，注册系统/卡/意图）——构造期回调
+    opts.mods?.(this.mods);
+    this.applyMods();
     this.registerSystems();
+    this._started = true;
     this.registry.initAll(this.bus);
     this.spawnPawns(pawnCount);
+  }
+
+  // mod 挂载入口：mod 注册新系统/新卡/新意图（DESIGN §7）
+  useMods(fn: (m: ModRegistry) => void): void {
+    if (this._started) throw new Error('mod 必须在 sim 启动前注册');
+    fn(this.mods);
+  }
+
+  private applyMods(): void {
+    // mod 注册的系统挂到系统注册表
+    for (const s of this.mods.allSystems) this.registry.register(s);
+    // mod 注册的意图执行器交给行为系统
+    for (const [id, fn] of this.mods.intents) {
+      this.behavior.registerIntent(id, fn);
+    }
   }
 
   private registerSystems(): void {
@@ -160,7 +192,7 @@ export class Sim implements SimContext {
       .register(new NeedsSystem(this))
       .register(new SanSystem(this))
       .register(new DesireSystem(this))
-      .register(new BehaviorSystem(this))
+      .register(this.behavior)
       .register(new GatherSystem(this))
       .register(new BuildSystem(this))
       .register(new FarmSystem(this))
@@ -283,7 +315,7 @@ export class Sim implements SimContext {
     const intBase = Math.floor((dna.int - 30) / 4) + Math.floor((dna.edu - 30) / 8);
     this.pawnStates.set(eid, {
       dna,
-      slots: initSlots(dna),
+      slots: initSlots(dna, [...this.mods.cards.values()]),
       path: [],
       pathIndex: 0,
       skills: { work: 20 + intBase, fight: 15 + intBase, craft: 15 + intBase, social: 10 + intBase, faith: 10 + intBase },

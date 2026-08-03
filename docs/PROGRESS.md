@@ -44,7 +44,7 @@
 | COC 八属性 | §3 属性卡 | 只有 STR/CON/INT 三个 + d100 事件判定；DEX/APP/POW/EDU 未做 |
 | 日志/历史 | §3 历史系统 | ✅ 结构化历史日志（HistoryLog + 📜 面板） |
 | 流言/对话 | §6 | 未实现 |
-| mod 注册表 | §7 | 卡系统已数据驱动（可注册意图执行器），但无完整 defs 注册表 |
+| mod 注册表 | §7 | ✅ | **ModRegistry**（DESIGN §7 扩展性原则）：运行时注册 tile/building/item/card/intent/system/hook，冲突检测（重复 id 抛错）；mod 通过 `SimOptions.mods` 构造期挂载；mod 系统进 tick、mod 卡注入卡池、mod 意图执行器可被卡调用；纯注册表不改 sim 源码 |
 | LLM 层 | §6 | P1 |
 
 ## 技术栈

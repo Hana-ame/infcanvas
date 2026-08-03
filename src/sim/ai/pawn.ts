@@ -217,19 +217,20 @@ export const TRAIT_CARDS: Record<string, BehaviorCard> = {
   },
 };
 
-// 初始卡池：天赋卡 + 基础卡
-export function initSlots(dna: Dna): (BehaviorCard | null)[] {
+// 初始卡池：天赋卡 + 基础卡（+ mod 卡）
+export function initSlots(dna: Dna, extraCards?: BehaviorCard[]): (BehaviorCard | null)[] {
   const slots: (BehaviorCard | null)[] = [];
   const traitCards = dna.traits
     .map((t) => TRAIT_CARDS[t])
     .filter((c): c is BehaviorCard => c !== undefined);
   for (const tc of traitCards) slots.push(tc);
   let baseIdx = 0;
-  while (slots.length < dna.maxSlots && baseIdx < BASE_CARDS.length) {
-    slots.push(BASE_CARDS[baseIdx++]);
+  const pool = [...BASE_CARDS, ...(extraCards ?? [])];
+  while (slots.length < dna.maxSlots && baseIdx < pool.length) {
+    slots.push(pool[baseIdx++]);
   }
   while (slots.length < dna.maxSlots) {
-    slots.push(BASE_CARDS[0]);
+    slots.push(pool[0]);
   }
   return slots;
 }

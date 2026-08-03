@@ -3,6 +3,7 @@ import { Sim } from '../sim';
 import { SimRng } from '../core/rng';
 import { generateDna, initSlots, drawCards, pickBest } from '../ai/pawn';
 import { World } from '../core/world';
+import type { GameSystem } from '../systems/registry';
 
 describe('SimRng', () => {
   it('is deterministic for same seed', () => {
@@ -330,5 +331,62 @@ describe('COC 八属性（DESIGN §3）', () => {
     const sim = new Sim({ seed: 32, pawnCount: 1 });
     const dna = sim.dnaOf(sim.pawns[0])!;
     expect(Object.keys(dna).sort()).toEqual(['app', 'con', 'dex', 'edu', 'int', 'pow', 'siz', 'str']);
+  });
+});
+
+describe('mod 注册表（DESIGN §7 扩展性原则）', () => {
+  it('registers a custom intent executor and executes it', () => {
+    let executed = false;
+    const sim = new Sim({
+      seed: 40, pawnCount: 1,
+      mods: (m) => {
+        m.registerIntent('dance', (_c, _eid, st) => { executed = true; st.job = '跳舞'; });
+      },
+    });
+    // 触发意图执行（模拟行为系统调用）
+    sim.mods.intents.get('dance')!(sim, sim.pawns[0], sim.pawnStates.get(sim.pawns[0])!, { action: 'idle', label: 'dance' });
+    expect(executed).toBe(true);
+  });
+
+  it('registering a custom system runs in the tick loop', () => {
+    let ticks = 0;
+    const sys: GameSystem = {
+      id: 'modCounter',
+      update: () => { ticks++; },
+    };
+    const sim = new Sim({ seed: 41, pawnCount: 1, mods: (m) => m.registerSystem(sys) });
+    for (let i = 0; i < 10; i++) sim.step(1 / 20);
+    expect(ticks).toBeGreaterThanOrEqual(10);
+  });
+
+  it('mod cards are injected into pawn slot pool', () => {
+    const sim = new Sim({
+      seed: 42, pawnCount: 1,
+      mods: (m) => {
+        m.registerCard({
+          id: 'mod:sing', name: '唱歌', series: 'leisure', weight: 9,
+          condition: () => false,
+          utility: () => 1,
+          decide: () => ({ action: 'idle', label: '唱歌' }),
+        });
+      },
+    });
+    expect(sim.mods.cards.has('mod:sing')).toBe(true);
+    // 直接验证：用大槽位 DNA 调 initSlots 时 mod 卡进入池子
+    const bigDna = generateDna(99);
+    bigDna.maxSlots = 20;
+    const slots = initSlots(bigDna, [...sim.mods.cards.values()]);
+    expect(slots.some((c) => c?.id === 'mod:sing')).toBe(true);
+  });
+
+  it('conflict detection throws on duplicate building id', () => {
+    expect(() => {
+      new Sim({
+        seed: 43, pawnCount: 1,
+        mods: (m) => {
+          m.registerBuilding({ id: 'wall', name: '复制墙', size: { x: 1, y: 1 }, hp: 1, color: '#fff', passable: false, buildTime: 1 });
+        },
+      });
+    }).toThrow(/已存在/);
   });
 });
