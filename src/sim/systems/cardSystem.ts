@@ -66,7 +66,7 @@ export class BehaviorSystem implements GameSystem {
     }
   }
 
-  // 抽卡决策 → 返回意图
+  // 抽卡决策 → 返回意图（并记录决策日志）
   private decide(eid: number, st: PawnState): BehaviorIntent | null {
     const view: CardView = {
       needsOf: (e) => this.ctx.readNeeds(e),
@@ -79,7 +79,14 @@ export class BehaviorSystem implements GameSystem {
     const pawnLike = { dna: st.dna, slots: st.slots };
     const drawn = drawCards(pawnLike, this.ctx.rng, 3, ctx);
     const card = pickBest(drawn, ctx);
-    return card ? card.decide(ctx) : null;
+    if (!card) return null;
+    // 记录决策（狗屁倒灶日志素材）
+    st.lastDecision = {
+      drawn: drawn.map((c) => c.name),
+      picked: card.name,
+      time: this.ctx.time,
+    };
+    return card.decide(ctx);
   }
 
   // ---- 意图执行 ----

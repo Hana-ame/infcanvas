@@ -59,6 +59,8 @@ export interface PawnState {
   prayTarget?: { x: number; y: number }; // 祈祷点（篝火）
   praying?: { x: number; y: number; progress: number };
   job?: string;
+  // 最近决策记录（设计文档：小人闪过哪3个念头、选了哪个）
+  lastDecision?: { drawn: string[]; picked: string; time: number };
 }
 
 export interface SimOptions {
@@ -355,6 +357,7 @@ export class Sim implements SimContext {
   pawnProfile(eid: number): {
     dna: Dna; slots: ReturnType<typeof initSlots>; job: string;
     needs: NeedsData | null; health: HealthData | null; pos: { x: number; y: number };
+    lastDecision?: { drawn: string[]; picked: string; time: number };
   } | null {
     const st = this.pawnStates.get(eid);
     if (!st) return null;
@@ -362,6 +365,7 @@ export class Sim implements SimContext {
       dna: st.dna, slots: st.slots, job: st.job ?? '',
       needs: this.readNeeds(eid), health: this.readHealth(eid),
       pos: this.pawnPositions.get(eid) ?? { x: 0, y: 0 },
+      lastDecision: st.lastDecision,
     };
   }
 }
