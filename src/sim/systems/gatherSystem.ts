@@ -11,6 +11,8 @@ export class GatherSystem implements GameSystem {
   init(_bus: EventBus): void {}
 
   update(dt: number): void {
+    // 工具加成：每把工具 +30% 采集产出
+    const toolBonus = (this.ctx.stockpile.tools ?? 0) > 0 ? 1.3 : 1;
     for (const eid of this.ctx.pawnList) {
       const st = this.ctx.pawnStates.get(eid);
       if (!st) continue;
@@ -31,7 +33,7 @@ export class GatherSystem implements GameSystem {
           const { x, y } = st.mining;
           this.ctx.world.setTile(x, y, 'dirt');
           const ev = this.ctx.rollEvent(eid, 60);
-          const gain = ev.success ? 3 : 1;
+          const gain = Math.round((ev.success ? 3 : 1) * toolBonus);
           this.ctx.stockpile.ore += gain;
           this.ctx.bus.emit({ type: 'resource_gained', eid, item: 'ore', amount: gain });
           this.ctx.bus.emit({ type: 'work_completed', eid, work: 'mine', success: ev.success, x, y });
@@ -48,7 +50,7 @@ export class GatherSystem implements GameSystem {
           const { x, y } = st.chopXY;
           this.ctx.world.setTile(x, y, 'grass');
           const ev = this.ctx.rollEvent(eid, 55);
-          const gain = ev.success ? 5 : 2;
+          const gain = Math.round((ev.success ? 5 : 2) * toolBonus);
           this.ctx.stockpile.wood += gain;
           this.ctx.bus.emit({ type: 'resource_gained', eid, item: 'wood', amount: gain });
           this.ctx.bus.emit({ type: 'work_completed', eid, work: 'chop', success: ev.success, x, y });

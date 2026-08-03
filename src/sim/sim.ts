@@ -18,6 +18,7 @@ import { BehaviorSystem } from './systems/cardSystem';
 import { GatherSystem } from './systems/gatherSystem';
 import { BuildSystem } from './systems/buildSystem';
 import { FarmSystem } from './systems/farmSystem';
+import { CraftSystem } from './systems/craftSystem';
 import { RaidSystem } from './systems/raidSystem';
 import { PopulationSystem } from './systems/populationSystem';
 
@@ -93,7 +94,7 @@ export class Sim implements SimContext {
   selected: number[] = [];
   hostiles: { x: number; y: number; hp: number; maxHp: number; targetX: number; targetY: number }[] = [];
   buildQueue: { x: number; y: number; defId: string; progress: number; faction: string; cost?: { wood: number; ore: number } }[] = [];
-  stockpile: Record<string, number> = { wood: 50, ore: 0, food: 30 };
+  stockpile: Record<string, number> = { wood: 50, ore: 0, food: 30, tools: 0 };
 
   private _pawnList: number[] = [];
   private trailCache = new Map<string, { x: number; y: number }[]>();
@@ -124,6 +125,7 @@ export class Sim implements SimContext {
       .register(new GatherSystem(this))
       .register(new BuildSystem(this))
       .register(new FarmSystem(this))
+      .register(new CraftSystem(this))
       .register(new RaidSystem(this))
       .register(new PopulationSystem(this));
   }

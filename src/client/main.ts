@@ -69,7 +69,7 @@ function createHud(sim: Sim, onSelectBuild: (id: string | null) => void): { upda
     const parts = [
       `⏱️ ${Math.floor(sim.time / 60)}分`,
       `🌲木头 ${s.wood}`, `🪨矿 ${s.ore}`, `🍖食物 ${s.food}`,
-      `👥 ${sim.pawns.length}人`,
+      `🛠️ ${s.tools ?? 0}`, `👥 ${sim.pawns.length}人`,
     ];
     stock.innerHTML = parts.join('  ·  ') + foodWarn + raidWarn;
 
