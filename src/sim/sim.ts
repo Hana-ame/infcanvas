@@ -72,6 +72,7 @@ export class Sim {
   pawnPositions = new Map<number, { x: number; y: number }>();
   selected: number[] = [];
   private pawnList: number[] = [];
+  private _recruitTimer = 0;
   // 行动轨迹缓存：起点格+终点格 → 已算路径（直接读取复用）
   private trailCache = new Map<string, { x: number; y: number }[]>();
 
@@ -96,23 +97,30 @@ export class Sim {
     const cx = Math.floor(this.world.width / 2);
     const cy = Math.floor(this.world.height / 2);
     for (let i = 0; i < count; i++) {
-      const eid = addEntity(this.ecs);
       const x = cx + (i % 3) - 1;
       const y = cy + Math.floor(i / 3) - 1;
-      addComponent(this.ecs, eid, Position);
-      setComponent(this.ecs, eid, Position, { x, y });
-      addComponent(this.ecs, eid, Pawn);
-      addComponent(this.ecs, eid, NeedsComp);
-      setComponent(this.ecs, eid, NeedsComp, initNeeds());
-      addComponent(this.ecs, eid, Speed);
-      setComponent(this.ecs, eid, Speed, { v: 4 });
-      addComponent(this.ecs, eid, Health);
-      setComponent(this.ecs, eid, Health, { hp: 100, maxHp: 100 });
-      const dna = generateDna(this.seedFor(eid));
-      this.pawnStates.set(eid, { dna, slots: initSlots(dna), path: [], pathIndex: 0 });
-      this.pawnList.push(eid);
-      this.pawnPositions.set(eid, { x, y });
+      this.spawnPawn(x, y);
     }
+  }
+
+  // 在指定位置生成一个 pawn，返回 eid（用于动态加入）
+  private spawnPawn(x: number, y: number): number {
+    if (!this.world.inBounds(x, y) || !this.world.isPassable(x, y)) return -1;
+    const eid = addEntity(this.ecs);
+    addComponent(this.ecs, eid, Position);
+    setComponent(this.ecs, eid, Position, { x, y });
+    addComponent(this.ecs, eid, Pawn);
+    addComponent(this.ecs, eid, NeedsComp);
+    setComponent(this.ecs, eid, NeedsComp, initNeeds());
+    addComponent(this.ecs, eid, Speed);
+    setComponent(this.ecs, eid, Speed, { v: 4 });
+    addComponent(this.ecs, eid, Health);
+    setComponent(this.ecs, eid, Health, { hp: 100, maxHp: 100 });
+    const dna = generateDna(this.seedFor(eid));
+    this.pawnStates.set(eid, { dna, slots: initSlots(dna), path: [], pathIndex: 0 });
+    this.pawnList.push(eid);
+    this.pawnPositions.set(eid, { x, y });
+    return eid;
   }
 
   get pawns(): readonly number[] {
@@ -276,6 +284,37 @@ export class Sim {
 
     // 5. 农田产出食物
     this.updateFarms(dt);
+
+    // 6. 人口发展
+    this.updatePopulation(dt);
+  }
+
+  // 人口：食物充足时偶有新人加入
+  private updatePopulation(dt: number): void {
+    if (this.pawnList.length >= 12) return;
+    this._recruitTimer += dt;
+    if (this._recruitTimer < 45) return;
+    if (this.stockpile.food < 60) { this._recruitTimer = 30; return; }
+    this._recruitTimer = 0;
+    this.spawnPawnAtEdge();
+  }
+
+  private spawnPawnAtEdge(): void {
+    // 在出生点附近新增一个小人
+    const cx = Math.floor(this.world.width / 2);
+    const cy = Math.floor(this.world.height / 2);
+    for (let r = 2; r <= 6; r++) {
+      for (let dy = -r; dy <= r; dy++) {
+        for (let dx = -r; dx <= r; dx++) {
+          if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue;
+          const x = cx + dx, y = cy + dy;
+          if (this.world.inBounds(x, y) && this.world.isPassable(x, y)) {
+            const eid = this.spawnPawn(x, y);
+            if (eid !== -1) return;
+          }
+        }
+      }
+    }
   }
 
   private updatePawns(dt: number): void {
