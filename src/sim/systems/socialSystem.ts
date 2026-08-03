@@ -43,6 +43,52 @@ export class SocialSystem implements GameSystem {
         if (!posB) continue;
         if (Math.hypot(posA.x - posB.x, posA.y - posB.y) > 1.6) continue; // 相邻才算相遇
         this.interact(a, b, stA.socialCd ?? 0);
+        this.relationEffects(a, b); // 关系影响（协作/口角），用户 Q8
+      }
+    }
+  }
+
+  // 关系效应（用户 Q8：社会关系支持协作/战争）
+  // 好感高 → 协作心情加成；敌对(≤-20) → 口角，积累冲突可能动手
+  private relationEffects(a: number, b: number): void {
+    const stA = this.ctx.pawnStates.get(a)!;
+    const rel = stA.relationships?.get(b) ?? 0;
+    if (rel >= 40) {
+      // 亲密：一起干活心情好
+      this.ctx.adjustMood(a, 0.5);
+      const stB = this.ctx.pawnStates.get(b);
+      if (stB) this.ctx.adjustMood(b, 0.5);
+    } else if (rel <= -20) {
+      // 敌对：口角升级
+      const stB = this.ctx.pawnStates.get(b);
+      if (!stB) return;
+      if (this.ctx.rng.next() < 0.05) {
+        // 动手（战争萌芽）：低力量者吃亏，负好感加深
+        const dnaA = this.ctx.dnaOf(a);
+        const dnaB = this.ctx.dnaOf(b);
+        const strA = dnaA?.str ?? 40;
+        const strB = dnaB?.str ?? 40;
+        const winner = strA >= strB ? a : b;
+        const loser = winner === a ? b : a;
+        const hk = this.ctx.readHealth(loser);
+        if (hk) {
+          hk.hp = Math.max(1, hk.hp - 8);
+          this.ctx.setHealth(loser, hk);
+        }
+        const relLoser = stA.relationships ?? new Map();
+        const relWinner = stB.relationships ?? new Map();
+        const curA = relLoser.get(winner) ?? 0;
+        const curB = relWinner.get(loser) ?? 0;
+        relLoser.set(winner, Math.max(-50, curA - 10));
+        relWinner.set(loser, Math.max(-50, curB - 10));
+        stA.relationships = relLoser;
+        stB.relationships = relWinner;
+        this.ctx.adjustMood(winner, 3);
+        this.ctx.adjustMood(loser, -5);
+        this.ctx.logEvent(`👊 #${winner} 与 #${loser} 动手了！`);
+      } else {
+        this.ctx.adjustMood(a, -0.5);
+        this.ctx.adjustMood(b, -0.5);
       }
     }
   }

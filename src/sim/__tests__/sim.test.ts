@@ -611,6 +611,47 @@ describe('随机事件系统（用户 Q5 预制剧本）', () => {
   });
 });
 
+describe('社会关系效应（用户 Q8：关系支持协作/战争）', () => {
+  it('high affinity gives mood bonus when near each other', () => {
+    const sim = new Sim({ seed: 93, pawnCount: 2 });
+    const [a, b] = sim.pawns;
+    const pos = sim.pawnPositions.get(a)!;
+    sim.pawnPositions.set(b, { x: pos.x + 1, y: pos.y });
+    // 高好感
+    const stA = sim.pawnStates.get(a)!;
+    stA.relationships = new Map([[b, 60]]);
+    // 压低 b 心情便于测提升
+    const nb = sim.readNeeds(b)!;
+    nb.mood = 50;
+    sim.setNeeds(b, nb);
+    // 稳定相邻跑一段
+    for (let i = 0; i < 120; i++) {
+      sim.pawnPositions.set(a, { x: pos.x, y: pos.y });
+      sim.pawnPositions.set(b, { x: pos.x + 1, y: pos.y });
+      sim.step(1 / 20);
+    }
+    // b 心情应高于 50（亲密加成）
+    expect(sim.readNeeds(b)!.mood).toBeGreaterThan(50);
+  });
+
+  it('hostile relationship escalates to a punch', () => {
+    const sim = new Sim({ seed: 94, pawnCount: 2 });
+    const [a, b] = sim.pawns;
+    const pos = sim.pawnPositions.get(a)!;
+    const stA = sim.pawnStates.get(a)!;
+    stA.relationships = new Map([[b, -30]]);
+    const hpBefore = sim.readHealth(b)!.hp;
+    let punched = false;
+    for (let i = 0; i < 2400 && !punched; i++) {
+      sim.pawnPositions.set(a, { x: pos.x, y: pos.y });
+      sim.pawnPositions.set(b, { x: pos.x + 1, y: pos.y });
+      sim.step(1 / 20);
+      if (sim.readHealth(b)!.hp < hpBefore) punched = true;
+    }
+    expect(punched).toBe(true);
+  });
+});
+
 describe('叙事压力（DESIGN §6）', () => {
   it('long peace builds narrative pressure and enlarges raids', () => {
     const sim = new Sim({ seed: 80, pawnCount: 4 });

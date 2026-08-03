@@ -34,6 +34,7 @@
 | 修理 | §3 | ✅ | 受损建筑自动修理（RepairSystem） |
 | 人口 | §3 | ✅ | 死亡/成长（PopulationSystem） |
 | 随机事件 | §6/用户Q5 | ✅ | **预制剧本事件系统**（EventSystem + EventProvider 接口）：流浪者加入/丰收/矿脉/瘟疫/游商/庆典，def 驱动定时 roll（权重+冷却+minTime）；**provider 可插换 = 预留 LLM 插入能力**（P0 确定性随机，P1 换 LLM provider）；事件入历史 |
+| 社会关系 | §3/用户Q8 | ✅ | **好感度驱动行为**：亲密(≥40)相邻→心情加成（协作正向反馈）；敌对(≤-20)相邻→口角、积累冲突→动手（STR 判定、掉血、负好感加深，战争萌芽）；关系由社交微互动/传教积累 |
 | 存档 | §5 | ✅ | **IndexedDB**（异步、大容量），30s 自动存档；旧 localStorage 存档已弃用 |
 | 渲染 | §1 | ✅ | PixiJS v8；SVG 素材（btoa data-uri → GraphicsContext）；地形/建筑/小人/敌人生成 |
 | 视角切换 | §1 渲染 | ✅ | **2D 俯视 ↔ 2.5D 同轴**（右下角按钮）；2.5D 按世界 y 排序实现前后遮挡（树/建筑/小人/敌人统一进 entityLayer，zIndex=y×10+层级） |
