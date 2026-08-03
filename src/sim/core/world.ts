@@ -15,6 +15,7 @@ export class World {
   readonly height: number;
   private tileIndex: Uint8Array; // width * height，存 TILES 的键索引
   private readonly tileKeys: string[]; // index -> tile id
+  light: Uint8Array; // 光照图：1=亮（篝火覆盖），0=黑暗
   private readonly seed: number;
   rng: SimRng;
 
@@ -27,6 +28,7 @@ export class World {
     this.height = chunksY * CHUNK_SIZE;
     this.tileKeys = Object.keys(TILES);
     this.tileIndex = new Uint8Array(this.width * this.height);
+    this.light = new Uint8Array(this.width * this.height);
     this.generate();
   }
 
@@ -126,6 +128,32 @@ export class World {
     const def = BUILDINGS[defId];
     if (!def) return false;
     this.buildings.set(this.buildKey(x, y), { def, hp: def.hp, faction });
+    this.recomputeLight();
     return true;
+  }
+
+  // 光照图：篝火覆盖 radius 内为亮，其余黑暗
+  recomputeLight(): void {
+    this.light.fill(0);
+    const RADIUS = 4;
+    for (const [key, b] of this.buildings) {
+      if (b.def.id !== 'campfire') continue;
+      const bx = key % this.width;
+      const by = Math.floor(key / this.width);
+      for (let dy = -RADIUS; dy <= RADIUS; dy++) {
+        for (let dx = -RADIUS; dx <= RADIUS; dx++) {
+          const x = bx + dx, y = by + dy;
+          if (!this.inBounds(x, y)) continue;
+          if (dx * dx + dy * dy <= RADIUS * RADIUS) {
+            this.light[y * this.width + x] = 1;
+          }
+        }
+      }
+    }
+  }
+
+  isLit(x: number, y: number): boolean {
+    if (!this.inBounds(x, y)) return false;
+    return this.light[this.idx(x, y)] === 1;
   }
 }

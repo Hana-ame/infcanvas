@@ -15,7 +15,6 @@ export function findPath(world: World, startX: number, startY: number, endX: num
   // 终点不可走（如站在建筑上），找最近可走格
   const target = world.isPassable(endX, endY) ? { x: endX, y: endY } : nearestPassable(world, endX, endY);
   if (!target) return [];
-
   const open: Node[] = [];
   const closed = new Set<string>();
   const start: Node = { x: startX, y: startY, g: 0, h: heuristic(startX, startY, target.x, target.y), f: 0, parent: null };
@@ -57,7 +56,9 @@ export function findPath(world: World, startX: number, startY: number, endX: num
       const diag = dx !== 0 && dy !== 0;
       const moveCost = diag ? 1.414 : 1;
       const tileCost = world.getTileDef(nx, ny).moveCost ?? 1;
-      const g = current.g + moveCost * tileCost;
+      // 黑暗区高代价权重：尽量走篝火照亮的路
+      const lightCost = world.isLit(nx, ny) ? 1 : 3;
+      const g = current.g + moveCost * tileCost * lightCost;
 
       const existing = cost.get(key(nx, ny));
       if (existing !== undefined && existing <= g) continue;

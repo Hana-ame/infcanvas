@@ -43,9 +43,21 @@ function createHud(sim: Sim, onSelectBuild: (id: string | null) => void): { upda
     const sel = sim.selectedIds;
     if (sel.length > 0) {
       const eid = sel[0];
-      const nd = sim.needsOf(eid);
-      selPanel.style.display = 'block';
-      selPanel.innerHTML = `<b>🧑 小人 ${eid}</b><br>工作：${sim.pawnJob(eid) || '闲逛'}${nd ? `<br>饥饿 ${nf(nd.food)} / 精力 ${nf(nd.rest)} / 心情 ${nf(nd.mood)}` : ''}`;
+      const p = sim.pawnProfile(eid);
+      if (p) {
+        selPanel.style.display = 'block';
+        const nd = p.needs;
+        const slotCards = p.slots.filter((c) => c !== null).map((c) => c!.name).join('、') || '无';
+        selPanel.innerHTML =
+          `<b>🐭 小人 ${eid}</b> (${Math.round(p.pos.x)},${Math.round(p.pos.y)})<br>` +
+          `<span style="color:#4cf">工作：${p.job || '闲逛'}</span><br>` +
+          `STR ${p.dna.str} · CON ${p.dna.con} · INT ${p.dna.int}<br>` +
+          `天赋：${p.dna.traits.join('、') || '无'}<br>` +
+          `插槽(${p.slots.filter((c) => c !== null).length}/${p.dna.maxSlots})：${slotCards}<br>` +
+          (nd ? `饥饿 ${nf(nd.food)} · 精力 ${nf(nd.rest)} · 心情 ${nf(nd.mood)}` : '');
+      } else {
+        selPanel.style.display = 'none';
+      }
     } else {
       selPanel.style.display = 'none';
     }
@@ -115,16 +127,39 @@ async function main(): Promise<void> {
     }
   };
 
-  // 鼠标左键：选中（或放置建造）
+  // 鼠标左键拖动平移（PC）
+  let mouseDragging = false;
+  let mouseDragStart: Pt | null = null;
+
+  canvas.addEventListener('mousedown', (e) => {
+    if (e.button === 0) {
+      mouseDragStart = screenPos(e);
+      mouseDragging = false;
+    }
+  });
+  canvas.addEventListener('mousemove', (e) => {
+    if (mouseDragStart && e.buttons & 1) {
+      const cur = screenPos(e);
+      const moved = dist(mouseDragStart, cur);
+      if (moved > 5) mouseDragging = true;
+      if (mouseDragging) {
+        renderer.setCamera(e.movementX, e.movementY);
+      }
+    }
+  });
+  window.addEventListener('mouseup', () => {
+    mouseDragStart = null;
+    mouseDragging = false;
+  });
+
+  // 鼠标左键：选中（或放置建造）——仅在未拖动的点击时触发
   canvas.addEventListener('click', (e) => {
-    if (e.button !== 0) return;
+    if (e.button !== 0 || mouseDragging) return;
     const pos = screenPos(e);
     if (buildMode) {
-      // 建造放置
       const world = renderer.screenToWorld(pos.x, pos.y);
       sim.issueCommand({ type: 'build', x: world.x, y: world.y, buildingId: buildMode });
     } else {
-      // 选最近 pawn
       renderer.selectNearest(pos.x, pos.y, 26);
     }
   });

@@ -71,6 +71,8 @@ export class Sim {
   pawnPositions = new Map<number, { x: number; y: number }>();
   selected: number[] = [];
   private pawnList: number[] = [];
+  // 行动轨迹缓存：起点格+终点格 → 已算路径（直接读取复用）
+  private trailCache = new Map<string, { x: number; y: number }[]>();
 
   private buildQueue: { x: number; y: number; defId: string; progress: number; faction: string; cost?: { wood: number; ore: number } }[] = [];
   stockpile: Record<string, number> = { wood: 50, ore: 0, food: 30 };
@@ -136,6 +138,25 @@ export class Sim {
     this.selected = list;
   }
 
+  // UI 读取完整档案（属性/DNA/插槽卡）
+  pawnProfile(eid: number): {
+    dna: Dna;
+    slots: ReturnType<typeof initSlots>;
+    job: string;
+    needs: { food: number; rest: number; mood: number } | null;
+    pos: { x: number; y: number };
+  } | null {
+    const st = this.pawnStates.get(eid);
+    if (!st) return null;
+    return {
+      dna: st.dna,
+      slots: st.slots,
+      job: st.job ?? '',
+      needs: this.needsOf(eid),
+      pos: this.pawnPositions.get(eid) ?? { x: 0, y: 0 },
+    };
+  }
+
   private seedFor(eid: number): number {
     return (this.rng.int(1, 2 ** 31 - 1) ^ eid) >>> 0;
   }
@@ -157,7 +178,7 @@ export class Sim {
   private moveTo(eid: number, x: number, y: number): void {
     const pos = readPosition(this.ecs, eid);
     if (!pos) return;
-    const path = findPath(this.world, Math.round(pos.x), Math.round(pos.y), Math.round(x), Math.round(y));
+    const path = this.getPath(Math.round(pos.x), Math.round(pos.y), Math.round(x), Math.round(y));
     const st = this.pawnStates.get(eid);
     if (st) {
       st.path = path;
@@ -168,6 +189,20 @@ export class Sim {
       st.chopXY = undefined;
       st.chopProgress = undefined;
     }
+  }
+
+  // 带轨迹缓存的寻路：相同起终点直接复用，避免重复 A*
+  private getPath(sx: number, sy: number, ex: number, ey: number): { x: number; y: number }[] {
+    const key = `${sx},${sy}->${ex},${ey}`;
+    const cached = this.trailCache.get(key);
+    if (cached) return cached;
+    const path = findPath(this.world, sx, sy, ex, ey);
+    // 只缓存有价值的（长度>2 且可达），避免缓存满
+    if (path.length > 0) {
+      if (this.trailCache.size > 2048) this.trailCache.clear();
+      this.trailCache.set(key, path);
+    }
+    return path;
   }
 
   private queueBuild(x: number, y: number, defId: string): void {
@@ -364,7 +399,7 @@ export class Sim {
       }
     }
     if (!target) return;
-    const path = findPath(this.world, Math.round(pos.x), Math.round(pos.y), target.x, target.y);
+    const path = this.getPath(Math.round(pos.x), Math.round(pos.y), target.x, target.y);
     const st = this.pawnStates.get(eid);
     if (st) {
       st.path = path;
@@ -397,6 +432,7 @@ export class Sim {
           this.stockpile.wood -= b.cost.wood;
         }
         this.world.placeBuilding(b.x, b.y, b.defId, b.faction);
+        this.trailCache.clear(); // 地形变化，缓存失效
         this.buildQueue.splice(i, 1);
       }
     }
@@ -413,6 +449,7 @@ export class Sim {
           this.world.setTile(x, y, 'dirt');
           this.stockpile.ore++;
           st.mining = undefined;
+          this.trailCache.clear();
         }
       }
       // 砍树
@@ -424,6 +461,7 @@ export class Sim {
           this.stockpile.wood += 3;
           st.chopXY = undefined;
           st.chopProgress = undefined;
+          this.trailCache.clear();
         }
       }
     }
