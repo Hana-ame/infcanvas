@@ -70,8 +70,9 @@ function createHud(sim: Sim, onSelectBuild: (id: string | null) => void): { upda
     const foodWarn = s.food < 30 ? ` <span style="color:#f66">⚠食物告急!</span>` : '';
     const raidWarn = sim.hostiles.length > 0 ? ` <span style="color:#f66">⚔ 袭击！${sim.hostiles.length} 只野狼</span>` : '';
     const dayIcon = sim.isNight() ? '🌙' : '☀️';
+    const pauseMark = sim.paused ? ' ⏸暂停' : ` ${sim.speed}x`;
     const parts = [
-      `${dayIcon} ${Math.floor(sim.time / 60)}分`,
+      `${dayIcon} ${Math.floor(sim.time / 60)}分${pauseMark}`,
       `🌲木头 ${s.wood}`, `🪨矿 ${s.ore}`, `🍖食物 ${s.food}`,
       `🛠️ ${s.tools ?? 0}`, `👥 ${sim.pawns.length}人`,
     ];
@@ -323,6 +324,17 @@ async function main(): Promise<void> {
   canvas.addEventListener('wheel', (e) => {
     e.preventDefault();
     renderer.zoomBy(e.deltaY > 0 ? 0.9 : 1.1);
+  });
+
+  // 键盘快捷键：空格暂停，1/2/3 调速
+  window.addEventListener('keydown', (e) => {
+    if (e.code === 'Space') {
+      e.preventDefault();
+      sim.paused = !sim.paused;
+      hud.update(buildMode);
+    } else if (e.key === '1') { sim.paused = false; sim.speed = 1; hud.update(buildMode); }
+    else if (e.key === '2') { sim.paused = false; sim.speed = 2; hud.update(buildMode); }
+    else if (e.key === '3') { sim.paused = false; sim.speed = 3; hud.update(buildMode); }
   });
 
   // 相机边缘滚动（PC）
