@@ -82,13 +82,28 @@ export class BehaviorSystem implements GameSystem {
     const drawn = drawCards(pawnLike, this.ctx.rng, 3, ctx);
     const card = pickBest(drawn, ctx);
     if (!card) return null;
+    // 意图失真：违抗 roll —— 3张里若有"本我卡"(生理/娱乐系)没被选，
+    // 小人心情差或懒惰时会违抗，改选本我卡（个体利益 ≠ 玩家利益）
+    const picked = card;
+    const idCard = drawn.find((c) => c !== picked && (c.series === 'physio' || c.series === 'leisure'));
+    let chosen = picked;
+    if (idCard) {
+      const n = this.ctx.readNeeds(eid);
+      const lazy = st.dna.traits.includes('懒惰');
+      const moodLow = (n?.mood ?? 60) < 30;
+      const base = (lazy ? 0.5 : 0) + (moodLow ? 0.35 : 0);
+      if (base > 0 && this.ctx.rng.next() < base) {
+        chosen = idCard;
+        this.ctx.logEvent('😒 小人违抗了安排');
+      }
+    }
     // 记录决策（狗屁倒灶日志素材）
     st.lastDecision = {
       drawn: drawn.map((c) => c.name),
-      picked: card.name,
+      picked: chosen.name,
       time: this.ctx.time,
     };
-    return card.decide(ctx);
+    return chosen.decide(ctx);
   }
 
   // ---- 意图执行 ----
