@@ -9,7 +9,7 @@ import { World } from './core/world';
 import { findPath } from './core/pathfinding';
 import { SimRng } from './core/rng';
 import { initNeeds, tickNeeds, urgentNeedAction, type Needs } from './core/needs';
-import { generateDna, initSlots, pickNextAction, type Dna } from './ai/pawn';
+import { generateDna, initSlots, drawCards, pickBest, type Dna, type CardContext, type BehaviorCard } from './ai/pawn';
 import { BUILDINGS } from './defs';
 
 // ---- ECS 组件定义（bitecs 0.4：SoA 数组存储，组件 = { field: [], ... }） ----
@@ -73,6 +73,8 @@ export class Sim {
   dayTime = 0; // 0..1
   speed = 1; // 1x/2x/3x
   paused = false;
+  // 事件日志（WorldBox 风格：最近事件 feed）
+  events: { time: number; text: string }[] = [];
 
   pawnStates = new Map<number, PawnState>();
   pawnPositions = new Map<number, { x: number; y: number }>();
@@ -494,52 +496,99 @@ export class Sim {
 
   private doAction(eid: number, st: PawnState, pos: PositionData, dt: number): void {
     void dt;
-    // 自主 AI：空闲时自动找活干
-    this.assignAutoWork(eid, st, pos);
+    // 自主 AI：数据驱动行为卡 —— 按权重抽 3 张 → 挑收益最高 1 张执行
+    this.assignCardWork(eid, st, pos);
   }
 
-  // 自主找活干：优先级 = 建造 > 砍树 > 采矿 > 闲逛
-  private assignAutoWork(eid: number, st: PawnState, pos: PositionData): void {
-    // 已在干活（砍/采/建中）则不要打断
+  // 数据驱动卡系统：每小人从卡池抽 3 张（不放回，种子化）→ 挑收益最高执行
+  private assignCardWork(eid: number, st: PawnState, pos: PositionData): void {
+    // 已在干活（砍/采中）则不要打断
     if (st.chopXY || st.mining) return;
-    const w = this.world;
 
-    // 心情崩溃 → 拒绝工作（意图失真：小人不想干活就不干）
-    const nd = readNeeds(this.ecs, eid);
-    if (nd && nd.mood < 15) {
-      st.job = '心情崩溃';
+    const ctx: CardContext = {
+      sim: {
+        buildQueueCount: this.buildQueue.length,
+        stockpile: this.stockpile,
+        needsOf: (e) => this.needsOf(e),
+        isNight: () => this.isNight(),
+      },
+      eid,
+    };
+
+    // 抽 3 张（不放回，种子化），挑收益最高
+    const pawnLike = { dna: st.dna, slots: st.slots };
+    const drawn = drawCards(pawnLike, this.rng, 3, ctx);
+    const card = pickBest(drawn, ctx);
+
+    // 执行卡片动作
+    if (!card) {
+      st.job = '闲逛';
       return;
     }
+    this.executeCard(eid, st, pos, card, ctx);
+  }
 
-    // 1. 建造（有蓝图且附近有空闲耗时）
-    if (this.buildQueue.length > 0) {
-      const b = this.buildQueue[0];
-      const def = BUILDINGS[b.defId];
-      st.job = `建造:${def.name}`;
-      this.moveTo(eid, b.x, b.y);
-      return;
+  // 执行行为卡 → 指派具体 job
+  private executeCard(eid: number, st: PawnState, pos: PositionData, card: BehaviorCard, ctx: CardContext): void {
+    switch (card.action) {
+      case 'chop': {
+        const tree = this.findNearest(pos, (x, y) => this.world.getTile(x, y) === 'tree', true);
+        if (tree) {
+          st.job = '伐木';
+          st.chopTarget = tree;
+          this.moveAdjacent(eid, tree.x, tree.y);
+        } else {
+          st.job = '闲逛';
+        }
+        break;
+      }
+      case 'mine': {
+        const ore = this.findNearest(pos, (x, y) => this.world.getTile(x, y) === 'ore', true);
+        if (ore) {
+          st.job = '采矿';
+          st.mineTarget = ore;
+          this.moveAdjacent(eid, ore.x, ore.y);
+        } else {
+          st.job = '闲逛';
+        }
+        break;
+      }
+      case 'build': {
+        if (this.buildQueue.length > 0) {
+          const b = this.buildQueue[0];
+          const def = BUILDINGS[b.defId];
+          st.job = `建造:${def.name}`;
+          this.moveTo(eid, b.x, b.y);
+        } else {
+          st.job = '闲逛';
+        }
+        break;
+      }
+      case 'eat': {
+        st.job = '进食';
+        const nd = readNeeds(this.ecs, eid);
+        if (nd && this.stockpile.food > 0) {
+          this.stockpile.food--;
+          nd.food = Math.min(100, nd.food + 40);
+          setComponent(this.ecs, eid, NeedsComp, nd);
+        }
+        break;
+      }
+      case 'rest': {
+        st.job = '休息';
+        const nd = readNeeds(this.ecs, eid);
+        if (nd) {
+          nd.rest = Math.min(100, nd.rest + 40);
+          setComponent(this.ecs, eid, NeedsComp, nd);
+        }
+        break;
+      }
+      case 'pray':
+      case 'idle':
+      default:
+        st.job = '闲逛';
+        break;
     }
-
-    // 2. 砍树：找最近的树
-    const tree = this.findNearest(pos, (x, y) => w.getTile(x, y) === 'tree', true);
-    if (tree) {
-      st.job = '伐木';
-      st.chopTarget = tree;
-      this.moveAdjacent(eid, tree.x, tree.y);
-      return;
-    }
-
-    // 3. 采矿：找最近的矿
-    const ore = this.findNearest(pos, (x, y) => w.getTile(x, y) === 'ore', true);
-    if (ore) {
-      st.job = '采矿';
-      st.mineTarget = ore;
-      this.moveAdjacent(eid, ore.x, ore.y);
-      return;
-    }
-
-    // 4. 闲逛
-    st.job = '闲逛';
   }
 
   // 在半径内找最近的（allowNonPassable=true 时目标格本身可不可走无所谓）

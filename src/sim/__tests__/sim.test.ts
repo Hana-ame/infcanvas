@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { Sim } from '../sim';
 import { SimRng } from '../core/rng';
-import { generateDna, initSlots, pickNextAction } from '../ai/pawn';
+import { generateDna, initSlots, drawCards, pickBest } from '../ai/pawn';
 import { World } from '../core/world';
 
 describe('SimRng', () => {
@@ -57,14 +57,26 @@ describe('DNA + slots', () => {
     expect(slots.length).toBeGreaterThanOrEqual(dna.maxSlots);
   });
 
-  it('pickNextAction always returns a card', () => {
+  it('drawCards returns up to 3 cards, pickBest picks one', () => {
     const dna = generateDna(5);
     const slots = initSlots(dna);
     const rng = new SimRng(1);
+    const ctx = {
+      sim: {
+        buildQueueCount: 0,
+        stockpile: { wood: 0, ore: 0, food: 50 },
+        needsOf: () => ({ food: 80, rest: 80, mood: 60 }),
+        isNight: () => false,
+      },
+      eid: 1,
+    };
     for (let i = 0; i < 20; i++) {
-      const card = pickNextAction({ dna, slots }, rng);
-      expect(card).toBeDefined();
-      expect(card.weight).toBeGreaterThan(0);
+      const drawn = drawCards({ dna, slots }, rng, 3, ctx);
+      expect(drawn.length).toBeGreaterThan(0);
+      expect(drawn.length).toBeLessThanOrEqual(3);
+      const best = pickBest(drawn, ctx);
+      expect(best).toBeDefined();
+      expect(best!.weight).toBeGreaterThan(0);
     }
   });
 
