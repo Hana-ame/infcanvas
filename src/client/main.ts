@@ -64,6 +64,26 @@ function createHud(sim: Sim, onSelectBuild: (id: string | null) => void): { upda
   feed.style.cssText = 'position:absolute;bottom:12px;right:12px;background:rgba(0,0,0,.45);border-radius:8px;padding:6px 10px;font-size:11px;line-height:1.5;max-width:220px;text-align:right;';
   root.appendChild(feed);
 
+  // 帮助按钮 + 面板
+  const helpBtn = document.createElement('button');
+  helpBtn.textContent = '❓ 操作帮助';
+  helpBtn.style.cssText = 'position:absolute;top:54px;left:50%;transform:translateX(-50%);border:1px solid #555;background:rgba(0,0,0,.6);color:#eee;border-radius:8px;padding:5px 12px;cursor:pointer;font:12px system-ui;pointer-events:auto;';
+  const helpPanel = document.createElement('div');
+  helpPanel.style.cssText = 'position:absolute;top:88px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.85);border:1px solid #444;border-radius:10px;padding:14px 18px;font-size:12px;line-height:1.8;max-width:420px;display:none;';
+  helpPanel.innerHTML =
+    `<b>🐭 infcanvas · 殖民地模拟</b><br>` +
+    `👆 <b>鼠标</b>：左键选中小人/建筑 · 右键移动 · 左键拖空白平移 · 滚轮缩放 · 边缘滚动<br>` +
+    `📱 <b>触摸</b>：点选 · 长按移动 · 双指拖动/缩放<br>` +
+    `⌨️ <b>键盘</b>：空格暂停 · 1/2/3 调速 · B 建造墙<br>` +
+    `🏗 <b>建造菜单</b>：下方选建筑 → 地图点击放置（绿=可建，红=不可）<br>` +
+    `🧠 <b>小人自主</b>：小人自己伐木/采矿/建造/祈祷/疗伤，心情差会违抗安排<br>` +
+    `⚔ <b>威胁</b>：野狼会袭击！建墙保护，受伤要治疗`;
+  root.appendChild(helpBtn);
+  root.appendChild(helpPanel);
+  helpBtn.addEventListener('click', () => {
+    helpPanel.style.display = helpPanel.style.display === 'block' ? 'none' : 'block';
+  });
+
   const update = (bm: string | null): void => {
     // 资源条
     const s = sim.stockpile;
