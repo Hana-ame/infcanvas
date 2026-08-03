@@ -120,7 +120,7 @@ export class Renderer {
     for (const eid of this.sim.pawns) {
       let t = this.pawnTexts.get(eid);
       if (!t) {
-        t = new Text({ text: '🐁', style: terrainStyle(24) });
+        t = new Text({ text: '🐭', style: terrainStyle(24) });
         t.resolution = this.app.renderer.resolution;
         t.anchor.set(0.5);
         this.pawnLayer.addChild(t);
