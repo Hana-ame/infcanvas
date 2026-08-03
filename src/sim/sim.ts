@@ -21,6 +21,7 @@ export const Position = { x: [] as number[], y: [] as number[] };
 export const Pawn = {} as { _flag?: number[] };
 export const NeedsComp = { food: [] as number[], rest: [] as number[], mood: [] as number[] };
 export const Speed = { v: [] as number[] };
+export const Health = { hp: [] as number[], maxHp: [] as number[] };
 
 // 注册组件数据的自动存储 observer：setComponent 时把数据写进 SoA 数组
 function registerAutoStore(world: EcsWorld, component: Record<string, number[]>): void {
@@ -85,6 +86,7 @@ export class Sim {
     registerAutoStore(this.ecs, Position);
     registerAutoStore(this.ecs, NeedsComp);
     registerAutoStore(this.ecs, Speed);
+    registerAutoStore(this.ecs, Health);
     this.world = new World(seed);
     this.rng = new SimRng(seed + 1);
     this.spawnPawns(pawnCount);
@@ -104,6 +106,8 @@ export class Sim {
       setComponent(this.ecs, eid, NeedsComp, initNeeds());
       addComponent(this.ecs, eid, Speed);
       setComponent(this.ecs, eid, Speed, { v: 4 });
+      addComponent(this.ecs, eid, Health);
+      setComponent(this.ecs, eid, Health, { hp: 100, maxHp: 100 });
       const dna = generateDna(this.seedFor(eid));
       this.pawnStates.set(eid, { dna, slots: initSlots(dna), path: [], pathIndex: 0 });
       this.pawnList.push(eid);
@@ -130,6 +134,10 @@ export class Sim {
     return readNeeds(this.ecs, eid);
   }
 
+  healthOf(eid: number): { hp: number; maxHp: number } | null {
+    return readHealth(this.ecs, eid);
+  }
+
   // UI 同步选中
   get selectedIds(): number[] {
     return this.selected;
@@ -144,6 +152,7 @@ export class Sim {
     slots: ReturnType<typeof initSlots>;
     job: string;
     needs: { food: number; rest: number; mood: number } | null;
+    health: { hp: number; maxHp: number } | null;
     pos: { x: number; y: number };
   } | null {
     const st = this.pawnStates.get(eid);
@@ -153,6 +162,7 @@ export class Sim {
       slots: st.slots,
       job: st.job ?? '',
       needs: this.needsOf(eid),
+      health: this.healthOf(eid),
       pos: this.pawnPositions.get(eid) ?? { x: 0, y: 0 },
     };
   }
@@ -232,16 +242,27 @@ export class Sim {
   step(dt: number): void {
     this.time += dt;
 
-    // 1. 需求衰减 + 紧急需求
+    // 1. 需求衰减 + 紧急需求 + 饥饿伤害
     const pawnIds = query(this.ecs, [Pawn, NeedsComp]);
     for (const eid of pawnIds) {
+      if (!this.pawnStates.has(eid)) continue;
       const n = readNeeds(this.ecs, eid);
       if (!n) continue;
       tickNeeds(n, dt);
       setComponent(this.ecs, eid, NeedsComp, n);
+      // 饿死：食物耗尽持续掉血
+      const h = readHealth(this.ecs, eid);
+      if (n.food <= 0 && h) {
+        h.hp -= 2.5 * dt;
+        if (Math.floor(h.hp) < 0) {
+          h.hp = 0;
+          this.killPawn(eid);
+        }
+        setComponent(this.ecs, eid, Health, h);
+      }
       const urgent = urgentNeedAction(n);
       const st = this.pawnStates.get(eid);
-      if (urgent && st) st.urgent = urgent;
+      if (urgent && st && this.pawnStates.has(eid)) st.urgent = urgent;
     }
 
     // 2. 行为 + 移动
@@ -252,6 +273,9 @@ export class Sim {
 
     // 4. 采矿
     this.updateMining(dt);
+
+    // 5. 农田产出食物
+    this.updateFarms(dt);
   }
 
   private updatePawns(dt: number): void {
@@ -296,6 +320,15 @@ export class Sim {
       // 空闲：按插槽挑动作（P0 简化：无紧急则闲逛，等玩家命令）
       this.doAction(eid, st, pos, dt);
     }
+  }
+
+  private killPawn(eid: number): void {
+    // 从活动列表移除（渲染层会随 pawnPositions 消失）
+    const idx = this.pawnList.indexOf(eid);
+    if (idx >= 0) this.pawnList.splice(idx, 1);
+    this.pawnStates.delete(eid);
+    this.pawnPositions.delete(eid);
+    this.selected = this.selected.filter((s) => s !== eid);
   }
 
   private handleUrgent(eid: number, st: PawnState, dt: number): void {
@@ -438,6 +471,18 @@ export class Sim {
     }
   }
 
+  // 农田产出食物（简化：每块 farm 格缓慢产出）
+  private updateFarms(dt: number): void {
+    let farms = 0;
+    for (const [key, b] of this.world.buildings) {
+      if (b.def.id === 'farm') farms++;
+    }
+    if (farms > 0) {
+      this.stockpile.food += farms * 0.2 * dt;
+      if (this.stockpile.food > 500) this.stockpile.food = 500;
+    }
+  }
+
   private updateMining(dt: number): void {
     for (const eid of this.pawnList) {
       const st = this.pawnStates.get(eid);
@@ -482,4 +527,9 @@ function readSpeed(_world: EcsWorld, eid: number): SpeedData | null {
 function readNeeds(_world: EcsWorld, eid: number): NeedsData | null {
   if (NeedsComp.food[eid] === undefined) return null;
   return { food: NeedsComp.food[eid], rest: NeedsComp.rest[eid], mood: NeedsComp.mood[eid] };
+}
+
+function readHealth(_world: EcsWorld, eid: number): { hp: number; maxHp: number } | null {
+  if (Health.hp[eid] === undefined) return null;
+  return { hp: Health.hp[eid], maxHp: Health.maxHp[eid] };
 }

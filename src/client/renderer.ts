@@ -143,6 +143,12 @@ export class Renderer {
         t.position.set(pos.x * TILE, pos.y * TILE);
         t.alpha = this.selected.has(eid) ? 1 : 0.9;
         t.scale.set(this.selected.has(eid) ? 1.15 : 1);
+        // 受伤（血量低）变暗红色提示
+        const hk = this.sim.healthOf(eid);
+        if (hk && hk.hp / hk.maxHp < 0.4) {
+          t.alpha = Math.max(0.35, hk.hp / hk.maxHp);
+          t.style = terrainStyle(24); // 保持字号
+        }
       }
     }
   }

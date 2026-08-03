@@ -47,11 +47,12 @@ function createHud(sim: Sim, onSelectBuild: (id: string | null) => void): { upda
       if (p) {
         selPanel.style.display = 'block';
         const nd = p.needs;
+        const hk = p.health;
         const slotCards = p.slots.filter((c) => c !== null).map((c) => c!.name).join('、') || '无';
         selPanel.innerHTML =
           `<b>🐭 小人 ${eid}</b> (${Math.round(p.pos.x)},${Math.round(p.pos.y)})<br>` +
           `<span style="color:#4cf">工作：${p.job || '闲逛'}</span><br>` +
-          `STR ${p.dna.str} · CON ${p.dna.con} · INT ${p.dna.int}<br>` +
+          `HP ${nf(hk?.hp)}/${nf(hk?.maxHp)} · STR ${p.dna.str} · CON ${p.dna.con} · INT ${p.dna.int}<br>` +
           `天赋：${p.dna.traits.join('、') || '无'}<br>` +
           `插槽(${p.slots.filter((c) => c !== null).length}/${p.dna.maxSlots})：${slotCards}<br>` +
           (nd ? `饥饿 ${nf(nd.food)} · 精力 ${nf(nd.rest)} · 心情 ${nf(nd.mood)}` : '');
