@@ -21,6 +21,7 @@ export interface CardView {
   healthOf?(eid: number): { hp: number; maxHp: number } | null;
   isNight(): boolean;
   hasCampfire(): boolean;
+  hasCave(): boolean;
   buildQueueCount: number;
   stockpile: Record<string, number>;
 }
@@ -35,7 +36,7 @@ export type IntentAction = 'walkAndWork' | 'eat' | 'rest' | 'pray' | 'heal' | 'i
 
 export interface BehaviorIntent {
   action: IntentAction;
-  workType?: 'chop' | 'mine' | 'build'; // walkAndWork 用
+  workType?: 'chop' | 'mine' | 'caveMine' | 'build'; // walkAndWork 用
   label: string; // 显示的工作名
 }
 
@@ -78,6 +79,12 @@ export const BASE_CARDS: BehaviorCard[] = [
     id: 'mine', name: '采矿', series: 'work', weight: 4,
     utility: () => 25,
     decide: () => ({ action: 'walkAndWork', workType: 'mine', label: '采矿' }),
+  },
+  {
+    id: 'caveMine', name: '矿洞采掘', series: 'work', weight: 6,
+    condition: (c) => c.view.hasCave(),
+    utility: () => 28,
+    decide: () => ({ action: 'walkAndWork', workType: 'caveMine', label: '矿洞采掘' }),
   },
   {
     id: 'build', name: '建造', series: 'work', weight: 5,

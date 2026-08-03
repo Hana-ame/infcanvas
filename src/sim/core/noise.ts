@@ -75,12 +75,12 @@ export function generateBiomeMap(width: number, height: number, seed: number): s
         tile = 'sand'; // 海滩
       } else if (elevation < 0.28) {
         // 低地平原：湿度决定草地/沙漠/森林
-        if (moisture > 0.25) tile = 'tree'; // 湿润 → 森林
+        if (moisture > 0.05) tile = 'tree'; // 湿润 → 森林
         else if (moisture < -0.35) tile = 'desert'; // 干燥 → 沙漠
-        else tile = 'grass';
+        else tile = detail > 0.15 ? 'tree' : 'grass'; // 草地稀疏点缀树
       } else if (elevation < 0.5) {
         // 丘陵
-        if (moisture > 0.3 && detail > 0.2) tile = 'tree';
+        if (moisture > 0.1 || detail > 0.25) tile = 'tree';
         else tile = 'grass';
       } else if (elevation < 0.62) {
         // 山地边缘：石头 + 矿

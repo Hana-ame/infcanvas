@@ -43,11 +43,11 @@ export class World {
     for (let i = 0; i < biomeMap.length; i++) {
       this.tileIndex[i] = this.tileIdToIndex(biomeMap[i]);
     }
-    // 保证出生点是一块草地
+    // 保证出生点是一块草地（5x5 可通行，四周仍是树林/资源）
     const cx = Math.floor(this.width / 2);
     const cy = Math.floor(this.height / 2);
-    for (let dy = -3; dy <= 3; dy++) {
-      for (let dx = -3; dx <= 3; dx++) {
+    for (let dy = -2; dy <= 2; dy++) {
+      for (let dx = -2; dx <= 2; dx++) {
         this.setTile(cx + dx, cy + dy, 'grass');
       }
     }

@@ -11,6 +11,7 @@ export class Renderer {
   worldContainer: Container;
   sim: Sim;
   private assets: SvgAssets;
+  private entityLayer: Container; // 建筑+小人按 y 前后排序
   private terrainLayer: Container;
   private buildingLayer: Container;
   private pawnLayer: Container;
@@ -38,6 +39,7 @@ export class Renderer {
     this.terrainLayer = new Container();
     this.buildingLayer = new Container();
     this.pawnLayer = new Container();
+    this.entityLayer = new Container();
     this.ghost = new Graphics();
     this.ghost.eventMode = 'none';
     this.blueprintLayer = new Graphics();

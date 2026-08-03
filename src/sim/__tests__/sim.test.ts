@@ -68,6 +68,7 @@ describe('DNA + slots', () => {
         needsOf: () => ({ food: 80, rest: 80, mood: 60 }),
         isNight: () => false,
         hasCampfire: () => false,
+        hasCave: () => false,
       },
       eid: 1,
     };
@@ -108,28 +109,29 @@ describe('Sim basic loop', () => {
     const sim = new Sim({ seed: 3, pawnCount: 1 });
     const eid = sim.pawns[0];
     sim.selected = [eid];
-    // 朝出生点右下角移动
+    // 朝出生点右下移动（出生点 5x5 保证可通行）
     const cx = Math.floor(sim.world.width / 2);
     const cy = Math.floor(sim.world.height / 2);
-    sim.issueCommand({ type: 'move', x: cx + 10, y: cy + 10 });
+    const start = sim.pawnPositions.get(eid)!;
+    sim.issueCommand({ type: 'move', x: cx + 2, y: cy + 2 });
     for (let i = 0; i < 200; i++) sim.step(1 / 20); // 10 秒
     const pos = sim.pawnPositions.get(eid)!;
-    // 应该明显向右下移动了
-    expect(pos.x).toBeGreaterThan(cx);
-    expect(pos.y).toBeGreaterThan(cy);
+    // 贴到目标（出生点内，可通行）
+    expect(Math.hypot(pos.x - (cx + 2), pos.y - (cy + 2))).toBeLessThan(1.5);
   });
 
   it('queues and completes a build', () => {
     const sim = new Sim({ seed: 4, pawnCount: 1 });
     const cx = Math.floor(sim.world.width / 2);
     const cy = Math.floor(sim.world.height / 2);
-    // 在出生点旁放墙
-    sim.issueCommand({ type: 'build', x: cx + 3, y: cy, buildingId: 'wall' });
-    // 等建造完成（buildTime=3s）
-    for (let i = 0; i < 100; i++) sim.step(1 / 20); // 5 秒
-    const b = sim.world.getBuilding(cx + 3, cy);
+    // 在出生点内放墙（保证可通行/可建造）
+    const woodBefore = sim.stockpile.wood;
+    sim.issueCommand({ type: 'build', x: cx + 1, y: cy, buildingId: 'wall' });
+    for (let i = 0; i < 100; i++) sim.step(1 / 20); // 5 秒（buildTime=3s）
+    const b = sim.world.getBuilding(cx + 1, cy);
     expect(b).not.toBeNull();
     expect(b!.def.id).toBe('wall');
+    expect(sim.stockpile.wood).toBeLessThan(woodBefore); // 建完扣木材
   });
 
   it('mining converts ore tile to dirt and adds stockpile', () => {
@@ -137,24 +139,12 @@ describe('Sim basic loop', () => {
     const eid = sim.pawns[0];
     const cx = Math.floor(sim.world.width / 2);
     const cy = Math.floor(sim.world.height / 2);
-    // 找出生点附近的矿脉（可达距离内）
-    let found = false;
-    for (let r = 1; r <= 8 && !found; r++) {
-      for (let dy = -r; dy <= r && !found; dy++) {
-        for (let dx = -r; dx <= r && !found; dx++) {
-          const x = cx + dx;
-          const y = cy + dy;
-          if (sim.world.inBounds(x, y) && sim.world.getTile(x, y) === 'ore') {
-            sim.issueCommand({ type: 'mine', pawnId: eid, x, y });
-            // 8 格距离，速度 4，最多 2 秒走到 + 3 秒开采
-            for (let i = 0; i < 300; i++) sim.step(1 / 20); // 15 秒
-            expect(sim.world.getTile(x, y)).toBe('dirt');
-            expect(sim.stockpile.ore).toBeGreaterThan(0);
-            found = true;
-          }
-        }
-      }
-    }
-    expect(found).toBe(true);
+    // 在出生点放一块矿（保证可达）
+    const oreX = cx + 2, oreY = cy;
+    sim.world.setTile(oreX, oreY, 'ore');
+    sim.issueCommand({ type: 'mine', pawnId: eid, x: oreX, y: oreY });
+    for (let i = 0; i < 300; i++) sim.step(1 / 20); // 15 秒
+    expect(sim.world.getTile(oreX, oreY)).toBe('dirt');
+    expect(sim.stockpile.ore).toBeGreaterThan(0);
   });
 });

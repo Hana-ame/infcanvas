@@ -41,7 +41,7 @@ export class BehaviorSystem implements GameSystem {
       if (!pos) continue;
 
       // 工作中（采集/祈祷/疗伤/建造进度）不打断
-      if (st.mining || st.chopXY || st.praying || st.healing) continue;
+      if (st.mining || st.chopXY || st.praying || st.healing || st.caveWork) continue;
 
       // 玩家命令冷却递减
       if ((st.commandCooldown ?? 0) > 0) st.commandCooldown = (st.commandCooldown ?? 0) - dt;
@@ -83,6 +83,7 @@ export class BehaviorSystem implements GameSystem {
       healthOf: (e) => this.ctx.readHealth(e),
       isNight: () => this.ctx.isNight(),
       hasCampfire: () => this.ctx.world.hasBuilding('campfire'),
+      hasCave: () => this.ctx.world.hasBuilding('cave'),
       buildQueueCount: this.ctx.buildQueue.length,
       stockpile: this.ctx.stockpile,
     };
@@ -91,23 +92,26 @@ export class BehaviorSystem implements GameSystem {
     const drawn = drawCards(pawnLike, this.ctx.rng, 3, ctx);
     const card = pickBest(drawn, ctx);
     if (!card) return null;
-    // 意图失真：违抗 roll —— 3张里若有"本我卡"(生理/娱乐系)没被选，
-    // 小人心情差或懒惰时会违抗，改选本我卡（个体利益 ≠ 玩家利益）
+    // 意图失真：违抗 roll —— 仅当"工作卡被选但存在未选的本我卡"时才可能违抗
+    // （若本来选的就是本我卡/闲逛，不算违抗）加冷却防刷屏
     const picked = card;
-    const idCard = drawn.find((c) => c !== picked && (c.series === 'physio' || c.series === 'leisure'));
     let chosen = picked;
-    if (idCard) {
-      const n = this.ctx.readNeeds(eid);
-      const lazy = st.dna.traits.includes('懒惰');
-      const moodLow = (n?.mood ?? 60) < 30;
-      // 信仰度抑制违抗（虔诚的小人更服从）
-      const faithReduce = (st.faith ?? 0) * 0.003;
-      const base = Math.max(0, (lazy ? 0.5 : 0) + (moodLow ? 0.35 : 0) - faithReduce);
-      if (base > 0 && this.ctx.rng.next() < base) {
-        chosen = idCard;
-        this.ctx.logEvent('😒 小人违抗了安排');
+    if (picked.series === 'work' && !(st.defyCd ?? 0)) {
+      const idCard = drawn.find((c) => c !== picked && (c.series === 'physio' || c.series === 'leisure'));
+      if (idCard) {
+        const n = this.ctx.readNeeds(eid);
+        const lazy = st.dna.traits.includes('懒惰');
+        const moodLow = (n?.mood ?? 60) < 20;
+        const faithReduce = (st.faith ?? 0) * 0.005;
+        const base = Math.max(0, (lazy ? 0.25 : 0) + (moodLow ? 0.3 : 0) - faithReduce);
+        if (base > 0 && this.ctx.rng.next() < base) {
+          chosen = idCard;
+          st.defyCd = 30; // 30 秒内不再违抗
+          this.ctx.logEvent('😒 小人违抗了安排');
+        }
       }
     }
+    if (st.defyCd) st.defyCd--;
     // 记录决策（狗屁倒灶日志素材）
     st.lastDecision = {
       drawn: drawn.map((c) => c.name),
@@ -128,6 +132,10 @@ export class BehaviorSystem implements GameSystem {
     } else if (intent.workType === 'mine') {
       const ore = c.findNearest(pos, (x, y) => c.world.getTile(x, y) === 'ore', true);
       if (ore) { st.mineTarget = ore; c.moveAdjacent(eid, ore.x, ore.y); }
+      else st.job = '闲逛';
+    } else if (intent.workType === 'caveMine') {
+      const cave = c.findNearest(pos, (x, y) => c.world.getBuilding(x, y)?.def.id === 'cave', true);
+      if (cave) { st.caveTarget = cave; c.moveAdjacent(eid, cave.x, cave.y); }
       else st.job = '闲逛';
     } else if (intent.workType === 'build') {
       if (c.buildQueue.length > 0) {
@@ -247,6 +255,10 @@ export class BehaviorSystem implements GameSystem {
       st.chopTarget = undefined;
       st.chopProgress = 0;
       st.chopXY = { x, y };
+    } else if (st.caveTarget) {
+      const { x, y } = st.caveTarget;
+      st.caveTarget = undefined;
+      st.caveWork = { x, y, progress: 0 };
     } else if (st.prayTarget) {
       const { x, y } = st.prayTarget;
       st.prayTarget = undefined;

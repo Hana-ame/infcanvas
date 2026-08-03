@@ -58,6 +58,7 @@ export const BUILDINGS: Record<string, BuildingDef> = {
   door: { id: 'door', name: '门', size: { x: 1, y: 1 }, hp: 100, color: '#7a5a1a', emoji: '🚪', passable: true, buildTime: 2 },
   farm: { id: 'farm', name: '农田', size: { x: 2, y: 2 }, hp: 80, color: '#6a8a3a', emoji: '🌾', passable: true, buildTime: 4, workRadius: 0 },
   workbench: { id: 'workbench', name: '工作台', size: { x: 1, y: 1 }, hp: 300, color: '#5a3a1a', emoji: '🛠️', passable: false, buildTime: 5, workRadius: 2 },
+  cave: { id: 'cave', name: '矿洞', size: { x: 1, y: 1 }, hp: 500, color: '#3a2a1a', emoji: '⛰️', passable: false, buildTime: 6, workRadius: 1 },
 };
 
 export const ITEMS: Record<string, ItemDef> = {

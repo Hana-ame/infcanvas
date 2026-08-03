@@ -55,6 +55,8 @@ export interface PawnState {
   mining?: { x: number; y: number; progress: number };
   mineTarget?: { x: number; y: number };
   chopTarget?: { x: number; y: number };
+  caveTarget?: { x: number; y: number }; // 矿洞工作目标
+  caveWork?: { x: number; y: number; progress: number; duration?: number }; // 矿洞内持续采掘
   chopXY?: { x: number; y: number };
   chopProgress?: number;
   prayTarget?: { x: number; y: number }; // 祈祷点（篝火）
@@ -63,6 +65,7 @@ export interface PawnState {
   healing?: { progress: number };
   commandCooldown?: number; // 玩家命令后的一段时间不自动决策
   faith?: number; // 信仰度（祈祷积累，影响违抗与心情）
+  defyCd?: number; // 违抗后的冷却时间（秒）
   job?: string;
   // 最近决策记录（设计文档：小人闪过哪3个念头、选了哪个）
   lastDecision?: { drawn: string[]; picked: string; time: number };

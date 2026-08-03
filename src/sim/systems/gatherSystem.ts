@@ -42,6 +42,28 @@ export class GatherSystem implements GameSystem {
         }
         continue;
       }
+      // 矿洞持续采掘（稳定产出，饥荒式矿场）
+      if (st.caveWork) {
+        st.caveWork.progress += dt;
+        // 工作一段时间后结束，避免永远困在矿洞
+        st.caveWork.duration = (st.caveWork.duration ?? 0) + dt;
+        if ((st.caveWork.duration ?? 0) >= 40) {
+          st.caveWork = undefined;
+          st.job = '闲逛';
+          this.ctx.logEvent('⛏ 结束了矿洞采掘');
+          continue;
+        }
+        if (st.caveWork.progress >= 4) {
+          st.caveWork.progress = 0;
+          const ev = this.ctx.rollEvent(eid, 70);
+          const gain = Math.round((ev.success ? 2 : 1) * toolBonus);
+          this.ctx.stockpile.ore += gain;
+          this.ctx.bus.emit({ type: 'resource_gained', eid, item: 'ore', amount: gain });
+          this.ctx.adjustMood(eid, ev.success ? 2 : -2);
+          this.ctx.logEvent(ev.success ? '矿洞采到矿石' : '矿洞挖出废石');
+        }
+        continue;
+      }
       // 采矿
       if (st.mining) {
         st.mining.progress += dt;

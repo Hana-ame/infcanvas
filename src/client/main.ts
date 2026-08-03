@@ -3,13 +3,14 @@ import { Sim } from '../sim/sim';
 import { Renderer } from './renderer';
 import { SvgAssets } from './svgLoader';
 import { BUILDINGS } from '../sim/defs';
+import { loadSave, writeSave } from './storage';
 
 const nf = (v: number | undefined): string => (v === undefined ? '-' : Math.round(v).toString());
 
 // 当前选中的建筑（模块级，HUD 可读）
 let selectedBuilding: { x: number; y: number } | null = null;
 
-function createHud(sim: Sim, onSelectBuild: (id: string | null) => void): { update: (bm: string | null) => void; hint: HTMLElement } {
+function createHud(sim: Sim, onSelectBuild: (id: string | null) => void, onZoom?: (factor: number) => void): { update: (bm: string | null) => void; hint: HTMLElement } {
   const root = document.createElement('div');
   root.style.cssText = 'position:fixed;inset:0;z-index:10;pointer-events:none;font:13px system-ui;color:#eee;';
 
@@ -49,6 +50,22 @@ function createHud(sim: Sim, onSelectBuild: (id: string | null) => void): { upda
     }
   };
   refreshSpeed();
+
+  // 缩放按钮（右下角，+/-）
+  if (onZoom) {
+    const zoomBar = document.createElement('div');
+    zoomBar.style.cssText = 'position:absolute;bottom:12px;right:240px;background:rgba(0,0,0,.72);border:1px solid #444;border-radius:10px;padding:6px;display:flex;gap:4px;pointer-events:auto;';
+    root.appendChild(zoomBar);
+    const mk = (label: string, factor: number) => {
+      const b = document.createElement('button');
+      b.textContent = label;
+      b.style.cssText = 'border:1px solid #555;background:#333;color:#eee;border-radius:6px;padding:3px 10px;cursor:pointer;font:14px system-ui;';
+      b.addEventListener('click', () => onZoom(factor));
+      zoomBar.appendChild(b);
+    };
+    mk('＋', 1.2);
+    mk('－', 0.8);
+  }
 
   // 选中面板
   const selPanel = document.createElement('div');
@@ -172,9 +189,9 @@ async function main(): Promise<void> {
   const isTouch = 'ontouchstart' in window;
 
   const sim = new Sim({ seed: 20260803, pawnCount: 4 });
-  // 读取存档（localStorage）
+  // 读取存档（IndexedDB）
   try {
-    const raw = localStorage.getItem('infcanvas-save');
+    const raw = await loadSave<string>();
     if (raw) sim.load(JSON.parse(raw));
   } catch { /* 存档损坏则忽略 */ }
   // 加载 SVG 素材
@@ -183,10 +200,10 @@ async function main(): Promise<void> {
   const renderer = new Renderer(sim, assets);
   await renderer.init(container);
 
-  // 自动存档（每 30 秒）
-  setInterval(() => {
+  // 自动存档（每 30 秒，IndexedDB）
+  setInterval(async () => {
     try {
-      localStorage.setItem('infcanvas-save', JSON.stringify(sim.save()));
+      await writeSave(JSON.stringify(sim.save()));
     } catch { /* 忽略写失败 */ }
   }, 30000);
 
@@ -195,7 +212,7 @@ async function main(): Promise<void> {
     buildMode = id;
     if (!id) renderer.clearGhost();
     hud.update(buildMode);
-  });
+  }, (factor) => renderer.zoomBy(factor));
 
   // ---- 输入（Pointer Events，鼠标/触摸统一） ----
   const canvas = renderer.app.canvas;
@@ -360,6 +377,8 @@ async function main(): Promise<void> {
     } else if (e.key === '1') { sim.paused = false; sim.speed = 1; hud.update(buildMode); }
     else if (e.key === '2') { sim.paused = false; sim.speed = 2; hud.update(buildMode); }
     else if (e.key === '3') { sim.paused = false; sim.speed = 3; hud.update(buildMode); }
+    else if (e.key === 'PageUp' || e.key === '=') { renderer.zoomBy(1.2); }
+    else if (e.key === 'PageDown' || e.key === '-') { renderer.zoomBy(0.8); }
   });
 
   // 相机边缘滚动（PC）

@@ -74,6 +74,14 @@ export const BUILDING_SVG: Record<string, string> = {
     <circle cx="16" cy="20" r="2" fill="#c0c0c0"/>
     <rect x="9" y="24" width="6" height="3" fill="#6a4a20"/>
   `),
+  cave: svg(`
+    <path d="M4 28 Q4 6 16 6 Q28 6 28 28 Z" fill="#4a3a2a"/>
+    <path d="M8 28 Q8 12 16 12 Q24 12 24 28 Z" fill="#1a1208"/>
+    <ellipse cx="16" cy="26" rx="9" ry="3" fill="#0a0603"/>
+    <circle cx="13" cy="18" r="1.5" fill="#d4b94a"/>
+    <circle cx="19" cy="22" r="1.3" fill="#c9ad3f"/>
+    <path d="M16 12 Q18 6 16 2 Q14 6 16 12 Z" fill="#d4b94a" opacity="0.3"/>
+  `),
 };
 
 // 小人（正面鼠）—— 按性格变体
