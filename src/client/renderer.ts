@@ -19,6 +19,7 @@ export class Renderer {
   private pawnLayer: Container;
   private pawnTexts = new Map<number, Text>();
   private pawnJobIcons = new Map<number, Text>();
+  private hostileTexts = new Map<number, Text>();
   private camera = { x: 0, y: 0, zoom: 1 };
   private selected = new Set<number>();
   private lastBuildingVersion = -1;
@@ -110,6 +111,7 @@ export class Renderer {
       this.drawRebuildings();
     }
     this.renderPawns();
+    this.renderHostiles();
     // 夜晚遮罩跟随屏幕大小 + 夜色
     this.nightOverlay.clear();
     this.nightOverlay.rect(0, 0, this.app.screen.width, this.app.screen.height);
@@ -187,6 +189,33 @@ export class Renderer {
           jt.visible = false;
         }
       }
+    }
+  }
+
+  // 渲染入侵者（红色敌对）
+  private renderHostiles(): void {
+    // 先隐藏多余的
+    let idx = 0;
+    for (const h of this.sim.hostiles) {
+      let t = this.hostileTexts.get(idx);
+      if (!t) {
+        t = new Text({ text: '🐺', style: terrainStyle(24) });
+        t.resolution = this.app.renderer.resolution;
+        t.anchor.set(0.5);
+        t.eventMode = 'none';
+        this.pawnLayer.addChild(t);
+        this.hostileTexts.set(idx, t);
+      }
+      t.visible = true;
+      t.position.set(h.x * TILE, h.y * TILE);
+      // 血量低变淡
+      t.alpha = Math.max(0.4, h.hp / h.maxHp);
+      idx++;
+    }
+    // 多余的隐藏
+    for (let i = idx; i < this.hostileTexts.size; i++) {
+      const t = this.hostileTexts.get(i);
+      if (t) t.visible = false;
     }
   }
 

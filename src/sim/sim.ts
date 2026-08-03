@@ -77,6 +77,10 @@ export class Sim {
   selected: number[] = [];
   private pawnList: number[] = [];
   private _recruitTimer = 0;
+  // 敌袭（WorldBox 风格威胁）
+  hostiles: { x: number; y: number; hp: number; maxHp: number; targetX: number; targetY: number }[] = [];
+  private raidTimer = 60; // 首次袭击倒计时（秒）
+  raidActive = false;
   // 行动轨迹缓存：起点格+终点格 → 已算路径（直接读取复用）
   private trailCache = new Map<string, { x: number; y: number }[]>();
 
@@ -298,6 +302,89 @@ export class Sim {
 
     // 6. 人口发展
     this.updatePopulation(dt);
+
+    // 7. 敌袭 + 战斗
+    this.updateRaids(dt);
+    this.updateCombat(dt);
+  }
+
+  // 敌袭：定期从地图边缘刷入侵者，走向殖民地中心
+  private updateRaids(dt: number): void {
+    if (this.pawnList.length === 0) return;
+    if (!this.raidActive) {
+      this.raidTimer -= dt;
+      if (this.raidTimer <= 0) {
+        this.raidActive = true;
+        this.spawnRaid(Math.floor(2 + this.pawnList.length * 0.5));
+      }
+      return;
+    }
+    // 敌袭已清空则结束
+    if (this.hostiles.length === 0) this.raidActive = false;
+  }
+
+  private spawnRaid(count: number): void {
+    const w = this.world;
+    // 随机一个边
+    const edge = Math.floor(this.rng.next() * 4);
+    const cx = Math.floor(w.width / 2);
+    const cy = Math.floor(w.height / 2);
+    for (let i = 0; i < count; i++) {
+      let x: number, y: number;
+      if (edge === 0) { x = this.rng.int(0, w.width - 1); y = 0; }
+      else if (edge === 1) { x = this.rng.int(0, w.width - 1); y = w.height - 1; }
+      else if (edge === 2) { x = 0; y = this.rng.int(0, w.height - 1); }
+      else { x = w.width - 1; y = this.rng.int(0, w.height - 1); }
+      this.hostiles.push({ x, y, hp: 60, maxHp: 60, targetX: cx, targetY: cy });
+    }
+  }
+
+  // 战斗：入侵者靠近殖民地 → 自动接敌伤害
+  private updateCombat(dt: number): void {
+    if (this.hostiles.length === 0) return;
+    // 入侵者向目标移动
+    for (const h of this.hostiles) {
+      const dx = h.targetX - h.x;
+      const dy = h.targetY - h.y;
+      const d = Math.hypot(dx, dy);
+      const speed = 3.5;
+      const step = speed * dt;
+      if (d > step) {
+        h.x += (dx / d) * step;
+        h.y += (dy / d) * step;
+      }
+    }
+    // 靠近据点时对入侵者尝试攻击（有 pawn 在场）
+    for (let i = this.hostiles.length - 1; i >= 0; i--) {
+      const h = this.hostiles[i];
+      // 找离它最近的 pawn 战斗
+      let nearest: number | null = null;
+      let nd = 5; // 交战距离（格）
+      for (const eid of this.pawnList) {
+        const pos = this.pawnPositions.get(eid);
+        if (!pos) continue;
+        const d = Math.hypot(pos.x - h.x, pos.y - h.y);
+        if (d < nd) { nd = d; nearest = eid; }
+      }
+      if (nearest !== null) {
+        // 我方攻击
+        const dmg = 8 * dt;
+        h.hp -= dmg;
+        if (h.hp <= 0) {
+          this.hostiles.splice(i, 1);
+          this.stockpile.ore += 2; // 击杀掉落
+          continue;
+        }
+        // 敌人反击
+        const hk = this.healthOf(nearest);
+        if (hk) {
+          const eco = Math.min(hk.hp, 5 * dt);
+          hk.hp -= eco;
+          setComponent(this.ecs, nearest, Health, { hp: Math.max(0, hk.hp), maxHp: hk.maxHp });
+          if (hk.hp <= 0) this.killPawn(nearest);
+        }
+      }
+    }
   }
 
   // 人口：食物充足时偶有新人加入

@@ -33,12 +33,13 @@ function createHud(sim: Sim, onSelectBuild: (id: string | null) => void): { upda
     // 资源条
     const s = sim.stockpile;
     const foodWarn = s.food < 30 ? ` <span style="color:#f66">⚠食物告急!</span>` : '';
+    const raidWarn = sim.hostiles.length > 0 ? ` <span style="color:#f66">⚔ 袭击！${sim.hostiles.length} 只野狼</span>` : '';
     const parts = [
       `⏱️ ${Math.floor(sim.time / 60)}分`,
       `🌲木头 ${s.wood}`, `🪨矿 ${s.ore}`, `🍖食物 ${s.food}`,
       `👥 ${sim.pawns.length}人`,
     ];
-    stock.innerHTML = parts.join('  ·  ') + foodWarn;
+    stock.innerHTML = parts.join('  ·  ') + foodWarn + raidWarn;
 
     // 选中
     const sel = sim.selectedIds;
