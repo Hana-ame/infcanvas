@@ -325,6 +325,12 @@ async function main(): Promise<void> {
     renderer.zoomBy(e.deltaY > 0 ? 0.9 : 1.1);
   });
 
+  // 相机边缘滚动（PC）
+  let mousePos: { x: number; y: number } | null = null;
+  window.addEventListener('mousemove', (e) => {
+    mousePos = { x: e.clientX, y: e.clientY };
+  });
+
   // ---- 主循环 ----
   let acc = 0;
   const tickMs = 1000 / sim.tickHz;
@@ -337,6 +343,15 @@ async function main(): Promise<void> {
     while (acc >= tickMs) {
       sim.step(tickMs / 1000);
       acc -= tickMs;
+    }
+    // 鼠标靠屏幕边缘时自动平移（PC 导航）
+    if (mousePos && !isTouch) {
+      const m = 24; // 边缘触发距离
+      const vx = 14;
+      if (mousePos.x < m) renderer.setCamera(-vx, 0);
+      else if (mousePos.x > window.innerWidth - m) renderer.setCamera(vx, 0);
+      if (mousePos.y < m) renderer.setCamera(0, -vx);
+      else if (mousePos.y > window.innerHeight - m) renderer.setCamera(0, vx);
     }
     hud.update(buildMode);
   });
