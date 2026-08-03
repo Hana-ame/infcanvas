@@ -26,6 +26,7 @@
 | 人口 | §3 | ✅ | 死亡/成长（PopulationSystem） |
 | 存档 | §5 | ✅ | **IndexedDB**（异步、大容量），30s 自动存档；旧 localStorage 存档已弃用 |
 | 渲染 | §1 | ✅ | PixiJS v8；SVG 素材（btoa data-uri → GraphicsContext）；地形/建筑/小人/敌人生成 |
+| 视角切换 | §1 渲染 | ✅ | **2D 俯视 ↔ 2.5D 同轴**（右下角按钮）；2.5D 按世界 y 排序实现前后遮挡（树/建筑/小人/敌人统一进 entityLayer，zIndex=y×10+层级） |
 | HUD | §1 | ✅ | 资源条、建造菜单、速度控制（⏸/1x/2x/3x）、缩放按钮（+/-）+ PageUp/PageDown、帮助、事件 feed、选中面板（COC 属性/天赋/插槽/需求/HP/信仰/理智/闪念）、建筑面板 |
 | 测试 | §6 | ✅ | vitest：RNG 确定性、地形确定性、抽卡、移动/建造/采矿闭环、SAN 目睹死亡/篝火恢复 |
 
@@ -33,7 +34,6 @@
 
 | 项 | 目标（DESIGN） | 差距 |
 |---|---|---|
-| 2.5D 同轴视角 + 前后遮挡 | §1 渲染 | buildingLayer/pawnLayer 未合并进 entityLayer，无 y 排序；树/建筑/小人当前是平面图标 |
 | 神谕/教堂/信仰 | §3 神谕交互 | 只有 faith 数值 + 祈祷卡 + 违抗概率；教堂建筑、影响圈、神谕发布未实现（P1.5） |
 | 七宗罪欲望 | §3 欲望系统 | 尚未实现（仅 mood/urgent 简化版） |
 | COC 八属性 | §3 属性卡 | 只有 STR/CON/INT 三个 + d100 事件判定；DEX/APP/POW/EDU、技能成长未做 |

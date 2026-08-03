@@ -10,7 +10,7 @@ const nf = (v: number | undefined): string => (v === undefined ? '-' : Math.roun
 // 当前选中的建筑（模块级，HUD 可读）
 let selectedBuilding: { x: number; y: number } | null = null;
 
-function createHud(sim: Sim, onSelectBuild: (id: string | null) => void, onZoom?: (factor: number) => void): { update: (bm: string | null) => void; hint: HTMLElement } {
+function createHud(sim: Sim, onSelectBuild: (id: string | null) => void, onZoom?: (factor: number) => void, onViewMode?: (mode: 'top' | 'iso') => void): { update: (bm: string | null) => void; hint: HTMLElement } {
   const root = document.createElement('div');
   root.style.cssText = 'position:fixed;inset:0;z-index:10;pointer-events:none;font:13px system-ui;color:#eee;';
 
@@ -67,6 +67,24 @@ function createHud(sim: Sim, onSelectBuild: (id: string | null) => void, onZoom?
     mk('－', 0.8);
   }
 
+  // 视角切换按钮（2D 俯视 / 2.5D 同轴）
+  if (onViewMode) {
+    const viewBar = document.createElement('div');
+    viewBar.style.cssText = 'position:absolute;bottom:12px;right:12px;background:rgba(0,0,0,.72);border:1px solid #444;border-radius:10px;padding:6px;display:flex;gap:4px;pointer-events:auto;';
+    root.appendChild(viewBar);
+    let mode: 'top' | 'iso' = 'top';
+    const btn = document.createElement('button');
+    btn.style.cssText = 'border:1px solid #555;background:#333;color:#eee;border-radius:6px;padding:3px 10px;cursor:pointer;font:12px system-ui;';
+    const refresh = () => { btn.textContent = mode === 'top' ? '2D 俯视' : '2.5D 同轴'; };
+    btn.addEventListener('click', () => {
+      mode = mode === 'top' ? 'iso' : 'top';
+      refresh();
+      onViewMode(mode);
+    });
+    refresh();
+    viewBar.appendChild(btn);
+  }
+
   // 选中面板
   const selPanel = document.createElement('div');
   selPanel.style.cssText = 'position:absolute;top:54px;left:12px;background:rgba(0,0,0,.55);border-radius:8px;padding:8px 12px;min-width:170px;display:none;line-height:1.6;';
@@ -93,6 +111,7 @@ function createHud(sim: Sim, onSelectBuild: (id: string | null) => void, onZoom?
     `👆 <b>鼠标</b>：左键选中小人/建筑 · 右键移动 · 左键拖空白平移 · 滚轮缩放 · 边缘滚动<br>` +
     `📱 <b>触摸</b>：点选 · 长按移动 · 双指拖动/缩放<br>` +
     `⌨️ <b>键盘</b>：空格暂停 · 1/2/3 调速 · B 建造墙<br>` +
+    `👁 <b>视角</b>：右下角按钮切换 2D 俯视 / 2.5D 同轴（前后遮挡）<br>` +
     `🏗 <b>建造菜单</b>：下方选建筑 → 地图点击放置（绿=可建，红=不可）<br>` +
     `🧠 <b>小人自主</b>：小人自己伐木/采矿/建造/祈祷/疗伤，心情差会违抗安排<br>` +
     `⚔ <b>威胁</b>：野狼会袭击！建墙保护，受伤要治疗`;
@@ -212,7 +231,7 @@ async function main(): Promise<void> {
     buildMode = id;
     if (!id) renderer.clearGhost();
     hud.update(buildMode);
-  }, (factor) => renderer.zoomBy(factor));
+  }, (factor) => renderer.zoomBy(factor), (mode) => renderer.setViewMode(mode));
 
   // ---- 输入（Pointer Events，鼠标/触摸统一） ----
   const canvas = renderer.app.canvas;

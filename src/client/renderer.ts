@@ -11,10 +11,12 @@ export class Renderer {
   worldContainer: Container;
   sim: Sim;
   private assets: SvgAssets;
-  private entityLayer: Container; // 建筑+小人按 y 前后排序
+  private viewMode: 'top' | 'iso' = 'top';
+  private entityLayer: Container; // 树/建筑/小人/敌人按 y 前后排序（2.5D）
   private terrainLayer: Container;
-  private buildingLayer: Container;
   private pawnLayer: Container;
+  private treeSprites: { g: Graphics; x: number; y: number }[] = [];
+  private buildingSprites: { g: Graphics; x: number; y: number }[] = [];
   private pawnSprites = new Map<number, Graphics>();
   private hostileSprites = new Map<number, Graphics>();
   private camera = { x: 0, y: 0, zoom: 1 };
@@ -37,18 +39,54 @@ export class Renderer {
     this.app = new Application();
     this.worldContainer = new Container();
     this.terrainLayer = new Container();
-    this.buildingLayer = new Container();
     this.pawnLayer = new Container();
     this.entityLayer = new Container();
+    this.entityLayer.sortableChildren = true;
     this.ghost = new Graphics();
     this.ghost.eventMode = 'none';
     this.blueprintLayer = new Graphics();
     this.blueprintLayer.eventMode = 'none';
     this.worldContainer.addChild(this.terrainLayer);
+    this.worldContainer.addChild(this.entityLayer);
     this.worldContainer.addChild(this.blueprintLayer);
-    this.worldContainer.addChild(this.buildingLayer);
-    this.worldContainer.addChild(this.pawnLayer);
+    this.worldContainer.addChild(this.pawnLayer); // 飘字等屏幕上层
     this.worldContainer.addChild(this.ghost);
+  }
+
+  // 切换视角：2D 俯视 / 2.5D 同轴（前后遮挡）
+  setViewMode(mode: 'top' | 'iso'): void {
+    this.viewMode = mode;
+    // 树/建筑重定位到新锚点，全部实体重排 z 顺序
+    for (const t of this.treeSprites) this.placeEntity(t.g, t.x, t.y);
+    for (const b of this.buildingSprites) this.placeEntity(b.g, b.x, b.y);
+    for (const [eid, g] of this.pawnSprites) {
+      const pos = this.sim.pawnPositions.get(eid);
+      if (pos) this.placeEntity(g, pos.x, pos.y);
+    }
+    for (let i = 0; i < this.hostileSprites.size; i++) {
+      const h = this.sim.hostiles[i];
+      const g = this.hostileSprites.get(i);
+      if (h && g) this.placeEntity(g, h.x, h.y);
+    }
+    this.sortEntities();
+  }
+
+  // 实体 y 轴前后排序：2.5D 模式按世界 y 设 zIndex（y 越大越靠前/靠下）
+  // 2D 模式：固定层级（地形 < 树 < 建筑 < 小人/敌人）
+  private sortEntities(): void {
+    const iso = this.viewMode === 'iso';
+    for (const t of this.treeSprites) t.g.zIndex = iso ? t.y * 10 : 1;
+    for (const b of this.buildingSprites) b.g.zIndex = iso ? b.y * 10 + 5 : 2;
+    for (const [eid, g] of this.pawnSprites) {
+      const pos = this.sim.pawnPositions.get(eid);
+      if (pos) g.zIndex = iso ? Math.round(pos.y) * 10 + 9 : 3;
+    }
+    for (let i = 0; i < this.hostileSprites.size; i++) {
+      const h = this.sim.hostiles[i];
+      const g = this.hostileSprites.get(i);
+      if (h && g) g.zIndex = iso ? Math.round(h.y) * 10 + 9 : 3;
+    }
+    this.entityLayer.sortChildren();
   }
 
   async init(container: HTMLElement): Promise<void> {
@@ -138,7 +176,17 @@ export class Renderer {
     return g;
   }
 
-  // 地形图标（树/矿/水）—— SVG
+  // 实体精灵坐标：2.5D 时锚到格底（脚部落位），2D 时格中心
+  private placeEntity(g: Graphics, x: number, y: number): void {
+    g.pivot.set(16, 16);
+    if (this.viewMode === 'iso') {
+      g.position.set(x * TILE + TILE / 2, y * TILE + TILE);
+    } else {
+      g.position.set(x * TILE + TILE / 2, y * TILE + TILE / 2);
+    }
+  }
+
+  // 地形图标（树/矿/水）—— SVG。树进入 entityLayer 参与 2.5D 遮挡
   private drawTerrainIcons(): void {
     const w = this.sim.world;
     const assetByTile: Record<string, AssetId> = {
@@ -154,8 +202,13 @@ export class Renderer {
         if (!aid) continue;
         const g = this.makeIcon(aid);
         if (!g) continue;
-        g.position.set(x * TILE + TILE / 2, y * TILE + TILE / 2);
-        this.terrainLayer.addChild(g);
+        this.placeEntity(g, x, y);
+        if (tile === 'tree') {
+          this.treeSprites.push({ g, x, y });
+          this.entityLayer.addChild(g);
+        } else {
+          this.terrainLayer.addChild(g);
+        }
       }
     }
   }
@@ -179,6 +232,7 @@ export class Renderer {
     }
     this.renderPawns();
     this.renderHostiles();
+    this.sortEntities();
     this.renderGhost();
     this.updateFloaters(dt);
     // 夜晚遮罩跟随屏幕大小 + 夜色
@@ -191,7 +245,9 @@ export class Renderer {
   // 只重绘有变化的建筑层
   private drawRebuildings(): void {
     const w = this.sim.world;
-    this.buildingLayer.removeChildren();
+    // 先移除上一轮的建筑精灵（背景色块 + 图标）
+    for (const b of this.buildingSprites) this.entityLayer.removeChild(b.g);
+    this.buildingSprites = [];
     for (const [key, b] of w.buildings) {
       const x = key % w.width;
       const y = Math.floor(key / w.width);
@@ -200,13 +256,15 @@ export class Renderer {
       // 受损建筑显示红色底色（破损提示）
       const dmg = b.hp / b.def.hp;
       bg.fill(dmg < 0.5 ? 0x7a2a2a : dmg < 1 ? 0x5a4a3a : b.def.color);
-      this.buildingLayer.addChild(bg);
+      this.entityLayer.addChild(bg);
+      this.buildingSprites.push({ g: bg, x, y });
       const aid = `building:${b.def.id}` as AssetId;
       const icon = this.makeIcon(aid);
       if (icon) {
-        icon.position.set(x * TILE + TILE / 2, y * TILE + TILE / 2);
+        this.placeEntity(icon, x, y);
         icon.alpha = dmg < 0.5 ? 0.6 : 1;
-        this.buildingLayer.addChild(icon);
+        this.entityLayer.addChild(icon);
+        this.buildingSprites.push({ g: icon, x, y });
       }
     }
   }
@@ -232,7 +290,7 @@ export class Renderer {
         const icon = this.makeIcon(this.pawnAssetId(eid));
         if (!icon) continue;
         g = icon;
-        this.pawnLayer.addChild(g);
+        this.entityLayer.addChild(g);
         this.pawnSprites.set(eid, g);
         g.eventMode = 'static';
         g.hitArea = new Rectangle(-14, -14, 28, 28);
@@ -243,7 +301,9 @@ export class Renderer {
       }
       const pos = this.sim.pawnPositions.get(eid);
       if (pos) {
-        g.position.set(pos.x * TILE + TILE / 2, pos.y * TILE + TILE / 2);
+        this.placeEntity(g, pos.x, pos.y);
+        // 2.5D：按世界 y 排序（前后遮挡）
+        if (this.viewMode === 'iso') g.zIndex = Math.round(pos.y) * 10 + 9;
         const sel = this.selected.has(eid);
         g.scale.set((sel ? 1.15 : 1));
         // 受伤（血量低）变暗
@@ -268,11 +328,12 @@ export class Renderer {
         g.eventMode = 'none';
         // 染红区分敌我
         g.tint = 0xff5555;
-        this.pawnLayer.addChild(g);
+        this.entityLayer.addChild(g);
         this.hostileSprites.set(idx, g);
       }
       g.visible = true;
-      g.position.set(h.x * TILE + TILE / 2, h.y * TILE + TILE / 2);
+      this.placeEntity(g, h.x, h.y);
+      if (this.viewMode === 'iso') g.zIndex = Math.round(h.y) * 10 + 9;
       g.alpha = Math.max(0.4, h.hp / h.maxHp);
       idx++;
     }
