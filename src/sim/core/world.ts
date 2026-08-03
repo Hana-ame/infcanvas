@@ -107,6 +107,7 @@ export class World {
 
   // P0 简化：建筑占位，直接存 Map（后期进 ECS）
   buildings = new Map<number, { def: (typeof BUILDINGS)[string]; hp: number; faction: string }>();
+  buildingVersion = 0; // 建筑版本号，渲染层据此重绘
 
   buildKey(x: number, y: number): number {
     return y * this.width + x;
@@ -128,6 +129,7 @@ export class World {
     const def = BUILDINGS[defId];
     if (!def) return false;
     this.buildings.set(this.buildKey(x, y), { def, hp: def.hp, faction });
+    this.buildingVersion++;
     this.recomputeLight();
     return true;
   }

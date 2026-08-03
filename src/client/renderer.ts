@@ -20,6 +20,7 @@ export class Renderer {
   private pawnTexts = new Map<number, Text>();
   private camera = { x: 0, y: 0, zoom: 1 };
   private selected = new Set<number>();
+  private lastBuildingVersion = -1;
   private tilesDrawn = false;
 
   constructor(sim: Sim) {
@@ -53,7 +54,6 @@ export class Renderer {
     this.app.ticker.add(() => this.render());
     this.drawTileGround();
     this.drawTerrainIcons();
-    this.drawBuildings();
   }
 
   // 地表色块（一次绘制，固定）
@@ -86,18 +86,32 @@ export class Renderer {
     }
   }
 
-  drawBuildings(): void {
-    this.buildingLayer.removeChildren();
+  private render(): void {
+    const cam = this.camera;
+    this.worldContainer.position.set(this.app.screen.width / 2, this.app.screen.height / 2);
+    this.worldContainer.scale.set(cam.zoom);
+    this.worldContainer.pivot.set(cam.x * TILE, cam.y * TILE);
+    // 建筑变化时重绘（动态建造）
+    const ver = this.sim.world.buildingVersion;
+    if (ver !== this.lastBuildingVersion) {
+      this.lastBuildingVersion = ver;
+      this.drawRebuildings();
+    }
+    this.renderPawns();
+  }
+
+  // 只重绘有变化的建筑层
+  private drawRebuildings(): void {
     const w = this.sim.world;
+    // 移除多余节点，重建建筑层（P0 数据量小，全量可行）
+    this.buildingLayer.removeChildren();
     for (const [key, b] of w.buildings) {
       const x = key % w.width;
       const y = Math.floor(key / w.width);
-      // 底色
       const bg = new Graphics();
       bg.rect(x * TILE, y * TILE, TILE, TILE);
       bg.fill(b.def.color);
       this.buildingLayer.addChild(bg);
-      // emoji
       if (b.def.emoji) {
         const t = new Text({ text: b.def.emoji, style: terrainStyle(22) });
         t.resolution = this.app.renderer.resolution;
@@ -106,14 +120,6 @@ export class Renderer {
         this.buildingLayer.addChild(t);
       }
     }
-  }
-
-  private render(): void {
-    const cam = this.camera;
-    this.worldContainer.position.set(this.app.screen.width / 2, this.app.screen.height / 2);
-    this.worldContainer.scale.set(cam.zoom);
-    this.worldContainer.pivot.set(cam.x * TILE, cam.y * TILE);
-    this.renderPawns();
   }
 
   private renderPawns(): void {
