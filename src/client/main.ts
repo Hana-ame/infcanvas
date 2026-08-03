@@ -56,6 +56,11 @@ function createHud(sim: Sim, onSelectBuild: (id: string | null) => void): { upda
   hint.style.cssText = 'position:absolute;top:54px;right:12px;background:rgba(0,0,0,.5);border-radius:6px;padding:6px 10px;font-size:12px;text-align:right;';
   root.appendChild(hint);
 
+  // 事件日志 feed（右下角，最近 6 条）
+  const feed = document.createElement('div');
+  feed.style.cssText = 'position:absolute;bottom:12px;right:12px;background:rgba(0,0,0,.45);border-radius:8px;padding:6px 10px;font-size:11px;line-height:1.5;max-width:220px;text-align:right;';
+  root.appendChild(feed);
+
   const update = (bm: string | null): void => {
     // 资源条
     const s = sim.stockpile;

@@ -1,0 +1,40 @@
+// 人口系统：食物充足时偶有新人加入
+import type { GameSystem } from './registry';
+import type { SimContext } from './context';
+import type { EventBus } from '../core/events';
+
+export class PopulationSystem implements GameSystem {
+  id = 'population';
+  private recruitTimer = 0;
+
+  constructor(private ctx: SimContext) {}
+
+  init(_bus: EventBus): void {}
+
+  update(dt: number): void {
+    if (this.ctx.pawnList.length >= 12) return;
+    this.recruitTimer += dt;
+    if (this.recruitTimer < 45) return;
+    if (this.ctx.stockpile.food < 60) { this.recruitTimer = 30; return; }
+    this.recruitTimer = 0;
+    // 找出生点附近空位生成
+    const cx = Math.floor(this.ctx.world.width / 2);
+    const cy = Math.floor(this.ctx.world.height / 2);
+    for (let r = 2; r <= 6; r++) {
+      for (let dy = -r; dy <= r; dy++) {
+        for (let dx = -r; dx <= r; dx++) {
+          if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue;
+          const x = cx + dx, y = cy + dy;
+          if (this.ctx.world.inBounds(x, y) && this.ctx.world.isPassable(x, y)) {
+            const eid = this.ctx.spawnPawn(x, y);
+            if (eid !== -1) {
+              this.ctx.bus.emit({ type: 'pawn_recruited', eid });
+              this.ctx.logEvent('一位流浪者加入了定居点');
+              return;
+            }
+          }
+        }
+      }
+    }
+  }
+}
