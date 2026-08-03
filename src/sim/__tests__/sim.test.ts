@@ -214,3 +214,40 @@ describe('COC 技能成长', () => {
     expect(sim2.skillOf(eid2, 'craft')).toBe(77);
   });
 });
+
+describe('结构化历史日志（DESIGN §3）', () => {
+  it('records structured entries for emitted events', () => {
+    const sim = new Sim({ seed: 17, pawnCount: 1 });
+    const eid = sim.pawns[0];
+    sim.bus.emit({ type: 'resource_gained', eid, item: 'ore', amount: 3 });
+    sim.bus.emit({ type: 'work_completed', eid, work: 'mine', success: true, x: 5, y: 6 });
+    const rows = sim.historyQuery({ limit: 10 });
+    const gained = rows.find((r) => r.type === 'resource_gained');
+    expect(gained).toBeDefined();
+    expect(gained!.eid).toBe(eid);
+    expect(gained!.data).toEqual({ item: 'ore', amount: 3 });
+    const work = rows.find((r) => r.type === 'work_completed');
+    expect(work).toBeDefined();
+    expect(work!.x).toBe(5);
+    expect(work!.y).toBe(6);
+  });
+
+  it('spawn events include location and are queryable by type', () => {
+    const sim = new Sim({ seed: 18, pawnCount: 2 });
+    const spawned = sim.historyQuery({ type: 'pawn_spawned', limit: 10 });
+    expect(spawned.length).toBeGreaterThanOrEqual(2);
+    for (const s of spawned) {
+      expect(s.x).toBeGreaterThanOrEqual(0);
+      expect(s.y).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  it('records death with cause', () => {
+    const sim = new Sim({ seed: 19, pawnCount: 1 });
+    const eid = sim.pawns[0];
+    sim.bus.emit({ type: 'pawn_died', eid, x: 3, y: 4, cause: 'starvation' });
+    const deaths = sim.historyQuery({ type: 'pawn_died', limit: 10 });
+    expect(deaths.length).toBe(1);
+    expect(deaths[0].cause).toBe('starvation');
+  });
+});

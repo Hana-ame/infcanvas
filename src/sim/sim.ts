@@ -9,6 +9,7 @@ import { findPath } from './core/pathfinding';
 import { SimRng } from './core/rng';
 import { initNeeds } from './core/needs';
 import { EventBus } from './core/events';
+import { HistoryLog } from './core/history';
 import { generateDna, initSlots, type Dna, type SkillId } from './ai/pawn';
 import { BUILDINGS } from './defs';
 import type { SimContext } from './systems/context';
@@ -127,6 +128,8 @@ export class Sim implements SimContext {
   private _pawnList: number[] = [];
   private trailCache = new Map<string, { x: number; y: number }[]>();
   private registry = new SystemRegistry();
+  // 结构化历史日志（仿真日志：事实来自 sim，LLM 只润色）
+  history = new HistoryLog();
 
   constructor(opts: SimOptions = {}) {
     const seed = opts.seed ?? 12345;
@@ -140,6 +143,8 @@ export class Sim implements SimContext {
     this.world = new World(seed);
     this.rng = new SimRng(seed + 1);
     this.bus = new EventBus();
+    // 所有事件 → 结构化历史
+    this.bus.onAny((ev) => this.history.record(ev, this.time, this.time / this.dayLength));
 
     this.registerSystems();
     this.registry.initAll(this.bus);
@@ -413,8 +418,7 @@ export class Sim implements SimContext {
   }
 
   // ---- UI 读取 ----
-  get pawns(): readonly number[] { return this._pawnList; }
-  get buildCount(): number { return this.buildQueue.length; }
+  get pawns(): readonly number[] { return this._pawnList; }  get buildCount(): number { return this.buildQueue.length; }
   get buildQueueItems(): { x: number; y: number; defId: string; progress: number }[] {
     return this.buildQueue.map((b) => ({ x: b.x, y: b.y, defId: b.defId, progress: b.progress }));
   }
@@ -447,6 +451,12 @@ export class Sim implements SimContext {
       lastDecision: st.lastDecision,
     };
   }
+
+  // ---- 历史查询 ----
+  historyQuery(opts?: { type?: string; eid?: number; limit?: number }) {
+    return this.history.query(opts);
+  }
+  get historyRecent() { return this.history.recent; }
 
   // ---- 存档 ----
   save(): SaveData {

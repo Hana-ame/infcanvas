@@ -121,6 +121,18 @@ function createHud(sim: Sim, onSelectBuild: (id: string | null) => void, onZoom?
     helpPanel.style.display = helpPanel.style.display === 'block' ? 'none' : 'block';
   });
 
+  // 📜 历史面板（结构化仿真日志，DESIGN §3）
+  const histBtn = document.createElement('button');
+  histBtn.textContent = '📜 历史';
+  histBtn.style.cssText = 'position:absolute;top:54px;left:calc(50% + 90px);border:1px solid #555;background:rgba(0,0,0,.6);color:#eee;border-radius:8px;padding:5px 12px;cursor:pointer;font:12px system-ui;pointer-events:auto;';
+  const histPanel = document.createElement('div');
+  histPanel.style.cssText = 'position:absolute;top:88px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.88);border:1px solid #444;border-radius:10px;padding:12px 14px;font-size:11px;line-height:1.7;max-width:480px;max-height:60vh;overflow:auto;display:none;';
+  root.appendChild(histBtn);
+  root.appendChild(histPanel);
+  histBtn.addEventListener('click', () => {
+    histPanel.style.display = histPanel.style.display === 'block' ? 'none' : 'block';
+  });
+
   const update = (bm: string | null): void => {
     // 资源条
     const s = sim.stockpile;
@@ -184,6 +196,18 @@ function createHud(sim: Sim, onSelectBuild: (id: string | null) => void, onZoom?
     // 事件日志 feed（最近 5 条）
     const recent = sim.events.slice(-5).map((e) => `${Math.floor(e.time)}s ${e.text}`);
     feed.innerHTML = recent.map((t) => `<div>${t}</div>`).join('');
+
+    // 结构化历史（DESIGN §3 仿真日志）
+    if (histPanel.style.display === 'block') {
+      const rows = sim.historyRecent.map((h) => {
+        const where = h.x !== undefined ? `@(${h.x},${h.y})` : '';
+        const who = h.eid !== undefined ? `#${h.eid}` : '';
+        const detail = h.data ? ' ' + Object.entries(h.data).map(([k, v]) => `${k}=${v}`).join(' ') : '';
+        const cause = h.cause ? ` [${h.cause}]` : '';
+        return `<div>D${h.day} ${h.time}s · ${h.type} ${who}${where}${cause}${detail}</div>`;
+      });
+      histPanel.innerHTML = `<b>📜 结构化历史（仿真日志）</b><br>` + rows.join('');
+    }
   };
 
   // 建造菜单按钮
