@@ -19,6 +19,7 @@ import { GatherSystem } from './systems/gatherSystem';
 import { BuildSystem } from './systems/buildSystem';
 import { FarmSystem } from './systems/farmSystem';
 import { CraftSystem } from './systems/craftSystem';
+import { RepairSystem } from './systems/repairSystem';
 import { RaidSystem } from './systems/raidSystem';
 import { PopulationSystem } from './systems/populationSystem';
 
@@ -141,6 +142,7 @@ export class Sim implements SimContext {
       .register(new BuildSystem(this))
       .register(new FarmSystem(this))
       .register(new CraftSystem(this))
+      .register(new RepairSystem(this))
       .register(new RaidSystem(this))
       .register(new PopulationSystem(this));
   }

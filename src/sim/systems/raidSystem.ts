@@ -70,6 +70,15 @@ export class RaidSystem implements GameSystem {
         const d = Math.hypot(pos.x - h.x, pos.y - h.y);
         if (d < nd) { nd = d; nearest = eid; }
       }
+      // 没有足够近的小人时，攻击附近建筑（墙优先）
+      if (nearest === null) {
+        const b = this.nearestBuilding(h, 6);
+        if (b) {
+          const r = this.ctx.world.damageBuilding(b.x, b.y, 15 * dt);
+          if (r.destroyed) this.ctx.logEvent('💥 建筑被野狼摧毁！');
+          continue;
+        }
+      }
       if (nearest !== null) {
         h.hp -= 8 * dt;
         if (h.hp <= 0) {
@@ -87,11 +96,28 @@ export class RaidSystem implements GameSystem {
             const pos = this.ctx.readPosition(nearest);
             this.ctx.bus.emit({ type: 'pawn_died', eid: nearest, x: pos?.x ?? 0, y: pos?.y ?? 0, cause: 'combat' });
             this.ctx.killPawn(nearest);
-          } else {
-            this.ctx.setHealth(nearest, hk);
-          }
-        }
+      } else {
+        this.ctx.setHealth(nearest, hk);
       }
     }
+    }
+    }
+  }
+
+  private nearestBuilding(h: { x: number; y: number }, radius: number): { x: number; y: number } | null {
+    const w = this.ctx.world;
+    let best: { x: number; y: number } | null = null;
+    let bestD = Infinity;
+    for (let dy = -radius; dy <= radius; dy++) {
+      for (let dx = -radius; dx <= radius; dx++) {
+        const x = Math.round(h.x) + dx;
+        const y = Math.round(h.y) + dy;
+        if (!w.inBounds(x, y)) continue;
+        if (!w.getBuilding(x, y)) continue;
+        const d = dx * dx + dy * dy;
+        if (d < bestD) { bestD = d; best = { x, y }; }
+      }
+    }
+    return best;
   }
 }

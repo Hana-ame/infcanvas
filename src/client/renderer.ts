@@ -129,13 +129,17 @@ export class Renderer {
       const y = Math.floor(key / w.width);
       const bg = new Graphics();
       bg.rect(x * TILE, y * TILE, TILE, TILE);
-      bg.fill(b.def.color);
+      // 受损建筑显示红色底色（破损提示）
+      const dmg = b.hp / b.def.hp;
+      bg.fill(dmg < 0.5 ? 0x7a2a2a : dmg < 1 ? 0x5a4a3a : b.def.color);
       this.buildingLayer.addChild(bg);
       if (b.def.emoji) {
         const t = new Text({ text: b.def.emoji, style: terrainStyle(22) });
         t.resolution = this.app.renderer.resolution;
         t.anchor.set(0.5);
         t.position.set(x * TILE + TILE / 2, y * TILE + TILE / 2);
+        // 受损建筑半透明
+        t.alpha = dmg < 0.5 ? 0.6 : 1;
         this.buildingLayer.addChild(t);
       }
     }

@@ -163,6 +163,35 @@ export class World {
     return false;
   }
 
+  // 建筑受损（袭击/火灾），返回是否被摧毁
+  damageBuilding(x: number, y: number, dmg: number): { destroyed: boolean; building: { def: (typeof BUILDINGS)[string]; hp: number; faction: string } | null } {
+    const b = this.buildings.get(this.buildKey(x, y));
+    if (!b) return { destroyed: false, building: null };
+    b.hp -= dmg;
+    this.buildingVersion++;
+    if (b.hp <= 0) {
+      this.buildings.delete(this.buildKey(x, y));
+      this.buildingVersion++;
+      this.recomputeLight();
+      return { destroyed: true, building: b };
+    }
+    return { destroyed: false, building: b };
+  }
+
+  repairBuilding(x: number, y: number, amount: number): void {
+    const b = this.buildings.get(this.buildKey(x, y));
+    if (!b) return;
+    const max = b.def.hp;
+    if (b.hp >= max) return;
+    b.hp = Math.min(max, b.hp + amount);
+    this.buildingVersion++;
+  }
+
+  isBuildingDamaged(x: number, y: number): boolean {
+    const b = this.buildings.get(this.buildKey(x, y));
+    return b ? b.hp < b.def.hp : false;
+  }
+
   canBuildAt(x: number, y: number): boolean {
     const def = this.getTileDef(x, y);
     if (!def.buildable) return false;
