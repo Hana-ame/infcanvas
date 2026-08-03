@@ -1,0 +1,80 @@
+// 自主建造系统（用户 Q1/Q8：观察模拟器 + 营地自主扩张）
+// AI 评估资源与营地状态，自动规划扩建（篝火/墙/农田/工作台/矿洞），让营地自己长起来
+// 不玩家指挥 → buildQueue 由系统注入，小人照常执行
+import type { GameSystem } from './registry';
+import type { SimContext } from './context';
+import type { EventBus } from '../core/events';
+
+const countBuilding = (ctx: SimContext, defId: string): number => {
+  let n = 0;
+  for (const [, b] of ctx.world.buildings) {
+    if (b.def.id === defId) n++;
+  }
+  return n;
+};
+
+// 扩建计划（按优先级）
+const EXPANSION_PLAN: { defId: string; minWood: number; need: (ctx: SimContext) => boolean }[] = [
+  // 营地无篝火 → 先起篝火（社会锚点）
+  { defId: 'campfire', minWood: 6, need: (c) => !c.world.hasBuilding('campfire') },
+  // 人多且篝火少 → 加篝火
+  { defId: 'campfire', minWood: 10, need: (c) => c.pawnList.length >= 4 && countBuilding(c, 'campfire') < 2 },
+  // 食物常短缺 → 扩农田
+  { defId: 'farm', minWood: 12, need: (c) => (c.stockpile.food ?? 0) < 80 && countBuilding(c, 'farm') < 3 },
+  // 工具缺 → 建工作台
+  { defId: 'workbench', minWood: 20, need: (c) => (c.stockpile.tools ?? 0) < 2 && countBuilding(c, 'workbench') < 2 },
+  // 矿少 → 建矿洞（持续产矿）
+  { defId: 'cave', minWood: 15, need: (c) => (c.stockpile.ore ?? 0) < 20 && countBuilding(c, 'cave') < 2 },
+  // 资源富余 → 围营地墙
+  { defId: 'wall', minWood: 30, need: (c) => c.stockpile.wood > 60 && countBuilding(c, 'wall') < 6 },
+];
+
+export class AutonomousBuildSystem implements GameSystem {
+  id = 'autobuild';
+  private timer = 0;
+
+  constructor(private ctx: SimContext) {}
+
+  init(_bus: EventBus): void {}
+
+  update(dt: number): void {
+    this.timer -= dt;
+    if (this.timer > 0) return;
+    this.timer = 20 + Math.floor(this.ctx.rng.next() * 10); // 20-30s 评估一次
+    this.evaluate();
+  }
+
+  private evaluate(): void {
+    const w = this.ctx.world;
+    const cx = Math.floor(w.width / 2);
+    const cy = Math.floor(w.height / 2);
+    for (const plan of EXPANSION_PLAN) {
+      if (this.ctx.buildQueue.some((b) => b.defId === plan.defId)) continue; // 已有排队蓝图
+      if (this.ctx.stockpile.wood < plan.minWood) continue;
+      if (!plan.need(this.ctx)) continue;
+      const spot = this.findBuildSpot(cx, cy);
+      if (spot) {
+        this.ctx.buildQueue.push({
+          x: spot.x, y: spot.y, defId: plan.defId, progress: 0, faction: 'auto',
+          cost: { wood: 1, ore: 0 },
+        });
+        this.ctx.logEvent(`🏗 AI 规划：建造【${plan.defId}】`);
+        return; // 一次只规划一个，避免资源失控
+      }
+    }
+  }
+
+  private findBuildSpot(cx: number, cy: number): { x: number; y: number } | null {
+    const w = this.ctx.world;
+    for (let r = 2; r <= 6; r++) {
+      for (let attempt = 0; attempt < 12; attempt++) {
+        const a = this.ctx.rng.next() * Math.PI * 2;
+        const x = cx + Math.round(Math.cos(a) * r);
+        const y = cy + Math.round(Math.sin(a) * r);
+        if (!w.inBounds(x, y) || !w.canBuildAt(x, y)) continue;
+        return { x, y };
+      }
+    }
+    return null;
+  }
+}

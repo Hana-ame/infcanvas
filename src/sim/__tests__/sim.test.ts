@@ -718,6 +718,22 @@ describe('派系优先级（用户 Q8：AI 按环境下达工作指令）', () =
   });
 });
 
+describe('自主建造（用户 Q1/Q8：营地自主扩张）', () => {
+  it('AI plans a campfire when none exists', () => {
+    const sim = new Sim({ seed: 98, pawnCount: 4 });
+    sim.stockpile.wood = 50;
+    // 确保营地没有篝火
+    expect(sim.world.hasBuilding('campfire')).toBe(false);
+    // 跑足够久（>评估周期 20-30s）
+    let planned = false;
+    for (let i = 0; i < 2000 && !planned; i++) {
+      sim.step(1 / 20); // 100 秒
+      planned = sim.buildQueue.some((b) => b.defId === 'campfire') || sim.world.hasBuilding('campfire');
+    }
+    expect(planned).toBe(true);
+  });
+});
+
 describe('叙事压力（DESIGN §6）', () => {
   it('long peace builds narrative pressure and enlarges raids', () => {
     const sim = new Sim({ seed: 80, pawnCount: 4 });

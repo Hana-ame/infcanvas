@@ -22,6 +22,7 @@ import { SanSystem } from './systems/sanSystem';
 import { DesireSystem } from './systems/desireSystem';
 import { SocialSystem } from './systems/socialSystem';
 import { EventSystem } from './systems/eventSystem';
+import { AutonomousBuildSystem } from './systems/autonomousBuildSystem';
 import { SCRIPTED_EVENTS } from './systems/scripts';
 import { BehaviorSystem } from './systems/cardSystem';
 import { GatherSystem } from './systems/gatherSystem';
@@ -212,7 +213,8 @@ export class Sim implements SimContext {
       .register(new RepairSystem(this))
       .register(new RaidSystem(this))
       .register(new PopulationSystem(this))
-      .register(new EventSystem(this, SCRIPTED_EVENTS));
+      .register(new EventSystem(this, SCRIPTED_EVENTS))
+      .register(new AutonomousBuildSystem(this));
   }
 
   // ---- 系统可通过 SimContext 访问 ----
