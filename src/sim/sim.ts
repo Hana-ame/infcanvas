@@ -9,7 +9,7 @@ import { findPath } from './core/pathfinding';
 import { SimRng } from './core/rng';
 import { initNeeds } from './core/needs';
 import { EventBus } from './core/events';
-import { generateDna, initSlots, type Dna } from './ai/pawn';
+import { generateDna, initSlots, type Dna, type SkillId } from './ai/pawn';
 import { BUILDINGS } from './defs';
 import type { SimContext } from './systems/context';
 import { SystemRegistry } from './systems/registry';
@@ -68,6 +68,7 @@ export interface PawnState {
   faith?: number; // 信仰度（祈祷积累，影响违抗与心情）
   defyCd?: number; // 违抗后的冷却时间（秒）
   crazyCooldown?: number; // 狂乱乱跑冷却
+  skills?: Partial<Record<SkillId, number>>; // COC 技能（百分制，越用越强）
   job?: string;
   // 最近决策记录（设计文档：小人闪过哪3个念头、选了哪个）
   lastDecision?: { drawn: string[]; picked: string; time: number };
@@ -98,6 +99,7 @@ export interface SaveData {
     dna: Dna; slots: ReturnType<typeof initSlots>;
     needs: NeedsData | null; health: HealthData | null;
     faith?: number;
+    skills?: Partial<Record<SkillId, number>>;
   }[];
 }
 
@@ -266,7 +268,15 @@ export class Sim implements SimContext {
     addComponent(this.ecs, eid, Health);
     setComponent(this.ecs, eid, Health, { hp: 100, maxHp: 100 });
     const dna = generateDna(this.seedFor(eid));
-    this.pawnStates.set(eid, { dna, slots: initSlots(dna), path: [], pathIndex: 0 });
+    // COC 技能初始值：INT 高 → 起点高（百分制）
+    const intBase = Math.floor((dna.int - 30) / 4);
+    this.pawnStates.set(eid, {
+      dna,
+      slots: initSlots(dna),
+      path: [],
+      pathIndex: 0,
+      skills: { work: 20 + intBase, fight: 15 + intBase, craft: 15 + intBase, social: 10 + intBase, faith: 10 + intBase },
+    });
     this._pawnList.push(eid);
     this.pawnPositions.set(eid, { x, y });
     this.bus.emit({ type: 'pawn_spawned', eid, x, y });
@@ -283,9 +293,17 @@ export class Sim implements SimContext {
 
   rollEvent(eid: number, dc: number): { success: boolean; roll: number } {
     const roll = this.rng.int(1, 100);
-    const dna = this.pawnStates.get(eid)?.dna;
+    const st = this.pawnStates.get(eid);
+    const dna = st?.dna;
     const intBonus = dna ? Math.floor((dna.int - 50) / 10) : 0;
     return { success: roll <= dc + intBonus, roll };
+  }
+
+  // 技能检定：成功阈值 = dc + 技能值/10 加成（技能越高越稳，COC 式成长收益）
+  rollEventSkill(eid: number, dc: number, skill: SkillId): { success: boolean; roll: number } {
+    const roll = this.rng.int(1, 100);
+    const bonus = Math.floor((this.skillOf(eid, skill) - 10) / 10);
+    return { success: roll <= dc + bonus, roll };
   }
 
   adjustMood(eid: number, delta: number): void {
@@ -294,6 +312,25 @@ export class Sim implements SimContext {
     n.mood = Math.max(0, Math.min(100, n.mood + delta));
     this.setNeeds(eid, n);
     this.bus.emit({ type: 'mood_changed', eid, delta });
+  }
+
+  // COC 技能：读取（无则用下限 10）
+  skillOf(eid: number, skill: SkillId): number {
+    return this.pawnStates.get(eid)?.skills?.[skill] ?? 10;
+  }
+
+  // 技能成长（COC 规则）：掷 d100 > 当前值 → +1d10，越用越强、边际递减
+  growSkill(eid: number, skill: SkillId): void {
+    const st = this.pawnStates.get(eid);
+    if (!st) return;
+    const cur = st.skills?.[skill] ?? 10;
+    if (cur >= 100) return;
+    const roll = this.rng.int(1, 100);
+    if (roll > cur) {
+      const gain = this.rng.int(1, 10);
+      st.skills = { ...st.skills, [skill]: Math.min(100, cur + gain) };
+      if (gain >= 8) this.logEvent('📈 技能精进');
+    }
   }
 
   logEvent(text: string): void {
@@ -396,6 +433,7 @@ export class Sim implements SimContext {
     dna: Dna; slots: ReturnType<typeof initSlots>; job: string;
     needs: NeedsData | null; health: HealthData | null; pos: { x: number; y: number };
     faith: number;
+    skills: Partial<Record<SkillId, number>>;
     lastDecision?: { drawn: string[]; picked: string; time: number };
   } | null {
     const st = this.pawnStates.get(eid);
@@ -405,6 +443,7 @@ export class Sim implements SimContext {
       needs: this.readNeeds(eid), health: this.readHealth(eid),
       pos: this.pawnPositions.get(eid) ?? { x: 0, y: 0 },
       faith: st.faith ?? 0,
+      skills: st.skills ?? {},
       lastDecision: st.lastDecision,
     };
   }
@@ -428,6 +467,7 @@ export class Sim implements SimContext {
           needs: this.readNeeds(eid),
           health: this.readHealth(eid),
           faith: st.faith ?? 0,
+          skills: st.skills ?? {},
         };
       }),
     };
@@ -449,6 +489,7 @@ export class Sim implements SimContext {
         st.dna = p.dna;
         st.slots = p.slots;
         st.faith = p.faith ?? 0;
+        st.skills = p.skills ?? {};
         if (p.needs) this.setNeeds(eid, p.needs);
         if (p.health) this.setHealth(eid, p.health);
       }

@@ -81,6 +81,7 @@ export class RaidSystem implements GameSystem {
       }
       if (nearest !== null) {
         h.hp -= 8 * dt;
+        this.ctx.growSkill(nearest, 'fight');
         if (h.hp <= 0) {
           this.ctx.hostiles.splice(i, 1);
           this.ctx.stockpile.ore += 2;

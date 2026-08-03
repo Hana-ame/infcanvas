@@ -55,9 +55,10 @@ export class GatherSystem implements GameSystem {
         }
         if (st.caveWork.progress >= 4) {
           st.caveWork.progress = 0;
-          const ev = this.ctx.rollEvent(eid, 70);
+          const ev = this.ctx.rollEventSkill(eid, 70, 'work');
           const gain = Math.round((ev.success ? 2 : 1) * toolBonus);
           this.ctx.stockpile.ore += gain;
+          this.ctx.growSkill(eid, 'work');
           this.ctx.bus.emit({ type: 'resource_gained', eid, item: 'ore', amount: gain });
           this.ctx.adjustMood(eid, ev.success ? 2 : -2);
           this.ctx.logEvent(ev.success ? '矿洞采到矿石' : '矿洞挖出废石');
@@ -70,9 +71,10 @@ export class GatherSystem implements GameSystem {
         if (st.mining.progress >= 3) {
           const { x, y } = st.mining;
           this.ctx.world.setTile(x, y, 'dirt');
-          const ev = this.ctx.rollEvent(eid, 60);
+          const ev = this.ctx.rollEventSkill(eid, 60, 'work');
           const gain = Math.round((ev.success ? 3 : 1) * toolBonus);
           this.ctx.stockpile.ore += gain;
+          this.ctx.growSkill(eid, 'work');
           this.ctx.bus.emit({ type: 'resource_gained', eid, item: 'ore', amount: gain });
           this.ctx.bus.emit({ type: 'work_completed', eid, work: 'mine', success: ev.success, x, y });
           this.ctx.adjustMood(eid, ev.success ? 3 : -4);
@@ -87,9 +89,10 @@ export class GatherSystem implements GameSystem {
         if (st.chopProgress >= 2.5) {
           const { x, y } = st.chopXY;
           this.ctx.world.setTile(x, y, 'grass');
-          const ev = this.ctx.rollEvent(eid, 55);
+          const ev = this.ctx.rollEventSkill(eid, 55, 'work');
           const gain = Math.round((ev.success ? 5 : 2) * toolBonus);
           this.ctx.stockpile.wood += gain;
+          this.ctx.growSkill(eid, 'work');
           this.ctx.bus.emit({ type: 'resource_gained', eid, item: 'wood', amount: gain });
           this.ctx.bus.emit({ type: 'work_completed', eid, work: 'chop', success: ev.success, x, y });
           this.ctx.adjustMood(eid, ev.success ? 2 : -3);

@@ -175,3 +175,42 @@ describe('SAN 理智系统', () => {
     expect(sim.readNeeds(eid)!.san).toBeGreaterThan(40);
   });
 });
+
+describe('COC 技能成长', () => {
+  it('skills start initialized and rollEventSkill respects skill', () => {
+    const sim = new Sim({ seed: 13, pawnCount: 1 });
+    const eid = sim.pawns[0];
+    expect(sim.skillOf(eid, 'work')).toBeGreaterThan(0);
+    const ev = sim.rollEventSkill(eid, 50, 'work');
+    expect(typeof ev.success).toBe('boolean');
+    expect(ev.roll).toBeGreaterThanOrEqual(1);
+    expect(ev.roll).toBeLessThanOrEqual(100);
+  });
+
+  it('growSkill increases skill over repeated growth attempts', () => {
+    const sim = new Sim({ seed: 14, pawnCount: 1 });
+    const eid = sim.pawns[0];
+    const before = sim.skillOf(eid, 'work');
+    // 强制低起点保证成长可能
+    const st = sim.pawnStates.get(eid)!;
+    st.skills = { ...st.skills, work: 5 };
+    let grew = false;
+    for (let i = 0; i < 200; i++) {
+      sim.growSkill(eid, 'work');
+      if (sim.skillOf(eid, 'work') > 5) { grew = true; break; }
+    }
+    expect(grew).toBe(true);
+  });
+
+  it('skills persist through save/load', () => {
+    const sim = new Sim({ seed: 15, pawnCount: 1 });
+    const eid = sim.pawns[0];
+    const st = sim.pawnStates.get(eid)!;
+    st.skills = { ...st.skills, craft: 77 };
+    const data = sim.save();
+    const sim2 = new Sim({ seed: 16, pawnCount: 1 });
+    sim2.load(data);
+    const eid2 = sim2.pawns[0];
+    expect(sim2.skillOf(eid2, 'craft')).toBe(77);
+  });
+});

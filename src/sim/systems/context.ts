@@ -3,6 +3,7 @@ import type { World } from '../core/world';
 import type { SimRng } from '../core/rng';
 import type { EventBus } from '../core/events';
 import type { PawnState } from '../sim';
+import type { SkillId } from '../ai/pawn';
 import type { World as BitecsWorld } from 'bitecs';
 
 export interface Hostile {
@@ -52,7 +53,11 @@ export interface SimContext {
   killPawn(eid: number): void;
   // 事件/骰子/日志
   rollEvent(eid: number, dc: number): { success: boolean; roll: number };
+  rollEventSkill(eid: number, dc: number, skill: SkillId): { success: boolean; roll: number };
   adjustMood(eid: number, delta: number): void;
   logEvent(text: string): void;
   clearTrailCache(): void;
+  // 技能（COC）：读取 + 使用后成长
+  skillOf(eid: number, skill: SkillId): number;
+  growSkill(eid: number, skill: SkillId): void;
 }
