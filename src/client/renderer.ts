@@ -1,29 +1,24 @@
-// Pixi 渲染器 —— Emoji 图标: 地形/建筑/小人 + 相机
+// Pixi 渲染器 —— SVG 图标: 地形/建筑/小人 + 相机
 import { Application, Container, Graphics, Rectangle, Text, TextStyle } from 'pixi.js';
 import { Sim } from '../sim/sim';
-import { TILES, BUILDINGS, ITEM_EMOJI } from '../sim/defs';
+import { TILES, BUILDINGS } from '../sim/defs';
+import { SvgAssets, type AssetId } from './svgLoader';
 
 const TILE = 32;
-
-const terrainStyle = (s: number): TextStyle => new TextStyle({
-  fontSize: s,
-  fontFamily: 'system-ui, "Segoe UI Emoji", "Noto Color Emoji", sans-serif',
-});
 
 export class Renderer {
   app: Application;
   worldContainer: Container;
   sim: Sim;
-  private terrainLayer: Container; // emoji 图标（树/矿/水）
+  private assets: SvgAssets;
+  private terrainLayer: Container;
   private buildingLayer: Container;
   private pawnLayer: Container;
-  private pawnTexts = new Map<number, Text>();
-  private pawnJobIcons = new Map<number, Text>();
-  private hostileTexts = new Map<number, Text>();
+  private pawnSprites = new Map<number, Graphics>();
+  private hostileSprites = new Map<number, Graphics>();
   private camera = { x: 0, y: 0, zoom: 1 };
   private selected = new Set<number>();
   private lastBuildingVersion = -1;
-  private tilesDrawn = false;
   private nightOverlay!: Graphics;
   // 建造幽灵预览
   private ghost: Graphics;
@@ -35,8 +30,9 @@ export class Renderer {
   // 飘字反馈（资源获得等）
   private floaters: { text: Text; life: number; vy: number }[] = [];
 
-  constructor(sim: Sim) {
+  constructor(sim: Sim, assets: SvgAssets) {
     this.sim = sim;
+    this.assets = assets;
     this.app = new Application();
     this.worldContainer = new Container();
     this.terrainLayer = new Container();
@@ -128,18 +124,36 @@ export class Renderer {
     this.terrainLayer.addChildAt(g, 0);
   }
 
-  // 地形图标（树/矿/水）—— 用 Text emoji
+  // 用 SVG GraphicsContext 生成一个图标（定位到格中心）
+  private makeIcon(id: AssetId, scale = 1): Graphics | null {
+    const ctx = this.assets.get(id);
+    if (!ctx) return null;
+    const g = new Graphics(ctx);
+    // SVG 是 32x32，缩放到 TILE
+    g.scale.set(scale);
+    g.pivot.set(16, 16);
+    g.position.set(TILE / 2, TILE / 2);
+    return g;
+  }
+
+  // 地形图标（树/矿/水）—— SVG
   private drawTerrainIcons(): void {
     const w = this.sim.world;
+    const assetByTile: Record<string, AssetId> = {
+      tree: 'terrain:tree',
+      ore: 'terrain:ore',
+      water: 'terrain:water',
+      stone: 'terrain:stone',
+    };
     for (let y = 0; y < w.height; y++) {
       for (let x = 0; x < w.width; x++) {
-        const def = TILES[w.getTile(x, y)];
-        if (!def.emoji) continue;
-        const t = new Text({ text: def.emoji, style: terrainStyle(18) });
-        t.resolution = this.app.renderer.resolution;
-        t.anchor.set(0.5);
-        t.position.set(x * TILE + TILE / 2, y * TILE + TILE / 2);
-        this.terrainLayer.addChild(t);
+        const tile = w.getTile(x, y);
+        const aid = assetByTile[tile];
+        if (!aid) continue;
+        const g = this.makeIcon(aid);
+        if (!g) continue;
+        g.position.set(x * TILE + TILE / 2, y * TILE + TILE / 2);
+        this.terrainLayer.addChild(g);
       }
     }
   }
@@ -185,14 +199,12 @@ export class Renderer {
       const dmg = b.hp / b.def.hp;
       bg.fill(dmg < 0.5 ? 0x7a2a2a : dmg < 1 ? 0x5a4a3a : b.def.color);
       this.buildingLayer.addChild(bg);
-      if (b.def.emoji) {
-        const t = new Text({ text: b.def.emoji, style: terrainStyle(22) });
-        t.resolution = this.app.renderer.resolution;
-        t.anchor.set(0.5);
-        t.position.set(x * TILE + TILE / 2, y * TILE + TILE / 2);
-        // 受损建筑半透明
-        t.alpha = dmg < 0.5 ? 0.6 : 1;
-        this.buildingLayer.addChild(t);
+      const aid = `building:${b.def.id}` as AssetId;
+      const icon = this.makeIcon(aid);
+      if (icon) {
+        icon.position.set(x * TILE + TILE / 2, y * TILE + TILE / 2);
+        icon.alpha = dmg < 0.5 ? 0.6 : 1;
+        this.buildingLayer.addChild(icon);
       }
     }
   }
@@ -212,80 +224,59 @@ export class Renderer {
   }
 
   private renderPawns(): void {
-    const jobEmoji: Record<string, string> = {
-      '伐木': '🪓', '采矿': '⛏️', '建造': '🧱', '闲逛': '', '': '',
-    };
     for (const eid of this.sim.pawns) {
-      let t = this.pawnTexts.get(eid);
-      if (!t) {
-        t = new Text({ text: this.pawnEmoji(eid), style: terrainStyle(24) });
-        t.resolution = this.app.renderer.resolution;
-        t.anchor.set(0.5);
-        this.pawnLayer.addChild(t);
-        this.pawnTexts.set(eid, t);
-        t.eventMode = 'static';
-        t.hitArea = new Rectangle(-14, -14, 28, 28);
-        t.on('pointerdown', (e) => {
+      let g = this.pawnSprites.get(eid);
+      if (!g) {
+        const icon = this.makeIcon(this.pawnAssetId(eid));
+        if (!icon) continue;
+        g = icon;
+        this.pawnLayer.addChild(g);
+        this.pawnSprites.set(eid, g);
+        g.eventMode = 'static';
+        g.hitArea = new Rectangle(-14, -14, 28, 28);
+        g.on('pointerdown', (e) => {
           e.stopPropagation();
           this.selectPawn(eid);
         });
       }
       const pos = this.sim.pawnPositions.get(eid);
       if (pos) {
-        t.position.set(pos.x * TILE, pos.y * TILE);
-        t.alpha = this.selected.has(eid) ? 1 : 0.9;
-        t.scale.set(this.selected.has(eid) ? 1.15 : 1);
-        // 受伤（血量低）变暗红色提示
+        g.position.set(pos.x * TILE + TILE / 2, pos.y * TILE + TILE / 2);
+        const sel = this.selected.has(eid);
+        g.scale.set((sel ? 1.15 : 1));
+        // 受伤（血量低）变暗
         const hk = this.sim.healthOf(eid);
+        g.alpha = sel ? 1 : 0.9;
         if (hk && hk.hp / hk.maxHp < 0.4) {
-          t.alpha = Math.max(0.35, hk.hp / hk.maxHp);
-        }
-        // 工作图标（显示在头顶）
-        const job = this.sim.pawnJob(eid);
-        const icon = jobEmoji[job] ?? '';
-        let jt = this.pawnJobIcons.get(eid);
-        if (icon) {
-          if (!jt) {
-            jt = new Text({ text: '', style: terrainStyle(12) });
-            jt.resolution = this.app.renderer.resolution;
-            jt.anchor.set(0.5, 1);
-            this.pawnLayer.addChild(jt);
-            this.pawnJobIcons.set(eid, jt);
-          }
-          jt.text = icon;
-          jt.position.set(pos.x * TILE, pos.y * TILE - 14);
-          jt.visible = true;
-        } else if (jt) {
-          jt.visible = false;
+          g.alpha = Math.max(0.35, hk.hp / hk.maxHp);
         }
       }
     }
   }
 
-  // 渲染入侵者（红色敌对）
+  // 渲染入侵者（红色敌对）—— 用狼 SVG
   private renderHostiles(): void {
-    // 先隐藏多余的
     let idx = 0;
     for (const h of this.sim.hostiles) {
-      let t = this.hostileTexts.get(idx);
-      if (!t) {
-        t = new Text({ text: '🐺', style: terrainStyle(24) });
-        t.resolution = this.app.renderer.resolution;
-        t.anchor.set(0.5);
-        t.eventMode = 'none';
-        this.pawnLayer.addChild(t);
-        this.hostileTexts.set(idx, t);
+      let g = this.hostileSprites.get(idx);
+      if (!g) {
+        const icon = this.makeIcon('pawn:strong', 0.9);
+        if (!icon) continue;
+        g = icon;
+        g.eventMode = 'none';
+        // 染红区分敌我
+        g.tint = 0xff5555;
+        this.pawnLayer.addChild(g);
+        this.hostileSprites.set(idx, g);
       }
-      t.visible = true;
-      t.position.set(h.x * TILE, h.y * TILE);
-      // 血量低变淡
-      t.alpha = Math.max(0.4, h.hp / h.maxHp);
+      g.visible = true;
+      g.position.set(h.x * TILE + TILE / 2, h.y * TILE + TILE / 2);
+      g.alpha = Math.max(0.4, h.hp / h.maxHp);
       idx++;
     }
-    // 多余的隐藏
-    for (let i = idx; i < this.hostileTexts.size; i++) {
-      const t = this.hostileTexts.get(i);
-      if (t) t.visible = false;
+    for (let i = idx; i < this.hostileSprites.size; i++) {
+      const g = this.hostileSprites.get(i);
+      if (g) g.visible = false;
     }
   }
 
@@ -300,17 +291,17 @@ export class Renderer {
     this.sim.selected = [];
   }
 
-  // 根据 DNA 天赋选不同 emoji（小人差异化，看出性格）
-  private pawnEmoji(eid: number): string {
+  // 根据 DNA 天赋选不同的鼠 SVG
+  private pawnAssetId(eid: number): AssetId {
     const p = this.sim.pawnProfile(eid);
-    if (!p) return '🐭';
+    if (!p) return 'pawn:mouse';
     const t = p.dna.traits;
-    if (t.includes('强壮')) return '🐗';
-    if (t.includes('虔诚')) return '🐰';
-    if (t.includes('懒惰')) return '🐨';
-    if (t.includes('热爱工作')) return '🐺';
-    if (t.includes('夜猫子')) return '🦉';
-    return '🐭';
+    if (t.includes('强壮')) return 'pawn:strong';
+    if (t.includes('虔诚')) return 'pawn:devout';
+    if (t.includes('懒惰')) return 'pawn:lazy';
+    if (t.includes('热爱工作')) return 'pawn:workaholic';
+    if (t.includes('夜猫子')) return 'pawn:owl';
+    return 'pawn:mouse';
   }
 
   // 建造幽灵预览

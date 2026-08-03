@@ -1,6 +1,7 @@
 // infcanvas 入口 —— P0 单机可玩版 + HUD 菜单
 import { Sim } from '../sim/sim';
 import { Renderer } from './renderer';
+import { SvgAssets } from './svgLoader';
 import { BUILDINGS } from '../sim/defs';
 
 const nf = (v: number | undefined): string => (v === undefined ? '-' : Math.round(v).toString());
@@ -176,7 +177,10 @@ async function main(): Promise<void> {
     const raw = localStorage.getItem('infcanvas-save');
     if (raw) sim.load(JSON.parse(raw));
   } catch { /* 存档损坏则忽略 */ }
-  const renderer = new Renderer(sim);
+  // 加载 SVG 素材
+  const assets = new SvgAssets();
+  await assets.loadAll();
+  const renderer = new Renderer(sim, assets);
   await renderer.init(container);
 
   // 自动存档（每 30 秒）
