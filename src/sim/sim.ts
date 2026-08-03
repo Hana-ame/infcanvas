@@ -363,6 +363,11 @@ export class Sim implements SimContext {
   // ---- UI 读取 ----
   get pawns(): readonly number[] { return this._pawnList; }
   get buildCount(): number { return this.buildQueue.length; }
+  buildingAt(x: number, y: number): { defId: string; hp: number; maxHp: number; faction: string } | null {
+    const b = this.world.getBuilding(x, y);
+    if (!b) return null;
+    return { defId: b.def.id, hp: Math.round(b.hp), maxHp: b.def.hp, faction: b.faction };
+  }
   pawnJob(eid: number): string { return this.pawnStates.get(eid)?.job ?? ''; }
   needsOf(eid: number) { return this.readNeeds(eid); }
   healthOf(eid: number) { return this.readHealth(eid); }

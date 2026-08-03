@@ -5,6 +5,9 @@ import { BUILDINGS } from '../sim/defs';
 
 const nf = (v: number | undefined): string => (v === undefined ? '-' : Math.round(v).toString());
 
+// 当前选中的建筑（模块级，HUD 可读）
+let selectedBuilding: { x: number; y: number } | null = null;
+
 function createHud(sim: Sim, onSelectBuild: (id: string | null) => void): { update: (bm: string | null) => void; hint: HTMLElement } {
   const root = document.createElement('div');
   root.style.cssText = 'position:fixed;inset:0;z-index:10;pointer-events:none;font:13px system-ui;color:#eee;';
@@ -73,6 +76,21 @@ function createHud(sim: Sim, onSelectBuild: (id: string | null) => void): { upda
       `🛠️ ${s.tools ?? 0}`, `👥 ${sim.pawns.length}人`,
     ];
     stock.innerHTML = parts.join('  ·  ') + foodWarn + raidWarn;
+
+    // 选中建筑信息（优先于小人）
+    if (selectedBuilding) {
+      const b = sim.buildingAt(selectedBuilding.x, selectedBuilding.y);
+      if (b) {
+        const def = BUILDINGS[b.defId];
+        selPanel.style.display = 'block';
+        selPanel.innerHTML =
+          `<b>${def?.emoji ?? '🏗'} ${def?.name ?? b.defId}</b> (${selectedBuilding.x},${selectedBuilding.y})<br>` +
+          `耐久 ${nf(b.hp)}/${b.maxHp}<br>派系：${b.faction}`;
+        return;
+      } else {
+        selectedBuilding = null;
+      }
+    }
 
     // 选中
     const sel = sim.selectedIds;
@@ -220,8 +238,20 @@ async function main(): Promise<void> {
     if (buildMode) {
       const world = renderer.screenToWorld(pos.x, pos.y);
       sim.issueCommand({ type: 'build', x: world.x, y: world.y, buildingId: buildMode });
+      return;
+    }
+    const world = renderer.screenToWorld(pos.x, pos.y);
+    const b = sim.buildingAt(world.x, world.y);
+    if (b) {
+      // 选中建筑
+      selectedBuilding = { x: world.x, y: world.y };
+      sim.selected = [];
+      renderer.clearSelection();
+      hud.update(buildMode);
     } else {
+      selectedBuilding = null;
       renderer.selectNearest(pos.x, pos.y, 26);
+      hud.update(buildMode);
     }
   });
 

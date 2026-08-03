@@ -237,6 +237,11 @@ export class Renderer {
     this.sim.selected = [eid];
   }
 
+  clearSelection(): void {
+    this.selected.clear();
+    this.sim.selected = [];
+  }
+
   // 根据 DNA 天赋选不同 emoji（小人差异化，看出性格）
   private pawnEmoji(eid: number): string {
     const p = this.sim.pawnProfile(eid);
