@@ -102,7 +102,12 @@ export class World {
 
   isPassable(x: number, y: number): boolean {
     if (!this.inBounds(x, y)) return false;
-    return this.getTileDef(x, y).passable;
+    // 地形可走性
+    if (!this.getTileDef(x, y).passable) return false;
+    // 建筑阻挡（墙等 passable=false 的建筑挡住）
+    const b = this.buildings.get(this.buildKey(x, y));
+    if (b && !b.def.passable) return false;
+    return true;
   }
 
   // P0 简化：建筑占位，直接存 Map（后期进 ECS）
