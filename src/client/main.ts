@@ -96,9 +96,9 @@ function createHud(sim: Sim, onSelectBuild: (id: string | null) => void, onZoom?
   hint.style.cssText = 'position:absolute;top:54px;right:12px;background:rgba(0,0,0,.5);border-radius:6px;padding:6px 10px;font-size:12px;text-align:right;';
   root.appendChild(hint);
 
-  // 事件日志 feed（右下角，最近 6 条）
+  // 事件日志 feed（右下角，最近 6 条）——避开视角切换按钮（也在右下角）
   const feed = document.createElement('div');
-  feed.style.cssText = 'position:absolute;bottom:12px;right:12px;background:rgba(0,0,0,.45);border-radius:8px;padding:6px 10px;font-size:11px;line-height:1.5;max-width:220px;text-align:right;';
+  feed.style.cssText = 'position:absolute;bottom:12px;right:96px;background:rgba(0,0,0,.45);border-radius:8px;padding:6px 10px;font-size:11px;line-height:1.5;max-width:220px;text-align:right;';
   root.appendChild(feed);
 
   // 帮助按钮 + 面板
@@ -310,6 +310,11 @@ async function main(): Promise<void> {
     const raw = await loadSave<string>();
     if (raw) sim.load(JSON.parse(raw));
   } catch { /* 存档损坏则忽略 */ }
+  // 空世界（旧档全灭/坏档）：重开开局，保证有小人可看
+  if (sim.pawns.length === 0) {
+    sim.respawnPawns(4);
+    sim.ensureCamp();
+  }
   // 加载 SVG 素材
   const assets = new SvgAssets();
   await assets.loadAll();

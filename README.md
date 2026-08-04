@@ -7,3 +7,5 @@ RimWorld-like 殖民地游戏 · web / infinite canvas · 可联机 · 支持 LL
 - **server**：WSS + 房间管理 + tick 循环（规划中）
 
 详见 [docs/DESIGN.md](docs/DESIGN.md)。
+
+**想玩/看效果**：[docs/PLAYING.md](docs/PLAYING.md)（当前版本玩法说明，面向玩家）。

@@ -490,6 +490,24 @@ export class Sim implements SimContext {
     this.playerUnitId = this.socialUnits.units.size > 0 ? [...this.socialUnits.units.keys()][0] : null;
   }
 
+  // 空世界（旧档全灭/坏档）重开：重建出生点小人 + 初始营地（供客户端恢复局面）
+  respawnPawns(count: number): void {
+    for (const eid of [...this._pawnList]) this.killPawn(eid);
+    this.spawnPawns(count);
+  }
+
+  // 若出生点没有篝火则重建（空世界重开用）
+  ensureCamp(): void {
+    const cx = Math.floor(this.world.width / 2);
+    const cy = Math.floor(this.world.height / 2);
+    if (!this.world.getBuilding(cx, cy + 2)) {
+      this.ensureInitialCamp();
+    } else {
+      for (const eid of this.pawns) this.socialUnits.assignPawn(eid);
+      this.playerUnitId = this.socialUnits.units.size > 0 ? [...this.socialUnits.units.keys()][0] : null;
+    }
+  }
+
   // 团灭附身（Q3）：玩家所属单位成员清零 → 视角转移到最近的存活单位
   private checkPossession(): void {
     if (!this.playerUnitId) return;
