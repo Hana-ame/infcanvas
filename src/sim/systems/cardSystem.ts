@@ -90,13 +90,14 @@ export class BehaviorSystem implements GameSystem {
       needsOf: (e) => this.ctx.readNeeds(e),
       healthOf: (e) => this.ctx.readHealth(e),
       isNight: () => this.ctx.isNight(),
-      hasCampfire: () => this.ctx.world.hasBuilding('campfire'),
-      hasCave: () => this.ctx.world.hasBuilding('cave'),
+      hasCampfire: () => this.ctx.world.hasBuildingWithTag('warmth'),
+      hasCave: () => this.ctx.world.hasBuildingWithTag('mine'),
       desiresOf: (e) => this.ctx.pawnStates.get(e)?.desires ?? null,
       env: this.ctx.env,
       lastSeries: st.lastSeries,
       factionPriority: this.ctx.factionPriority,
       assignedJob: st.assignedJob,
+      leanOf: (e, k) => this.ctx.leanOf(e, k),
       buildQueueCount: this.ctx.buildQueue.length,
       stockpile: this.ctx.stockpile,
     };
@@ -156,7 +157,7 @@ export class BehaviorSystem implements GameSystem {
       if (ore) { st.mineTarget = ore; c.moveAdjacent(eid, ore.x, ore.y); }
       else st.job = '闲逛';
     } else if (intent.workType === 'caveMine') {
-      const cave = c.findNearest(pos, (x, y) => c.world.getBuilding(x, y)?.def.id === 'cave', true);
+      const cave = c.findNearest(pos, (x, y) => c.world.getBuilding(x, y)?.def.tags?.includes('mine') ?? false, true);
       if (cave) { st.caveTarget = cave; c.moveAdjacent(eid, cave.x, cave.y); }
       else st.job = '闲逛';
     } else if (intent.workType === 'build') {
@@ -186,6 +187,7 @@ export class BehaviorSystem implements GameSystem {
       n.food = Math.min(100, n.food + 40);
       c.setNeeds(eid, n);
       if (st.desires) fulfill(st.desires, 'gluttony', 12);
+      c.recordLean(eid, 'eat', 1);
       c.bus.emit({ type: 'eat', eid });
     }
   }
@@ -196,6 +198,7 @@ export class BehaviorSystem implements GameSystem {
       n.rest = Math.min(100, n.rest + 40);
       c.setNeeds(eid, n);
       if (st.desires) fulfill(st.desires, 'sloth', 10);
+      c.recordLean(eid, 'rest', 1);
       c.bus.emit({ type: 'rest', eid });
     }
   }
@@ -204,7 +207,7 @@ export class BehaviorSystem implements GameSystem {
   private execHeal(c: SimContext, eid: number, st: PawnState, _intent: BehaviorIntent): void {
     const pos = c.readPosition(eid);
     if (!pos) return;
-    const fire = c.findNearest(pos, (x, y) => c.world.getBuilding(x, y)?.def.id === 'campfire', true);
+    const fire = c.findNearest(pos, (x, y) => c.world.getBuilding(x, y)?.def.tags?.includes('heal') ?? false, true);
     if (fire) {
       st.healTarget = fire;
       c.moveAdjacent(eid, fire.x, fire.y);
@@ -217,7 +220,7 @@ export class BehaviorSystem implements GameSystem {
   private execPray(c: SimContext, eid: number, st: PawnState, _intent: BehaviorIntent): void {
     const pos = c.readPosition(eid);
     if (!pos) return;
-    const fire = c.findNearest(pos, (x, y) => c.world.getBuilding(x, y)?.def.id === 'campfire', true);
+    const fire = c.findNearest(pos, (x, y) => c.world.getBuilding(x, y)?.def.tags?.includes('pray') ?? false, true);
     if (fire) {
       st.prayTarget = fire;
       c.moveAdjacent(eid, fire.x, fire.y);
@@ -235,12 +238,14 @@ export class BehaviorSystem implements GameSystem {
       n.food = Math.min(100, n.food + 50);
       this.ctx.setNeeds(eid, n);
       if (st.desires) fulfill(st.desires, 'gluttony', 12);
+      this.ctx.recordLean(eid, 'eat', 1);
       this.ctx.bus.emit({ type: 'eat', eid });
       st.urgent = undefined;
     } else if (st.urgent === 'rest') {
       n.rest = Math.min(100, n.rest + 40);
       this.ctx.setNeeds(eid, n);
       if (st.desires) fulfill(st.desires, 'sloth', 10);
+      this.ctx.recordLean(eid, 'rest', 1);
       this.ctx.bus.emit({ type: 'rest', eid });
       st.urgent = undefined;
     }

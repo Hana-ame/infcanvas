@@ -40,6 +40,8 @@ export interface CardView {
   factionPriority?: Record<string, number>;
   // 指派职业（Q10 生产线）：当前小人固定从事的工作
   assignedJob?: string;
+  // 行为倾向（勒沙特列反馈）：该小人各行为的持久倾向
+  leanOf?(eid: number, key: string): number;
 }
 
 export interface CardContext {
@@ -324,6 +326,9 @@ function effectiveWeight(card: BehaviorCard, pawn: PawnLike, ctx?: CardContext):
       w *= card.id === jobCard ? 6 : 0.1;
     }
   }
+  // 行为倾向（勒沙特列反馈）：按该行为倾向调制权重（自平衡）
+  const lean = ctx?.view.leanOf?.(ctx.eid, card.id);
+  if (lean !== undefined) w *= lean / 50;
   return w;
 }
 

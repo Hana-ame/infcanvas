@@ -81,6 +81,9 @@ export interface SimContext {
   // 技能（COC）：读取 + 使用后成长
   skillOf(eid: number, skill: SkillId): number;
   growSkill(eid: number, skill: SkillId): void;
+  // 行为倾向（勒沙特列反馈）：按 profit 调整 / 读取
+  recordLean(eid: number, key: string, profit: number): void;
+  leanOf(eid: number, key: string): number;
   // 历史（仿真日志）：结构化查询（社交话题等素材）
   historyQuery(opts?: { type?: string; eid?: number; limit?: number }): { type: string; data?: Record<string, unknown> | undefined }[];
 }

@@ -10,7 +10,7 @@ export class FarmSystem implements GameSystem {
   update(dt: number): void {
     // 每个农田按其附近单位产出（Q9：单位独立生产；玩家单位=全局）
     for (const [key, b] of this.ctx.world.buildings) {
-      if (b.def.id !== 'farm') continue;
+      if (!b.def.tags?.includes('farm')) continue;
       const x = key % this.ctx.world.width;
       const y = Math.floor(key / this.ctx.world.width);
       this.ctx.addProductionNear(x, y, 'food', 0.2 * dt);

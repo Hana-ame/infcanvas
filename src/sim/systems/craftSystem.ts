@@ -14,7 +14,7 @@ export class CraftSystem implements GameSystem {
   update(dt: number): void {
     let benches: { x: number; y: number }[] = [];
     for (const [key, b] of this.ctx.world.buildings) {
-      if (b.def.id === 'workbench') {
+      if (b.def.tags?.includes('craft')) {
         benches.push({ x: key % this.ctx.world.width, y: Math.floor(key / this.ctx.world.width) });
       }
     }

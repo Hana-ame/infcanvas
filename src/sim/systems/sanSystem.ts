@@ -80,7 +80,7 @@ export class SanSystem implements GameSystem {
         const by = Math.round(y) + dy;
         if (!w.inBounds(bx, by)) continue;
         const b = w.getBuilding(bx, by);
-        if (b && b.def.id === 'campfire') return true;
+        if (b && b.def.tags?.includes('warmth')) return true;
       }
     }
     return false;

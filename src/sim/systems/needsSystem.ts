@@ -20,7 +20,7 @@ export class NeedsSystem implements GameSystem {
       this.wonderVersion = ver;
       let found = false;
       for (const [, b] of this.ctx.world.buildings) {
-        if (b.def.id === 'monument') { found = true; break; }
+        if (b.def.tags?.includes('wonder')) { found = true; break; }
       }
       this.wonderCache = found;
     }
@@ -82,7 +82,7 @@ export class NeedsSystem implements GameSystem {
         const by = Math.round(pos.y) + dy;
         if (!w.inBounds(bx, by)) continue;
         const b = w.getBuilding(bx, by);
-        if (b && b.def.id === 'campfire') return true;
+        if (b && b.def.tags?.includes('warmth')) return true;
       }
     }
     return false;

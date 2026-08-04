@@ -14,6 +14,7 @@ import { generateDna, initSlots, type Dna, type SkillId, BASE_CARDS } from './ai
 import { initDesires, type DesireId } from './core/desires';
 import { initEnv, tickEnv, type EnvState } from './core/env';
 import { addMemory, setUnitSeq, type SocialUnit } from './core/socialUnit';
+import { initLean, adjustLean, type LeanKey } from './core/lean';
 import { BUILDINGS, TILES, ITEMS } from './defs';
 import { ModRegistry } from './mods/registry';
 import type { SimContext } from './systems/context';
@@ -89,6 +90,7 @@ export interface PawnState {
   lastSeries?: string; // 上一轮执行的卡系列（马尔可夫偏置，DESIGN §6）
   oracleBuff?: { until: number; mood: number }; // 神谕祝福（到期时间戳，心情加成）
   assignedJob?: string; // 指派职业（Q10 生产线：lumberjack/miner/farmer/crafter）
+  lean?: Record<LeanKey, number>; // 行为倾向（勒沙特列反馈：按 profit 自平衡）
 }
 
 export interface SimOptions {
@@ -364,6 +366,7 @@ export class Sim implements SimContext {
       pathIndex: 0,
       skills: { work: 20 + intBase, fight: 15 + intBase, craft: 15 + intBase, social: 10 + intBase, faith: 10 + intBase },
       desires: initDesires(this.rng),
+      lean: initLean(this.rng),
     });
     this._pawnList.push(eid);
     this.pawnPositions.set(eid, { x, y });
@@ -413,6 +416,19 @@ export class Sim implements SimContext {
   // COC 技能：读取（无则用下限 10）
   skillOf(eid: number, skill: SkillId): number {
     return this.pawnStates.get(eid)?.skills?.[skill] ?? 10;
+  }
+
+  // 行为倾向反馈（勒沙特列原理）：执行某行为后按实际收益调整倾向
+  recordLean(eid: number, key: LeanKey, profit: number): void {
+    const st = this.pawnStates.get(eid);
+    if (!st) return;
+    st.lean = st.lean ?? initLean(this.rng);
+    adjustLean(st.lean, key, profit);
+  }
+
+  // 倾向读取（抽卡权重调制用）
+  leanOf(eid: number, key: LeanKey): number {
+    return this.pawnStates.get(eid)?.lean?.[key] ?? 50;
   }
 
   // 技能成长（COC 规则）：掷 d100 > 当前值 → +1d10，越用越强、边际递减
