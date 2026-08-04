@@ -432,8 +432,12 @@ describe('社交/流言系统（DESIGN §6 微互动）', () => {
     const sim = new Sim({ seed: 51, pawnCount: 2 });
     const [a, b] = sim.pawns;
     const pos = sim.pawnPositions.get(a)!;
-    sim.pawnPositions.set(b, { x: pos.x + 1, y: pos.y });
-    for (let i = 0; i < 300; i++) sim.step(1 / 20); // 15 秒
+    // 每步钉在相邻位置（避免小人绕开）→ 互动必现
+    for (let i = 0; i < 300; i++) {
+      sim.pawnPositions.set(a, { x: pos.x, y: pos.y });
+      sim.pawnPositions.set(b, { x: pos.x + 1, y: pos.y });
+      sim.step(1 / 20); // 15 秒
+    }
     const stA = sim.pawnStates.get(a)!;
     const rel = stA.relationships?.get(b);
     // 至少发生过互动 → 好感度被写入
@@ -602,14 +606,13 @@ describe('随机事件系统（用户 Q5 预制剧本）', () => {
 
   it('wanderer event can recruit a new pawn', () => {
     const sim = new Sim({ seed: 92, pawnCount: 2 });
-    const before = sim.pawns.length;
     let recruited = false;
+    sim.bus.on('pawn_recruited', () => { recruited = true; });
     for (let i = 0; i < 6000 && !recruited; i++) {
       sim.step(1 / 20); // 300 秒
-      if (sim.pawns.length > before) recruited = true;
     }
     // 不强制必触发（随机），但流浪者事件触发时人口增加
-    expect(recruited || sim.pawns.length >= before).toBe(true);
+    expect(recruited).toBe(true);
   });
 });
 
@@ -1032,6 +1035,8 @@ describe('自主建造（用户 Q1/Q8：营地自主扩张）', () => {
     const existing = [...sim2.socialUnits.units.keys()];
     const cx = Math.floor(sim2.world.width / 2);
     const cy = Math.floor(sim2.world.height / 2);
+    // 先真正放一座篝火，再通知单位系统（否则空地上无 def，不建单位）
+    sim2.world.placeBuilding(cx + 3, cy + 3, 'campfire', 'auto');
     sim2.socialUnits.onBuildingBuilt(sim2.world.buildKey(cx + 3, cy + 3), 'campfire', sim2.time);
     const now = [...sim2.socialUnits.units.keys()];
     // 新单位 id 是新的

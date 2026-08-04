@@ -12,6 +12,7 @@ export interface ScriptedEvent {
   weight: number;      // 触发权重
   cooldown?: number;   // 距上次触发最小秒数
   minTime?: number;    // 开局多少秒后可触发
+  condition?: (ctx: SimContext) => boolean; // 状况匹配：只有当前局面满足才进候选池
   run(ctx: SimContext): void; // 事件效果
 }
 
@@ -58,6 +59,8 @@ export class EventSystem implements GameSystem {
           const last = this.lastTrigger.get(s.id) ?? -Infinity;
           if (now - last < s.cooldown) return false;
         }
+        // 状况匹配：不满足当前局面的事件不进候选池
+        if (s.condition && !s.condition(this.ctx)) return false;
         return true;
       });
       if (pool.length === 0) return null;

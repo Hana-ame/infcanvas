@@ -35,11 +35,11 @@ export class SocialUnitSystem implements GameSystem {
     });
   }
 
-  // 建篝火/教堂 → 创建或升级单位。level 由 defId 决定
+  // 建篝火/教堂 → 创建或升级单位。level 由 defId 的标签决定
   onBuildingBuilt(key: number, defId: string, now: number): void {
-    if (defId === 'campfire') {
-      this.createUnit(key, 'campfire', now);
-    } else if (defId === 'church') {
+    const def = this.ctx.world.buildings.get(key)?.def ?? { tags: [] as string[] };
+    // 教堂优先（教堂也带 anchor 标签，但应升级而非新建）
+    if (def.tags?.includes('faith') || def.tags?.includes('oracle')) {
       // 附近有篝火单位 → 升级它；否则新建教堂单位
       const near = this.unitNear(key);
       if (near) {
@@ -48,6 +48,8 @@ export class SocialUnitSystem implements GameSystem {
       } else {
         this.createUnit(key, 'church', now);
       }
+    } else if (def.tags?.includes('anchor')) {
+      this.createUnit(key, 'campfire', now);
     }
   }
 
