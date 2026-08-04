@@ -10,6 +10,10 @@ export interface Hostile {
   x: number; y: number;
   hp: number; maxHp: number;
   targetX: number; targetY: number;
+  name?: string;      // 敌对势力身份（部落/狼群）
+  faction?: string;   // 派系 id
+  dmgPerSec?: number; // 攻击力（部落战士比狼强）
+  loot?: { item: string; amount: number }; // 击杀掉落
 }
 
 export interface BuildItem {
@@ -36,6 +40,19 @@ export interface SimContext {
   pawnList: readonly number[];
   env: { raining: boolean; temperature: number };
   factionPriority: Record<string, number>; // 派系工作优先级（用户 Q8）
+  socialUnits: {
+    units: Map<string, unknown>;
+    membership: Map<number, string>;
+    onBuildingBuilt(key: number, defId: string, now: number): void;
+    assignPawn(eid: number): void;
+    unassignPawn(eid: number): void;
+  };
+  playerUnitId: string | null;
+  // 征服（Q9）：核心建筑被毁 → 吞并该派系
+  conquestOf(coreKey: number, conquerorName: string): void;
+  addProductionNear(x: number, y: number, item: string, amount: number): void;
+  // 建筑升级（篝火→教堂等）
+  upgradeBuilding(x: number, y: number, defId: string, faction: string): boolean;
 
   isNight(): boolean;
   // 读组件

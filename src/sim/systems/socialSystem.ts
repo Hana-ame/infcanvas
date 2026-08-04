@@ -59,10 +59,12 @@ export class SocialSystem implements GameSystem {
       const stB = this.ctx.pawnStates.get(b);
       if (stB) this.ctx.adjustMood(b, 0.5);
     } else if (rel <= -20) {
-      // 敌对：口角升级
+      // 敌对：口角升级，仇恨越深越容易动手
       const stB = this.ctx.pawnStates.get(b);
       if (!stB) return;
-      if (this.ctx.rng.next() < 0.05) {
+      // 关系每敌对 10 点 +4% 动手概率（rel=-50 → 28%），比固定 5% 更合理
+      const punchChance = Math.max(0.08, Math.min(0.4, 0.08 + (Math.abs(rel) - 20) * 0.004));
+      if (this.ctx.rng.next() < punchChance) {
         // 动手（战争萌芽）：低力量者吃亏，负好感加深
         const dnaA = this.ctx.dnaOf(a);
         const dnaB = this.ctx.dnaOf(b);

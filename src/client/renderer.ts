@@ -251,20 +251,28 @@ export class Renderer {
     for (const [key, b] of w.buildings) {
       const x = key % w.width;
       const y = Math.floor(key / w.width);
-      const bg = new Graphics();
-      bg.rect(x * TILE, y * TILE, TILE, TILE);
-      // 受损建筑显示红色底色（破损提示）
+      // 多格 footprint：背景色块覆盖全部格
       const dmg = b.hp / b.def.hp;
+      const bg = new Graphics();
+      const foot = w.footprintOf(x, y);
+      const minX = Math.min(...foot.map((f) => f.x)) * TILE;
+      const minY = Math.min(...foot.map((f) => f.y)) * TILE;
+      const maxX = Math.max(...foot.map((f) => f.x)) * TILE + TILE;
+      const maxY = Math.max(...foot.map((f) => f.y)) * TILE + TILE;
+      bg.rect(minX, minY, maxX - minX, maxY - minY);
       bg.fill(dmg < 0.5 ? 0x7a2a2a : dmg < 1 ? 0x5a4a3a : b.def.color);
       this.entityLayer.addChild(bg);
       this.buildingSprites.push({ g: bg, x, y });
       const aid = `building:${b.def.id}` as AssetId;
       const icon = this.makeIcon(aid);
       if (icon) {
-        this.placeEntity(icon, x, y);
+        // 图标定位到 footprint 中心
+        const cx = (minX + maxX) / 2 / TILE;
+        const cy = (minY + maxY) / 2 / TILE;
+        this.placeEntity(icon, cx, cy);
         icon.alpha = dmg < 0.5 ? 0.6 : 1;
         this.entityLayer.addChild(icon);
-        this.buildingSprites.push({ g: icon, x, y });
+        this.buildingSprites.push({ g: icon, x: cx, y: cy });
       }
     }
   }
@@ -326,11 +334,11 @@ export class Renderer {
         if (!icon) continue;
         g = icon;
         g.eventMode = 'none';
-        // 染红区分敌我
-        g.tint = 0xff5555;
         this.entityLayer.addChild(g);
         this.hostileSprites.set(idx, g);
       }
+      // 染红区分敌我；派系掠夺者（unit）用暗红紫（更强威胁），每帧刷新保证缓存正确
+      g.tint = h.faction === 'unit' ? 0xff6688 : 0xff5555;
       g.visible = true;
       this.placeEntity(g, h.x, h.y);
       if (this.viewMode === 'iso') g.zIndex = Math.round(h.y) * 10 + 9;

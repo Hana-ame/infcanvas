@@ -38,6 +38,8 @@ export interface CardView {
   lastSeries?: string;
   // 派系优先级（用户 Q8：AI 按环境下达工作优先指令）：workType → 权重倍率
   factionPriority?: Record<string, number>;
+  // 指派职业（Q10 生产线）：当前小人固定从事的工作
+  assignedJob?: string;
 }
 
 export interface CardContext {
@@ -271,6 +273,14 @@ export const MARKOV_BIAS: Record<string, Record<string, number>> = {
   social:  { leisure: 1.4 },
 };
 
+// 指派职业（Q10 生产线）→ 主导工作卡 id
+export const JOB_CARD: Record<string, string> = {
+  lumberjack: 'chop',
+  miner: 'mine',
+  farmer: 'build',   // 农田自动产粮，农民负责扩建/维护农田（build）
+  crafter: 'build',
+};
+
 function effectiveWeight(card: BehaviorCard, pawn: PawnLike, ctx?: CardContext): number {
   let w = card.weight;
   if (pawn.dna.traits.includes('热爱工作') && card.series === 'work') w *= 1.8;
@@ -306,6 +316,14 @@ function effectiveWeight(card: BehaviorCard, pawn: PawnLike, ctx?: CardContext):
   // 派系优先级（用户 Q8）：环境评估下达的工作优先指令，调制对应工作卡权重
   const pri = ctx?.view.factionPriority?.[card.id];
   if (pri !== undefined) w *= pri;
+  // 指派职业（Q10）：强制主导对应工作卡，其他工作卡权重压到极低
+  const job = ctx?.view.assignedJob;
+  if (job) {
+    const jobCard = JOB_CARD[job];
+    if (jobCard) {
+      w *= card.id === jobCard ? 6 : 0.1;
+    }
+  }
   return w;
 }
 

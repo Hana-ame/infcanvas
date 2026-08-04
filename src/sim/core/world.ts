@@ -120,12 +120,18 @@ export class World {
 
   loadBuildings(data: { key: number; defId: string; hp: number; faction: string }[]): void {
     this.buildings.clear();
+    this.gridToBuilding.clear();
+    this.buildingFootprint.clear();
     for (const d of data) {
       const def = BUILDINGS[d.defId];
       if (!def) continue;
       const x = d.key % this.width;
       const y = Math.floor(d.key / this.width);
-      this.buildings.set(this.buildKey(x, y), { def, hp: d.hp, faction: d.faction });
+      const mainKey = d.key;
+      this.buildings.set(mainKey, { def, hp: d.hp, faction: d.faction });
+      const footprint = this.footprintKeys(x, y, def);
+      this.buildingFootprint.set(mainKey, footprint);
+      for (const fk of footprint) this.gridToBuilding.set(fk, mainKey);
     }
     this.buildingVersion++;
     this.recomputeLight();
@@ -139,8 +145,8 @@ export class World {
     if (!this.inBounds(x, y)) return false;
     // 地形可走性
     if (!this.getTileDef(x, y).passable) return false;
-    // 建筑阻挡（墙等 passable=false 的建筑挡住）
-    const b = this.buildings.get(this.buildKey(x, y));
+    // 建筑阻挡（墙等 passable=false 的建筑挡住，含 footprint 辅助格）
+    const b = this.getBuilding(x, y);
     if (b && !b.def.passable) return false;
     return true;
   }
@@ -148,13 +154,54 @@ export class World {
   // P0 简化：建筑占位，直接存 Map（后期进 ECS）
   buildings = new Map<number, { def: (typeof BUILDINGS)[string]; hp: number; faction: string }>();
   buildingVersion = 0; // 建筑版本号，渲染层据此重绘
+  // 格子 → 建筑主格 key（多格 footprint 反向索引）
+  private gridToBuilding = new Map<number, number>();
+  // 建筑主格 key → footprint 全部格子（多格）
+  private buildingFootprint = new Map<number, number[]>();
 
   buildKey(x: number, y: number): number {
     return y * this.width + x;
   }
 
+  // 建筑 footprint 覆盖的格子 key 列表（从锚点展开）
+  private footprintKeys(x: number, y: number, def: (typeof BUILDINGS)[string]): number[] {
+    const keys: number[] = [];
+    for (let dy = 0; dy < def.size.y; dy++) {
+      for (let dx = 0; dx < def.size.x; dx++) {
+        keys.push(this.buildKey(x + dx, y + dy));
+      }
+    }
+    return keys;
+  }
+
+  // 获取某格所属建筑（含 footprint 辅助格）
   getBuilding(x: number, y: number): { def: (typeof BUILDINGS)[string]; hp: number; faction: string } | null {
-    return this.buildings.get(this.buildKey(x, y)) ?? null;
+    const key = this.buildKey(x, y);
+    const main = this.gridToBuilding.get(key);
+    if (main !== undefined) return this.buildings.get(main) ?? null;
+    return this.buildings.get(key) ?? null;
+  }
+
+  // 建筑主格 key（含辅助格 → 主格）
+  mainKey(x: number, y: number): number {
+    const key = this.buildKey(x, y);
+    return this.gridToBuilding.get(key) ?? key;
+  }
+
+  // 建筑 footprint 格子列表（主格 x,y 为中心）
+  footprintOf(x: number, y: number): { x: number; y: number }[] {
+    const main = this.mainKey(x, y);
+    const def = this.buildings.get(main)?.def;
+    if (!def) return [{ x, y }];
+    const mx = main % this.width;
+    const my = Math.floor(main / this.width);
+    const out: { x: number; y: number }[] = [];
+    for (let dy = 0; dy < def.size.y; dy++) {
+      for (let dx = 0; dx < def.size.x; dx++) {
+        out.push({ x: mx + dx, y: my + dy });
+      }
+    }
+    return out;
   }
 
   hasBuilding(defId: string): boolean {
@@ -166,12 +213,17 @@ export class World {
 
   // 建筑受损（袭击/火灾），返回是否被摧毁
   damageBuilding(x: number, y: number, dmg: number): { destroyed: boolean; building: { def: (typeof BUILDINGS)[string]; hp: number; faction: string } | null } {
-    const b = this.buildings.get(this.buildKey(x, y));
+    const main = this.mainKey(x, y);
+    const b = this.buildings.get(main);
     if (!b) return { destroyed: false, building: null };
     b.hp -= dmg;
     this.buildingVersion++;
     if (b.hp <= 0) {
-      this.buildings.delete(this.buildKey(x, y));
+      // 摧毁：移除整个 footprint
+      const footprint = this.buildingFootprint.get(main) ?? [main];
+      this.buildings.delete(main);
+      this.buildingFootprint.delete(main);
+      for (const fk of footprint) this.gridToBuilding.delete(fk);
       this.buildingVersion++;
       this.recomputeLight();
       return { destroyed: true, building: b };
@@ -200,11 +252,49 @@ export class World {
     return true;
   }
 
+  // 检查整个 footprint 是否可建（多格）
+  canBuildFootprint(x: number, y: number, def: (typeof BUILDINGS)[string]): boolean {
+    for (const key of this.footprintKeys(x, y, def)) {
+      const gx = key % this.width;
+      const gy = Math.floor(key / this.width);
+      if (!this.inBounds(gx, gy)) return false;
+      const tdef = this.getTileDef(gx, gy);
+      if (!tdef.buildable) return false;
+      if (this.getBuilding(gx, gy)) return false;
+    }
+    return true;
+  }
+
   placeBuilding(x: number, y: number, defId: string, faction: string): boolean {
-    if (!this.canBuildAt(x, y)) return false;
     const def = BUILDINGS[defId];
     if (!def) return false;
-    this.buildings.set(this.buildKey(x, y), { def, hp: def.hp, faction });
+    if (!this.canBuildFootprint(x, y, def)) return false;
+    const mainKey = this.buildKey(x, y);
+    this.buildings.set(mainKey, { def, hp: def.hp, faction });
+    const footprint = this.footprintKeys(x, y, def);
+    this.buildingFootprint.set(mainKey, footprint);
+    for (const fk of footprint) this.gridToBuilding.set(fk, mainKey);
+    this.buildingVersion++;
+    this.recomputeLight();
+    return true;
+  }
+
+  // 升级建筑（如篝火→教堂，Q9 即时指令：教堂=篝火升级）
+  upgradeBuilding(x: number, y: number, defId: string, faction: string): boolean {
+    const main = this.mainKey(x, y);
+    if (!this.buildings.has(main)) return false;
+    const def = BUILDINGS[defId];
+    if (!def) return false;
+    // 旧 footprint 释放
+    const old = this.buildingFootprint.get(main) ?? [main];
+    for (const fk of old) this.gridToBuilding.delete(fk);
+    this.buildings.set(main, { def, hp: def.hp, faction });
+    // 新 footprint 建立
+    const x0 = main % this.width;
+    const y0 = Math.floor(main / this.width);
+    const footprint = this.footprintKeys(x0, y0, def);
+    this.buildingFootprint.set(main, footprint);
+    for (const fk of footprint) this.gridToBuilding.set(fk, main);
     this.buildingVersion++;
     this.recomputeLight();
     return true;

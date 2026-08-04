@@ -77,6 +77,9 @@ export class HistoryLog {
       case 'event_happened':
         base.data = { eventId: ev.eventId };
         break;
+      case 'faction_event':
+        base.data = { kind: ev.kind, from: ev.from, to: ev.to };
+        break;
     }
     this.entries.push(base);
     if (this.entries.length > this.cap) this.entries.splice(0, this.entries.length - this.cap);

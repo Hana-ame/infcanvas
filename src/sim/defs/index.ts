@@ -24,6 +24,8 @@ export interface BuildingDef {
   passable: boolean; // 建完后小人能否通过（墙=否，地板=是）
   buildTime: number; // 建造所需 job 秒数
   workRadius?: number; // 工作半径（如灶台/工作台）
+  costWood?: number; // 额外木成本（奇观，默认 = size.x*size.y*2）
+  costOre?: number; // 矿石成本（奇观）
 }
 
 export interface ItemDef {
@@ -59,6 +61,8 @@ export const BUILDINGS: Record<string, BuildingDef> = {
   farm: { id: 'farm', name: '农田', size: { x: 2, y: 2 }, hp: 80, color: '#6a8a3a', emoji: '🌾', passable: true, buildTime: 4, workRadius: 0 },
   workbench: { id: 'workbench', name: '工作台', size: { x: 1, y: 1 }, hp: 300, color: '#5a3a1a', emoji: '🛠️', passable: false, buildTime: 5, workRadius: 2 },
   cave: { id: 'cave', name: '矿洞', size: { x: 1, y: 1 }, hp: 500, color: '#3a2a1a', emoji: '⛰️', passable: false, buildTime: 6, workRadius: 1 },
+  church: { id: 'church', name: '教堂', size: { x: 2, y: 2 }, hp: 600, color: '#5a3a6a', emoji: '⛪', passable: false, buildTime: 12, workRadius: 5 },
+  monument: { id: 'monument', name: '纪念碑', size: { x: 3, y: 3 }, hp: 1200, color: '#8a7a5a', emoji: '🗿', passable: false, buildTime: 40, workRadius: 6, costWood: 60, costOre: 25 },
 };
 
 export const ITEMS: Record<string, ItemDef> = {

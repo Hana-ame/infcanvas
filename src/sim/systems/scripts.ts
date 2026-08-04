@@ -2,8 +2,40 @@
 // 每个事件 = 印卡/调权重/改世界，通过 SimContext 影响 sim，核心零改动
 import type { SimContext } from './context';
 import type { ScriptedEvent } from './eventSystem';
+import type { SocialUnitSystem } from './socialUnitSystem';
+
+// 在远处随机刷一个野生篝火营地（Q9：地图随机刷新野生势力 → 独立派系）
+export function spawnWildCamp(ctx: SimContext): boolean {
+  const w = ctx.world;
+  const cx = Math.floor(w.width / 2);
+  const cy = Math.floor(w.height / 2);
+  for (let attempt = 0; attempt < 40; attempt++) {
+    // 离主营地较远（半径 20-40），避免太近
+    const r = 20 + ctx.rng.int(0, 20);
+    const a = ctx.rng.next() * Math.PI * 2;
+    const x = cx + Math.round(Math.cos(a) * r);
+    const y = cy + Math.round(Math.sin(a) * r);
+    if (!w.inBounds(x, y) || !w.canBuildAt(x, y)) continue;
+    if (w.placeBuilding(x, y, 'campfire', 'wild')) {
+      // 创建野生派系单位
+      const su = ctx.socialUnits as SocialUnitSystem;
+      su.onBuildingBuilt(w.buildKey(x, y), 'campfire', ctx.time);
+      ctx.bus.emit({ type: 'building_built', x, y, defId: 'campfire' });
+      return true;
+    }
+  }
+  return false;
+}
 
 export const SCRIPTED_EVENTS: ScriptedEvent[] = [
+  {
+    id: 'wild_camp', name: '发现陌生篝火', weight: 4, cooldown: 300, minTime: 300,
+    run(ctx) {
+      if (spawnWildCamp(ctx)) {
+        ctx.logEvent('🔥 荒野深处升起陌生炊烟——一个独立势力出现了');
+      }
+    },
+  },
   {
     id: 'wanderer', name: '流浪者加入', weight: 5, cooldown: 180, minTime: 120,
     run(ctx) {

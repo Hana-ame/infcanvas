@@ -4,7 +4,7 @@ import { TERRAIN_SVG, BUILDING_SVG, PAWN_SVG, svgDataUri } from './svgAssets';
 
 export type AssetId =
   | 'terrain:tree' | 'terrain:ore' | 'terrain:water' | 'terrain:stone'
-  | 'building:campfire' | 'building:wall' | 'building:floor' | 'building:door' | 'building:farm' | 'building:workbench'
+  | 'building:campfire' | 'building:wall' | 'building:floor' | 'building:door' | 'building:farm' | 'building:workbench' | 'building:cave' | 'building:church' | 'building:monument'
   | 'pawn:mouse' | 'pawn:strong' | 'pawn:devout' | 'pawn:lazy' | 'pawn:workaholic' | 'pawn:owl';
 
 export class SvgAssets {

@@ -15,7 +15,8 @@ export type GameEvent =
   | { type: 'rest'; eid: number }
   | { type: 'mood_changed'; eid: number; delta: number }
   | { type: 'social'; eid: number; target: number; tone: 'positive' | 'negative' | 'neutral'; topic?: string }
-  | { type: 'event_happened'; eventId: string };
+  | { type: 'event_happened'; eventId: string }
+  | { type: 'faction_event'; kind: string; from?: string; to?: string };
 
 export type GameEventHandler = (ev: GameEvent) => void;
 

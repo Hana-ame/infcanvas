@@ -5,7 +5,7 @@ import type { SimContext } from './context';
 import type { EventBus } from '../core/events';
 import type { PawnState } from '../sim';
 import type { BehaviorCard, CardContext, CardView, BehaviorIntent } from '../ai/pawn';
-import { drawCards, pickBest } from '../ai/pawn';
+import { drawCards, pickBest, BASE_CARDS, JOB_CARD } from '../ai/pawn';
 import { BUILDINGS } from '../defs';
 import { fulfill } from '../core/desires';
 
@@ -96,11 +96,20 @@ export class BehaviorSystem implements GameSystem {
       env: this.ctx.env,
       lastSeries: st.lastSeries,
       factionPriority: this.ctx.factionPriority,
+      assignedJob: st.assignedJob,
       buildQueueCount: this.ctx.buildQueue.length,
       stockpile: this.ctx.stockpile,
     };
     const ctx: CardContext = { view, eid };
     const pawnLike = { dna: st.dna, slots: st.slots };
+    // Q10：指派职业时确保对应工作卡在池中（否则可能因卡池缺失而闲逛）
+    if (st.assignedJob && JOB_CARD[st.assignedJob]) {
+      const jobCardId = JOB_CARD[st.assignedJob];
+      if (!pawnLike.slots.some((c) => c?.id === jobCardId)) {
+        const jobCard = BASE_CARDS.find((c) => c.id === jobCardId);
+        if (jobCard) pawnLike.slots = [...pawnLike.slots, jobCard];
+      }
+    }
     const drawn = drawCards(pawnLike, this.ctx.rng, 3, ctx);
     const card = pickBest(drawn, ctx);
     if (!card) return null;

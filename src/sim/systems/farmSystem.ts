@@ -8,12 +8,12 @@ export class FarmSystem implements GameSystem {
   constructor(private ctx: SimContext) {}
 
   update(dt: number): void {
-    let farms = 0;
-    for (const [, b] of this.ctx.world.buildings) {
-      if (b.def.id === 'farm') farms++;
-    }
-    if (farms > 0) {
-      this.ctx.stockpile.food = Math.min(500, this.ctx.stockpile.food + farms * 0.2 * dt);
+    // 每个农田按其附近单位产出（Q9：单位独立生产；玩家单位=全局）
+    for (const [key, b] of this.ctx.world.buildings) {
+      if (b.def.id !== 'farm') continue;
+      const x = key % this.ctx.world.width;
+      const y = Math.floor(key / this.ctx.world.width);
+      this.ctx.addProductionNear(x, y, 'food', 0.2 * dt);
     }
   }
 }

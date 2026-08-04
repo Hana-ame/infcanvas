@@ -1,0 +1,117 @@
+// 社会单位（用户 Q9 + 即时指令：以篝火为单位）
+// 有篝火 = 独立派系。篝火维护"部落记忆"+ 对其他单位的看法（opinion）。
+// 容量分级：篝火维护 2-3 个连接，教堂/神庙（篝火升级）5-10 个。
+// 派系 = 看法网络的涌现，不是数据定义。
+
+export type UnitLevel = 'campfire' | 'church';
+
+export interface UnitOpinion {
+  value: number;        // 看法 -100..100（负=敌对，正=友好）
+  lastChanged: number;  // 最后变化时间
+}
+
+export interface UnitMemory {
+  time: number;
+  text: string;
+}
+
+export interface SocialUnit {
+  id: string;
+  key: number;            // 建筑 key（篝火/教堂位置）
+  level: UnitLevel;
+  name: string;
+  members: number[];      // 所属 pawn eid
+  memory: UnitMemory[];   // 部落记忆
+  opinions: Map<string, UnitOpinion>; // 对其他 unit id 的看法
+  createdAt: number;
+  upgradeProgress?: number; // 篝火→教堂升级进度
+  resources: Record<string, number>; // 派系库存（Q9 贸易/逆差地基）
+  tradeBalance: Map<string, number>; // 与其他单位的贸易逆差（正=顺差，负=逆差）
+}
+
+// 记忆/看法容量：篝火 2-3，教堂 5-10（用户指定）
+export const UNIT_CAPACITY: Record<UnitLevel, number> = {
+  campfire: 3,
+  church: 10,
+};
+
+// 升级门槛（篝火 → 教堂）：需要营地信仰达标
+export const UPGRADE_FAITH = 35;
+
+let unitSeq = 0;
+export function nextUnitId(): string {
+  return `u${++unitSeq}`;
+}
+// 载入存档后恢复序列，避免 id 冲突
+export function setUnitSeq(n: number): void {
+  unitSeq = n;
+}
+export function currentUnitSeq(): number {
+  return unitSeq;
+}
+
+// 生成派系名（确定性种子）
+export function generateUnitName(rng: { next(): number }): string {
+  const prefix = ['晨', '暮', '月', '岩', '风', '火', '松', '沙', '霜', '湖'];
+  const suffix = ['部落', '氏族', '营地', '聚落', '之盟'];
+  return prefix[Math.floor(rng.next() * prefix.length)] + suffix[Math.floor(rng.next() * suffix.length)];
+}
+
+// 记录一条部落记忆（容量上限 30 条，超出丢最旧）
+export function addMemory(unit: SocialUnit, time: number, text: string): void {
+  unit.memory.push({ time, text });
+  if (unit.memory.length > 30) unit.memory.splice(0, unit.memory.length - 30);
+}
+
+// 调整对某单位的看法（容量超限时遗忘最弱连接）
+export function adjustOpinion(unit: SocialUnit, targetId: string, delta: number, now: number): void {
+  const cap = UNIT_CAPACITY[unit.level];
+  if (!unit.opinions.has(targetId)) {
+    // 新连接：容量满则遗忘信任最弱的
+    if (unit.opinions.size >= cap) {
+      let weakest: string | null = null;
+      let weakestAbs = Infinity;
+      for (const [id, op] of unit.opinions) {
+        if (Math.abs(op.value) < weakestAbs) { weakestAbs = Math.abs(op.value); weakest = id; }
+      }
+      if (weakest) unit.opinions.delete(weakest);
+    }
+    unit.opinions.set(targetId, { value: 0, lastChanged: now });
+  }
+  const op = unit.opinions.get(targetId)!;
+  op.value = Math.max(-100, Math.min(100, op.value + delta));
+  op.lastChanged = now;
+}
+
+// 派系涌现：把单位聚成阵营（同盟 = 互相看法都 ≥ 阈值）
+export function clusterFactions(
+  units: Map<string, SocialUnit>,
+  allyThreshold = 30,
+): string[][] {  const ids = [...units.keys()];
+  const parent = new Map<string, string>();
+  const find = (x: string): string => {
+    if (!parent.has(x)) parent.set(x, x);
+    if (parent.get(x) !== x) parent.set(x, find(parent.get(x)!));
+    return parent.get(x)!;
+  };
+  const union = (a: string, b: string): void => {
+    parent.set(find(a), find(b));
+  };
+  for (let i = 0; i < ids.length; i++) {
+    for (let j = i + 1; j < ids.length; j++) {
+      const a = ids[i], b = ids[j];
+      const ua = units.get(a)!, ub = units.get(b)!;
+      const ab = ua.opinions.get(b)?.value ?? 0;
+      const ba = ub.opinions.get(a)?.value ?? 0;
+      if (ab >= allyThreshold && ba >= allyThreshold) union(a, b);
+    }
+  }
+  // 收集阵营
+  const groups = new Map<string, string[]>();
+  for (const id of ids) {
+    const root = find(id);
+    if (!groups.has(root)) groups.set(root, []);
+    groups.get(root)!.push(id);
+  }
+  return [...groups.values()];
+}

@@ -6,10 +6,26 @@ import { tickNeeds, urgentNeedAction } from '../core/needs';
 
 export class NeedsSystem implements GameSystem {
   id = 'needs';
+  private wonderVersion = -1;
+  private wonderCache = false;
 
   constructor(private ctx: SimContext) {}
 
   init(_bus: EventBus): void {}
+
+  // 是否有奇观（纪念碑）——按 buildingVersion 缓存
+  private get hasWonder(): boolean {
+    const ver = this.ctx.world.buildingVersion;
+    if (ver !== this.wonderVersion) {
+      this.wonderVersion = ver;
+      let found = false;
+      for (const [, b] of this.ctx.world.buildings) {
+        if (b.def.id === 'monument') { found = true; break; }
+      }
+      this.wonderCache = found;
+    }
+    return this.wonderCache;
+  }
 
   update(dt: number): void {
     for (const eid of this.ctx.pawnList) {
@@ -24,6 +40,14 @@ export class NeedsSystem implements GameSystem {
       if (this.nearCampfire(eid)) {
         n.mood = Math.min(100, n.mood + 0.5 * dt);
         n.rest = Math.min(100, n.rest + 0.3 * dt);
+      }
+      // 神谕祝福（buff 持续期间心情加成）
+      if (st.oracleBuff && st.oracleBuff.until > this.ctx.time) {
+        n.mood = Math.min(100, n.mood + st.oracleBuff.mood * dt);
+      }
+      // 奇观光环（Q10）：纪念碑建成 → 全营地敬畏（心情+信仰）
+      if (this.hasWonder) {
+        n.mood = Math.min(100, n.mood + 0.3 * dt);
       }
       this.ctx.setNeeds(eid, n);
       // 饿死

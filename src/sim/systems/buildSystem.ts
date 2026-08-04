@@ -18,8 +18,17 @@ export class BuildSystem implements GameSystem {
       b.progress += dt;
       const def = BUILDINGS[b.defId];
       if (b.progress >= def.buildTime) {
-        if (b.cost) this.ctx.stockpile.wood -= b.cost.wood;
-        this.ctx.world.placeBuilding(b.x, b.y, b.defId, b.faction);
+        if (b.cost) {
+          this.ctx.stockpile.wood -= b.cost.wood;
+          if (b.cost.ore) this.ctx.stockpile.ore = Math.max(0, (this.ctx.stockpile.ore ?? 0) - b.cost.ore);
+        }
+        // 教堂：若原地已有篝火则升级（Q9 即时指令），否则新建
+        const existing = this.ctx.world.getBuilding(b.x, b.y);
+        if (b.defId === 'church' && existing) {
+          this.ctx.upgradeBuilding(b.x, b.y, b.defId, b.faction);
+        } else {
+          this.ctx.world.placeBuilding(b.x, b.y, b.defId, b.faction);
+        }
         this.ctx.bus.emit({ type: 'building_built', x: b.x, y: b.y, defId: b.defId });
         this.ctx.clearTrailCache();
         q.splice(i, 1);

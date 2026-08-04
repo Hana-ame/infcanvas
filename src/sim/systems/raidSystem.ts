@@ -87,7 +87,14 @@ export class RaidSystem implements GameSystem {
         const b = this.nearestBuilding(h, 6);
         if (b) {
           const r = this.ctx.world.damageBuilding(b.x, b.y, 15 * dt);
-          if (r.destroyed) this.ctx.logEvent('💥 建筑被野狼摧毁！');
+          if (r.destroyed) {
+            this.ctx.logEvent('💥 建筑被野狼摧毁！');
+            // 征服（Q9）：若被毁的是某派系核心篝火/教堂，且攻击者是派系 → 吞并
+            if (h.faction === 'unit' && h.name) {
+              const key = this.ctx.world.buildKey(b.x, b.y);
+              this.ctx.conquestOf(key, h.name);
+            }
+          }
           continue;
         }
       }

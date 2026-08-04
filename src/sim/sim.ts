@@ -13,6 +13,7 @@ import { HistoryLog } from './core/history';
 import { generateDna, initSlots, type Dna, type SkillId, BASE_CARDS } from './ai/pawn';
 import { initDesires, type DesireId } from './core/desires';
 import { initEnv, tickEnv, type EnvState } from './core/env';
+import { addMemory, setUnitSeq, type SocialUnit } from './core/socialUnit';
 import { BUILDINGS, TILES, ITEMS } from './defs';
 import { ModRegistry } from './mods/registry';
 import type { SimContext } from './systems/context';
@@ -23,6 +24,7 @@ import { DesireSystem } from './systems/desireSystem';
 import { SocialSystem } from './systems/socialSystem';
 import { EventSystem } from './systems/eventSystem';
 import { AutonomousBuildSystem } from './systems/autonomousBuildSystem';
+import { SocialUnitSystem } from './systems/socialUnitSystem';
 import { SCRIPTED_EVENTS } from './systems/scripts';
 import { BehaviorSystem } from './systems/cardSystem';
 import { GatherSystem } from './systems/gatherSystem';
@@ -85,6 +87,8 @@ export interface PawnState {
   // 最近决策记录（设计文档：小人闪过哪3个念头、选了哪个）
   lastDecision?: { drawn: string[]; picked: string; time: number };
   lastSeries?: string; // 上一轮执行的卡系列（马尔可夫偏置，DESIGN §6）
+  oracleBuff?: { until: number; mood: number }; // 神谕祝福（到期时间戳，心情加成）
+  assignedJob?: string; // 指派职业（Q10 生产线：lumberjack/miner/farmer/crafter）
 }
 
 export interface SimOptions {
@@ -95,11 +99,12 @@ export interface SimOptions {
 }
 
 export interface Command {
-  type: 'move' | 'build' | 'haul' | 'mine';
+  type: 'move' | 'build' | 'haul' | 'mine' | 'oracle' | 'assign';
   pawnId?: number;
   x: number;
   y: number;
   buildingId?: string;
+  job?: string; // assign 命令用（lumberjack/miner/farmer/crafter）
 }
 
 export interface SaveData {
@@ -115,7 +120,18 @@ export interface SaveData {
     faith?: number;
     skills?: Partial<Record<SkillId, number>>;
     desires?: Record<DesireId, number>;
+    oracleBuff?: { until: number; mood: number };
+    assignedJob?: string;
   }[];
+  units?: {
+    id: string; key: number; level: 'campfire' | 'church'; name: string;
+    members: number[]; memory: { time: number; text: string }[];
+    opinions: [string, { value: number; lastChanged: number }][];
+    resources: Record<string, number>;
+    tradeBalance: [string, number][];
+    createdAt: number;
+  }[];
+  playerUnitId?: string | null;
 }
 
 export class Sim implements SimContext {
@@ -139,7 +155,7 @@ export class Sim implements SimContext {
   pawnStates = new Map<number, PawnState>();
   pawnPositions = new Map<number, { x: number; y: number }>();
   selected: number[] = [];
-  hostiles: { x: number; y: number; hp: number; maxHp: number; targetX: number; targetY: number }[] = [];
+  hostiles: { x: number; y: number; hp: number; maxHp: number; targetX: number; targetY: number; name?: string; faction?: string; dmgPerSec?: number; loot?: { item: string; amount: number } }[] = [];
   buildQueue: { x: number; y: number; defId: string; progress: number; faction: string; cost?: { wood: number; ore: number } }[] = [];
   stockpile: Record<string, number> = { wood: 50, ore: 0, food: 30, tools: 0 };
 
@@ -158,6 +174,8 @@ export class Sim implements SimContext {
   });
   private behavior: BehaviorSystem;
   private _started = false;
+  socialUnits: SocialUnitSystem; // 篝火单位/部落记忆/派系涌现
+  playerUnitId: string | null = null; // 玩家所属单位（Q3 团灭附身）
 
   constructor(opts: SimOptions = {}) {
     const seed = opts.seed ?? 12345;
@@ -173,8 +191,16 @@ export class Sim implements SimContext {
     this.bus = new EventBus();
     // 所有事件 → 结构化历史
     this.bus.onAny((ev) => this.history.record(ev, this.time, this.time / this.dayLength));
+    // 建篝火/教堂 → 创建/升级派系单位
+    this.bus.on('building_built', (ev) => {
+      if (ev.type === 'building_built') {
+        const key = this.world.buildKey(ev.x, ev.y);
+        this.socialUnits.onBuildingBuilt(key, ev.defId, this.time);
+      }
+    });
 
     this.behavior = new BehaviorSystem(this);
+    this.socialUnits = new SocialUnitSystem(this);
     // 应用 mod（在 spawn 前，注册系统/卡/意图）——构造期回调
     opts.mods?.(this.mods);
     this.applyMods();
@@ -182,6 +208,8 @@ export class Sim implements SimContext {
     this._started = true;
     this.registry.initAll(this.bus);
     this.spawnPawns(pawnCount);
+    // 出生点篝火 → 首个派系单位
+    this.ensureInitialCamp();
   }
 
   // mod 挂载入口：mod 注册新系统/新卡/新意图（DESIGN §7）
@@ -205,6 +233,7 @@ export class Sim implements SimContext {
       .register(new SanSystem(this))
       .register(new DesireSystem(this))
       .register(this.behavior)
+      .register(this.socialUnits)
       .register(new SocialSystem(this))
       .register(new GatherSystem(this))
       .register(new BuildSystem(this))
@@ -431,6 +460,39 @@ export class Sim implements SimContext {
     }
   }
 
+  // 出生点首个篝火 → 第一个派系单位（Q9：有篝火 = 独立派系）
+  private ensureInitialCamp(): void {
+    const cx = Math.floor(this.world.width / 2);
+    const cy = Math.floor(this.world.height / 2);
+    if (this.world.placeBuilding(cx, cy + 2, 'campfire', 'auto')) {
+      this.socialUnits.onBuildingBuilt(this.world.buildKey(cx, cy + 2), 'campfire', this.time);
+      this.bus.emit({ type: 'building_built', x: cx, y: cy + 2, defId: 'campfire' });
+    }
+    // 出生小人归入最近的派系单位
+    for (const eid of this.pawns) this.socialUnits.assignPawn(eid);
+    // 初始单位为玩家所属（Q3 团灭附身的基础）
+    this.playerUnitId = this.socialUnits.units.size > 0 ? [...this.socialUnits.units.keys()][0] : null;
+  }
+
+  // 团灭附身（Q3）：玩家所属单位成员清零 → 视角转移到最近的存活单位
+  private checkPossession(): void {
+    if (!this.playerUnitId) return;
+    const unit = this.socialUnits.units.get(this.playerUnitId);
+    // 单位已不存在（被征服）或成员全灭
+    if (!unit || unit.members.length === 0) {
+      const others = [...this.socialUnits.units.values()].filter((u) => u.id !== this.playerUnitId && u.members.length > 0);
+      if (others.length > 0) {
+        const next = others[0];
+        this.playerUnitId = next.id;
+        this.logEvent(`👁 本体团灭，神谕附身于 ${next.name}`);
+        addMemory(next, this.time, `👁 神谕降临，接管了 ${next.name}`);
+      } else {
+        this.playerUnitId = null;
+        this.logEvent('👁 所有派系已覆灭，世界陷入沉寂');
+      }
+    }
+  }
+
   private seedFor(eid: number): number {
     return (this.rng.int(1, 2 ** 31 - 1) ^ eid) >>> 0;
   }
@@ -441,6 +503,20 @@ export class Sim implements SimContext {
       this.queueBuild(cmd.x, cmd.y, cmd.buildingId ?? 'wall');
       return;
     }
+    if (cmd.type === 'oracle') {
+      this.oracleInfluence(cmd.x, cmd.y);
+      return;
+    }
+    if (cmd.type === 'assign') {
+      for (const eid of this.selected) {
+        const st = this.pawnStates.get(eid);
+        if (st) {
+          st.assignedJob = cmd.job || undefined;
+          this.logEvent(st.assignedJob ? `📋 指派 #${eid} 为 ${this.jobLabel(cmd.job!)}` : `📋 取消 #${eid} 的指派`);
+        }
+      }
+      return;
+    }
     const eids = cmd.pawnId ? [cmd.pawnId] : this.selected;
     for (const eid of eids) {
       if (cmd.type === 'move') this.moveTo(eid, cmd.x, cmd.y);
@@ -448,12 +524,60 @@ export class Sim implements SimContext {
     }
   }
 
+  private jobLabel(job: string): string {
+    const map: Record<string, string> = { lumberjack: '伐木工', miner: '矿工', farmer: '农民', crafter: '工匠' };
+    return map[job] ?? job;
+  }
+
+  // 产出归集（Q9）：建筑附近单位获得产出（玩家单位=全局）
+  addProductionNear(x: number, y: number, item: string, amount: number): void {
+    this.socialUnits.addProductionNear(x, y, item, amount);
+  }
+
+  // 建筑升级（篝火→教堂）
+  upgradeBuilding(x: number, y: number, defId: string, faction: string): boolean {
+    return this.world.upgradeBuilding(x, y, defId, faction);
+  }
+
+  // 神谕影响（用户 Q2/Q3）：在教堂发布，祝福附近的高信仰小人  // 玩家不直接指挥 → 只影响"目标层"（心情/信仰），执行仍由小人自主
+  private oracleInfluence(x: number, y: number): void {
+    // 必须落在教堂上才能降下神谕（DESIGN §3 教堂是唯一物理接口）
+    const church = this.world.getBuilding(x, y);
+    if (!church || church.def.id !== 'church') {
+      this.logEvent('⛪ 神谕只能在教堂降下');
+      return;
+    }
+    const R = 6;
+    let affected = 0;
+    for (const eid of this.pawnList) {
+      const pos = this.pawnPositions.get(eid);
+      if (!pos) continue;
+      const d = Math.hypot(pos.x - x, pos.y - y);
+      if (d > R) continue;
+      const st = this.pawnStates.get(eid);
+      if (!st) continue;
+      // 信任过滤：信仰越高影响越深；低信仰者几乎不受影响
+      const trust = (st.faith ?? 0) / 100;
+      if (trust < 0.3) continue;
+      st.oracleBuff = { until: this.time + 30, mood: 12 * trust };
+      this.adjustMood(eid, Math.round(6 * trust));
+      st.faith = Math.min(100, (st.faith ?? 0) + 3);
+      affected++;
+    }
+    if (affected > 0) this.logEvent(`✨ 神谕降下，${affected} 位信众受到祝福`);
+    else this.logEvent('✨ 神谕降下，却无人聆听');
+  }
+
   private queueBuild(x: number, y: number, defId: string): void {
-    if (!this.world.canBuildAt(x, y)) return;
     const def = BUILDINGS[defId];
     if (!def) return;
-    const cost = { wood: def.size.x * def.size.y * 2, ore: 0 };
+    if (!this.world.canBuildFootprint(x, y, def)) return;
+    const cost = {
+      wood: def.costWood ?? def.size.x * def.size.y * 2,
+      ore: def.costOre ?? 0,
+    };
     if (this.stockpile.wood < cost.wood) return;
+    if (cost.ore > 0 && this.stockpile.ore < cost.ore) return;
     this.buildQueue.push({ x, y, defId, progress: 0, faction: 'player', cost });
   }
 
@@ -500,6 +624,7 @@ export class Sim implements SimContext {
     tickEnv(this.env, dt, this.dayTime, this.rng);
     this.updateFactionPriority(dt);
     this.registry.updateAll(dt);
+    this.checkPossession(); // Q3 团灭附身
   }
 
   // ---- UI 读取 ----
@@ -511,6 +636,35 @@ export class Sim implements SimContext {
     const b = this.world.getBuilding(x, y);
     if (!b) return null;
     return { defId: b.def.id, hp: Math.round(b.hp), maxHp: b.def.hp, faction: b.faction };
+  }
+
+  // 篝火/教堂 → 所属派系单位（部落记忆/看法）
+  unitAt(x: number, y: number) {
+    const key = this.world.buildKey(x, y);
+    return this.socialUnits.unitAtKey(key);
+  }
+
+  // 征服（Q9：战争征服/吞并）：敌方摧毁某单位核心篝火/教堂 → 该单位被吞并
+  // 成员并入征服者，记忆记录，地图标记征服（Q3 团灭附身的基础）
+  conquestOf(coreKey: number, conquerorName: string): void {
+    const victim = this.socialUnits.unitAtKey(coreKey);
+    if (!victim) return;
+    // 找征服者单位（按名字）
+    let conqueror: SocialUnit | null = null;
+    for (const u of this.socialUnits.units.values()) {
+      if (u.name === conquerorName && u.id !== victim.id) { conqueror = u; break; }
+    }
+    if (!conqueror) return;
+    // 吞并：victim 成员并入 conqueror，victim 移除
+    for (const eid of victim.members) {
+      if (!conqueror.members.includes(eid)) conqueror.members.push(eid);
+      this.socialUnits.membership.set(eid, conqueror.id);
+    }
+    addMemory(conqueror, this.time, `⚔ 征服了 ${victim.name}，部族并入`);
+    addMemory(victim, this.time, `🏳 ${victim.name} 被 ${conqueror.name} 征服`);
+    this.socialUnits.units.delete(victim.id);
+    this.logEvent(`🏳 ${victim.name} 被 ${conqueror.name} 征服吞并！`);
+    this.bus.emit({ type: 'faction_event', kind: 'conquest', from: conqueror.name, to: victim.name });
   }
   pawnJob(eid: number): string { return this.pawnStates.get(eid)?.job ?? ''; }
   needsOf(eid: number) { return this.readNeeds(eid); }
@@ -524,6 +678,8 @@ export class Sim implements SimContext {
     faith: number;
     skills: Partial<Record<SkillId, number>>;
     desires: Record<DesireId, number>;
+    oracleBuff?: { until: number; mood: number };
+    assignedJob?: string;
     lastDecision?: { drawn: string[]; picked: string; time: number };
   } | null {
     const st = this.pawnStates.get(eid);
@@ -535,6 +691,8 @@ export class Sim implements SimContext {
       faith: st.faith ?? 0,
       skills: st.skills ?? {},
       desires: st.desires ?? initDesires(this.rng),
+      oracleBuff: st.oracleBuff,
+      assignedJob: st.assignedJob,
       lastDecision: st.lastDecision,
     };
   }
@@ -553,6 +711,15 @@ export class Sim implements SimContext {
       stockpile: { ...this.stockpile },
       tiles: this.world.serializeTiles(),
       buildings: this.world.serializeBuildings(),
+      units: [...this.socialUnits.units.values()].map((u) => ({
+        id: u.id, key: u.key, level: u.level, name: u.name,
+        members: [...u.members], memory: [...u.memory],
+        opinions: [...u.opinions.entries()],
+        resources: { ...u.resources },
+        tradeBalance: [...u.tradeBalance.entries()],
+        createdAt: u.createdAt,
+      })),
+      playerUnitId: this.playerUnitId,
       pawns: this._pawnList.map((eid) => {
         const st = this.pawnStates.get(eid)!;
         const pos = this.readPosition(eid)!;
@@ -566,6 +733,8 @@ export class Sim implements SimContext {
           faith: st.faith ?? 0,
           skills: st.skills ?? {},
           desires: st.desires ?? initDesires(this.rng),
+          oracleBuff: st.oracleBuff,
+          assignedJob: st.assignedJob,
         };
       }),
     };
@@ -577,6 +746,31 @@ export class Sim implements SimContext {
     if (data.stockpile) this.stockpile = { wood: 50, ore: 0, food: 30, tools: 0, ...data.stockpile };
     if (data.tiles) this.world.loadTiles(data.tiles);
     if (data.buildings) this.world.loadBuildings(data.buildings);
+    // 恢复社会单位（派系记忆/看法/库存）
+    this.socialUnits.units.clear();
+    this.socialUnits.membership.clear();
+    if (data.units) {
+      for (const u of data.units) {
+        this.socialUnits.units.set(u.id, {
+          id: u.id, key: u.key, level: u.level, name: u.name,
+          // members/membership 由下方重新 spawn 小人时填充（旧 eid 作废）
+          members: [],
+          memory: [...u.memory],
+          opinions: new Map(u.opinions),
+          resources: { ...u.resources },
+          tradeBalance: new Map(u.tradeBalance),
+          createdAt: u.createdAt,
+        });
+      }
+    }
+    this.playerUnitId = data.playerUnitId ?? null;
+    // 恢复单位 id 序列，避免新单位 id 冲突
+    let maxSeq = 0;
+    for (const id of this.socialUnits.units.keys()) {
+      const m = /^u(\d+)$/.exec(id);
+      if (m) maxSeq = Math.max(maxSeq, parseInt(m[1], 10));
+    }
+    setUnitSeq(maxSeq);
     // 重建小人
     for (const eid of this._pawnList) this.killPawn(eid);
     if (data.pawns) {
@@ -589,6 +783,8 @@ export class Sim implements SimContext {
         st.faith = p.faith ?? 0;
         st.skills = p.skills ?? {};
         st.desires = p.desires ?? initDesires(this.rng);
+        st.oracleBuff = p.oracleBuff;
+        st.assignedJob = p.assignedJob;
         if (p.needs) this.setNeeds(eid, p.needs);
         if (p.health) this.setHealth(eid, p.health);
       }

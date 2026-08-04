@@ -88,7 +88,7 @@ function createHud(sim: Sim, onSelectBuild: (id: string | null) => void, onZoom?
 
   // 选中面板
   const selPanel = document.createElement('div');
-  selPanel.style.cssText = 'position:absolute;top:54px;left:12px;background:rgba(0,0,0,.55);border-radius:8px;padding:8px 12px;min-width:170px;display:none;line-height:1.6;';
+  selPanel.style.cssText = 'position:absolute;top:54px;left:12px;background:rgba(0,0,0,.55);border-radius:8px;padding:8px 12px;min-width:170px;display:none;line-height:1.6;pointer-events:auto;';
   root.appendChild(selPanel);
 
   // 提示条
@@ -115,7 +115,10 @@ function createHud(sim: Sim, onSelectBuild: (id: string | null) => void, onZoom?
     `👁 <b>视角</b>：右下角按钮切换 2D 俯视 / 2.5D 同轴（前后遮挡）<br>` +
     `🏗 <b>建造菜单</b>：下方选建筑 → 地图点击放置（绿=可建，红=不可）<br>` +
     `🧠 <b>小人自主</b>：小人自己伐木/采矿/建造/祈祷/疗伤，心情差会违抗安排<br>` +
-    `⚔ <b>威胁</b>：野狼会袭击！建墙保护，受伤要治疗`;
+    `📋 <b>指派职业</b>：选中小人 → 面板按钮指派伐木工/矿工/农民/工匠（或自由）<br>` +
+    `🏕 <b>派系</b>：有篝火=独立派系；篝火间会贸易/传话/袭击/吞并；🌍 面板看世界派系<br>` +
+    `⛪ <b>神谕</b>：信仰高时 AI 建教堂；选教堂点"发布神谕"祝福信众<br>` +
+    `⚔ <b>威胁</b>：野狼会袭击！建墙保护，受伤要治疗；团灭后神谕会附身他派系`;
   root.appendChild(helpBtn);
   root.appendChild(helpPanel);
   helpBtn.addEventListener('click', () => {
@@ -134,11 +137,23 @@ function createHud(sim: Sim, onSelectBuild: (id: string | null) => void, onZoom?
     histPanel.style.display = histPanel.style.display === 'block' ? 'none' : 'block';
   });
 
+  // 🌍 派系概览（Q9 观察模拟器核心）
+  const facBtn = document.createElement('button');
+  facBtn.textContent = '🌍 派系';
+  facBtn.style.cssText = 'position:absolute;top:54px;left:calc(50% + 140px);border:1px solid #555;background:rgba(0,0,0,.6);color:#eee;border-radius:8px;padding:5px 12px;cursor:pointer;font:12px system-ui;pointer-events:auto;';
+  const facPanel = document.createElement('div');
+  facPanel.style.cssText = 'position:absolute;top:88px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.88);border:1px solid #444;border-radius:10px;padding:12px 14px;font-size:11px;line-height:1.7;max-width:520px;max-height:60vh;overflow:auto;display:none;';
+  root.appendChild(facBtn);
+  root.appendChild(facPanel);
+  facBtn.addEventListener('click', () => {
+    facPanel.style.display = facPanel.style.display === 'block' ? 'none' : 'block';
+  });
+
   const update = (bm: string | null): void => {
     // 资源条
     const s = sim.stockpile;
     const foodWarn = s.food < 30 ? ` <span style="color:#f66">⚠食物告急!</span>` : '';
-    const raidWarn = sim.hostiles.length > 0 ? ` <span style="color:#f66">⚔ 袭击！${sim.hostiles.length} 只野狼</span>` : '';
+    const raidWarn = sim.hostiles.length > 0 ? ` <span style="color:#f66">⚔ 袭击！${sim.hostiles.length}${sim.hostiles[0]?.faction === 'unit' ? ' 名掠夺者' : ' 只野狼'}</span>` : '';
     const dayIcon = sim.isNight() ? '🌙' : '☀️';
     const pauseMark = sim.paused ? ' ⏸暂停' : ` ${sim.speed}x`;
     const parts = [
@@ -154,10 +169,32 @@ function createHud(sim: Sim, onSelectBuild: (id: string | null) => void, onZoom?
       const b = sim.buildingAt(selectedBuilding.x, selectedBuilding.y);
       if (b) {
         const def = BUILDINGS[b.defId];
+        // 篝火/教堂 = 派系单位：显示部落记忆 + 对邻近单位的看法
+        const unit = sim.unitAt(selectedBuilding.x, selectedBuilding.y);
+        const unitHtml = unit
+          ? `<br>🏕 <b>${unit.name}</b>（${unit.level === 'church' ? '教堂' : '篝火'}）成员 ${unit.members.length} 人<br>` +
+            `库存：🌲${nf(unit.resources.wood)} 🪨${nf(unit.resources.ore)} 🍖${nf(unit.resources.food)} 🛠️${nf(unit.resources.tools)}<br>` +
+            `记忆：${unit.memory.slice(-2).map((m) => m.text).join(' / ') || '暂无'}<br>` +
+            (unit.opinions.size > 0
+              ? `看法：${[...unit.opinions.entries()].map(([id, op]) => {
+                  const u = sim.socialUnits.units.get(id);
+                  return `${u?.name ?? id} ${op.value > 0 ? '+' : ''}${Math.round(op.value)}`;
+                }).join('、')}`
+              : `看法：暂无邻近势力`)
+          : '';
         selPanel.style.display = 'block';
         selPanel.innerHTML =
           `<b>${def?.emoji ?? '🏗'} ${def?.name ?? b.defId}</b> (${selectedBuilding.x},${selectedBuilding.y})<br>` +
-          `耐久 ${nf(b.hp)}/${b.maxHp}<br>派系：${b.faction}`;
+          `耐久 ${nf(b.hp)}/${b.maxHp}<br>派系：${b.faction}${unitHtml}` +
+          (b.defId === 'church'
+            ? `<br><button id="oracleBtn" style="pointer-events:auto;border:1px solid #a07ac0;background:#5a3a6a;color:#eee;border-radius:6px;padding:4px 10px;cursor:pointer;font:12px system-ui;margin-top:6px;">✨ 发布神谕</button>`
+            : '');
+        const ob = document.getElementById('oracleBtn');
+        if (ob) {
+          ob.onclick = () => {
+            sim.issueCommand({ type: 'oracle', x: selectedBuilding!.x, y: selectedBuilding!.y });
+          };
+        }
         return;
       } else {
         selectedBuilding = null;
@@ -177,7 +214,13 @@ function createHud(sim: Sim, onSelectBuild: (id: string | null) => void, onZoom?
         const dec = p.lastDecision ? `闪念：[${p.lastDecision.drawn.join(' | ')}] → 选了【${p.lastDecision.picked}】` : '';
         selPanel.innerHTML =
           `<b>🐭 小人 ${eid}</b> (${Math.round(p.pos.x)},${Math.round(p.pos.y)})<br>` +
-          `<span style="color:#4cf">工作：${p.job || '闲逛'}</span><br>` +
+          `<span style="color:#4cf">工作：${p.job || '闲逛'}</span>` +
+          (p.assignedJob ? `<br><span style="color:#9cf">指派：${({ lumberjack: '伐木工', miner: '矿工', farmer: '农民', crafter: '工匠' } as Record<string, string>)[p.assignedJob] ?? p.assignedJob}</span>` : '') +
+          `<br><button data-job="" style="pointer-events:auto;border:1px solid #555;background:#333;color:#eee;border-radius:5px;padding:2px 7px;cursor:pointer;font:11px system-ui;">自由</button>` +
+          `<button data-job="lumberjack" style="pointer-events:auto;border:1px solid #555;background:#333;color:#eee;border-radius:5px;padding:2px 7px;cursor:pointer;font:11px system-ui;">伐木工</button>` +
+          `<button data-job="miner" style="pointer-events:auto;border:1px solid #555;background:#333;color:#eee;border-radius:5px;padding:2px 7px;cursor:pointer;font:11px system-ui;">矿工</button>` +
+          `<button data-job="farmer" style="pointer-events:auto;border:1px solid #555;background:#333;color:#eee;border-radius:5px;padding:2px 7px;cursor:pointer;font:11px system-ui;">农民</button>` +
+          `<button data-job="crafter" style="pointer-events:auto;border:1px solid #555;background:#333;color:#eee;border-radius:5px;padding:2px 7px;cursor:pointer;font:11px system-ui;">工匠</button><br>` +
           `HP ${nf(hk?.hp)}/${nf(hk?.maxHp)} · 信仰 ${nf(p.faith)}<br>` +
           `STR ${p.dna.str} · CON ${p.dna.con} · SIZ ${p.dna.siz} · DEX ${p.dna.dex}<br>` +
           `INT ${p.dna.int} · POW ${p.dna.pow} · APP ${p.dna.app} · EDU ${p.dna.edu}<br>` +
@@ -186,7 +229,15 @@ function createHud(sim: Sim, onSelectBuild: (id: string | null) => void, onZoom?
           `技能：工作 ${p.skills.work ?? 0} · 战斗 ${p.skills.fight ?? 0} · 手艺 ${p.skills.craft ?? 0} · 社交 ${p.skills.social ?? 0} · 信仰 ${p.skills.faith ?? 0}<br>` +
           `欲望：食${nf(p.desires.gluttony)} 懒${nf(p.desires.sloth)} 贪${nf(p.desires.greed)} 怒${nf(p.desires.wrath)} 傲${nf(p.desires.pride)} 嫉${nf(p.desires.envy)} 欲${nf(p.desires.lust)}<br>` +
           (dec ? `<span style="color:#caa">${dec}</span><br>` : '') +
-          (nd ? `饥饿 ${nf(nd.food)} · 精力 ${nf(nd.rest)} · 心情 ${nf(nd.mood)} · 理智 ${nf(nd.san)}` : '');
+          (nd ? `饥饿 ${nf(nd.food)} · 精力 ${nf(nd.rest)} · 心情 ${nf(nd.mood)} · 理智 ${nf(nd.san)}` : '') +
+          (p.oracleBuff && p.oracleBuff.until > sim.time ? `<br><span style="color:#e0b0ff">✨ 受神谕祝福</span>` : '');
+        // 指派职业按钮（Q10 生产线）
+        selPanel.querySelectorAll<HTMLButtonElement>('button[data-job]').forEach((btn) => {
+          btn.onclick = () => {
+            sim.selected = [eid];
+            sim.issueCommand({ type: 'assign', x: 0, y: 0, job: btn.dataset.job || '' });
+          };
+        });
       } else {
         selPanel.style.display = 'none';
       }
@@ -211,6 +262,23 @@ function createHud(sim: Sim, onSelectBuild: (id: string | null) => void, onZoom?
         return `<div>D${h.day} ${h.time}s · ${h.type} ${who}${where}${cause}${detail}</div>`;
       });
       histPanel.innerHTML = `<b>📜 结构化历史（仿真日志）</b><br>` + rows.join('');
+    }
+
+    // 🌍 派系概览（Q9 观察模拟器）
+    if (facPanel.style.display === 'block') {
+      const units = [...sim.socialUnits.units.values()];
+      const rows = units.map((u) => {
+        const cap = u.level === 'church' ? 10 : 3;
+        const opinions = [...u.opinions.entries()].map(([id, op]) => {
+          const other = sim.socialUnits.units.get(id);
+          return `${other?.name ?? id} ${op.value > 0 ? '+' : ''}${Math.round(op.value)}`;
+        }).join('、') || '无';
+        const mem = u.memory.slice(-2).map((m) => m.text).join(' / ') || '无';
+        const badge = u.id === sim.playerUnitId ? '👁' : '';
+        return `<div><b>${badge} ${u.name}</b>（${u.level === 'church' ? '教堂' : '篝火'}，记忆${cap}）成员${u.members.length} · 库存🌲${nf(u.resources.wood)}🪨${nf(u.resources.ore)}🍖${nf(u.resources.food)}<br>` +
+          `<span style="color:#aaa">看法：${opinions}<br>记忆：${mem}</span></div>`;
+      }).join('<hr>');
+      facPanel.innerHTML = `<b>🌍 世界派系（${units.length}）</b><br>` + (rows || '暂无');
     }
   };
 
@@ -313,7 +381,8 @@ async function main(): Promise<void> {
     // 建造模式：显示幽灵预览
     if (buildMode && !mouseDragging) {
       const wt = renderer.screenToWorld(e.clientX, e.clientY);
-      const can = sim.world.canBuildAt(wt.x, wt.y);
+      const def = BUILDINGS[buildMode];
+      const can = def ? sim.world.canBuildFootprint(wt.x, wt.y, def) : sim.world.canBuildAt(wt.x, wt.y);
       renderer.setGhost(wt, can ? 0x4cf : 0xf44);
     }
   });

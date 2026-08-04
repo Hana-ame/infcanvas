@@ -82,6 +82,24 @@ export const BUILDING_SVG: Record<string, string> = {
     <circle cx="19" cy="22" r="1.3" fill="#c9ad3f"/>
     <path d="M16 12 Q18 6 16 2 Q14 6 16 12 Z" fill="#d4b94a" opacity="0.3"/>
   `),
+  church: svg(`
+    <rect x="8" y="12" width="16" height="16" fill="#8a6a9a"/>
+    <path d="M16 2 L28 12 H4 Z" fill="#a07ac0"/>
+    <path d="M16 2 L22 8 H10 Z" fill="#c0a0d8"/>
+    <rect x="13" y="18" width="6" height="10" fill="#3a2a4a"/>
+    <circle cx="16" cy="20" r="1.2" fill="#ffe08a" opacity="0.9"/>
+    <rect x="6" y="12" width="3" height="16" fill="#7a5a8a"/>
+    <rect x="23" y="12" width="3" height="16" fill="#7a5a8a"/>
+  `),
+  monument: svg(`
+    <rect x="10" y="10" width="12" height="18" fill="#8a7a5a"/>
+    <rect x="8" y="6" width="16" height="5" rx="1" fill="#a0906a"/>
+    <rect x="13" y="2" width="6" height="5" fill="#b0a080"/>
+    <circle cx="16" cy="4" r="1" fill="#ffe08a"/>
+    <rect x="6" y="14" width="4" height="14" fill="#7a6a4a"/>
+    <rect x="22" y="14" width="4" height="14" fill="#7a6a4a"/>
+    <path d="M10 28 H22" stroke="#6a5a3a" stroke-width="3"/>
+  `),
 };
 
 // 小人（正面鼠）—— 按性格变体

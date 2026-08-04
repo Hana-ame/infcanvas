@@ -5,7 +5,6 @@ import type { EventBus } from '../core/events';
 
 export class CraftSystem implements GameSystem {
   id = 'craft';
-  private craftAccum = 0; // 累积制作进度（秒）
   private craftCd = 0;
 
   constructor(private ctx: SimContext) {}
@@ -13,15 +12,17 @@ export class CraftSystem implements GameSystem {
   init(_bus: EventBus): void {}
 
   update(dt: number): void {
-    let benches = 0;
-    for (const [, b] of this.ctx.world.buildings) {
-      if (b.def.id === 'workbench') benches++;
+    let benches: { x: number; y: number }[] = [];
+    for (const [key, b] of this.ctx.world.buildings) {
+      if (b.def.id === 'workbench') {
+        benches.push({ x: key % this.ctx.world.width, y: Math.floor(key / this.ctx.world.width) });
+      }
     }
-    if (benches === 0) return;
+    if (benches.length === 0) return;
     // 冷却：每 6 秒尝试做 1 个工具（每个工作台）
     this.craftCd -= dt;
     if (this.craftCd <= 0) {
-      this.craftCd = 6 / benches;
+      this.craftCd = 6 / benches.length;
       const woodCost = 5;
       if (this.ctx.stockpile.wood >= woodCost) {
         this.ctx.stockpile.wood -= woodCost;
@@ -29,6 +30,5 @@ export class CraftSystem implements GameSystem {
         this.ctx.logEvent('🛠 工作台造出工具');
       }
     }
-    void this.craftAccum;
   }
 }
