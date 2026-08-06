@@ -1,6 +1,6 @@
 // 世界 chunk 生成 —— P0 用种子生成有限地图（含 chunk 结构，后期扩无限）
 import { SimRng } from './rng';
-import { TILES, BUILDINGS } from '../defs';
+import { TILES, BUILDINGS, type TileDef, type BuildingDef } from '../defs';
 import { generateBiomeMap } from './noise';
 
 export const CHUNK_SIZE = 32; // 每 chunk 的 tile 数（32x32）
@@ -16,18 +16,27 @@ export class World {
   readonly height: number;
   private tileIndex: Uint8Array; // width * height，存 TILES 的键索引
   private readonly tileKeys: string[]; // index -> tile id
+  private readonly tilesDefs: Record<string, TileDef>; // mod 可注入（覆盖后生效）
+  private readonly buildingsDefs: Record<string, BuildingDef>;
   light: Uint8Array; // 光照图：1=亮（篝火覆盖），0=黑暗
   private readonly seed: number;
   rng: SimRng;
 
-  constructor(seed: number, chunksX: number = WORLD_CHUNKS, chunksY: number = WORLD_CHUNKS) {
+  constructor(
+    seed: number,
+    defs: { tiles?: Record<string, TileDef>; buildings?: Record<string, BuildingDef> } = {},
+    chunksX: number = WORLD_CHUNKS,
+    chunksY: number = WORLD_CHUNKS,
+  ) {
     this.seed = seed;
     this.rng = new SimRng(seed);
     this.chunkCols = chunksX;
     this.chunkRows = chunksY;
     this.width = chunksX * CHUNK_SIZE;
     this.height = chunksY * CHUNK_SIZE;
-    this.tileKeys = Object.keys(TILES);
+    this.tilesDefs = defs.tiles ?? TILES;
+    this.buildingsDefs = defs.buildings ?? BUILDINGS;
+    this.tileKeys = Object.keys(this.tilesDefs);
     this.tileIndex = new Uint8Array(this.width * this.height);
     this.light = new Uint8Array(this.width * this.height);
     this.generate();
@@ -109,7 +118,7 @@ export class World {
   loadTiles(tiles: string[]): void {
     if (tiles.length !== this.width * this.height) return;
     for (let i = 0; i < tiles.length; i++) {
-      const id = TILES[tiles[i]] ? tiles[i] : 'grass';
+      const id = this.tilesDefs[tiles[i]] ? tiles[i] : 'grass';
       this.tileIndex[i] = this.tileIdToIndex(id);
     }
   }
@@ -123,7 +132,7 @@ export class World {
     this.gridToBuilding.clear();
     this.buildingFootprint.clear();
     for (const d of data) {
-      const def = BUILDINGS[d.defId];
+      const def = this.buildingsDefs[d.defId];
       if (!def) continue;
       const x = d.key % this.width;
       const y = Math.floor(d.key / this.width);
@@ -137,8 +146,8 @@ export class World {
     this.recomputeLight();
   }
 
-  getTileDef(x: number, y: number): (typeof TILES)[string] {
-    return TILES[this.getTile(x, y)];
+  getTileDef(x: number, y: number): TileDef {
+    return this.tilesDefs[this.getTile(x, y)];
   }
 
   isPassable(x: number, y: number): boolean {
@@ -295,7 +304,7 @@ export class World {
   }
 
   placeBuilding(x: number, y: number, defId: string, faction: string): boolean {
-    const def = BUILDINGS[defId];
+    const def = this.buildingsDefs[defId];
     if (!def) return false;
     if (!this.canBuildFootprint(x, y, def)) return false;
     const mainKey = this.buildKey(x, y);
@@ -312,7 +321,7 @@ export class World {
   upgradeBuilding(x: number, y: number, defId: string, faction: string): boolean {
     const main = this.mainKey(x, y);
     if (!this.buildings.has(main)) return false;
-    const def = BUILDINGS[defId];
+    const def = this.buildingsDefs[defId];
     if (!def) return false;
     // 旧 footprint 释放
     const old = this.buildingFootprint.get(main) ?? [main];
@@ -329,12 +338,12 @@ export class World {
     return true;
   }
 
-  // 光照图：篝火覆盖 radius 内为亮，其余黑暗
+  // 光照图：emitsLight 声明半径内为亮（数据驱动，mod 加灯笼/火把即接入）
   recomputeLight(): void {
     this.light.fill(0);
-    const RADIUS = 4;
     for (const [key, b] of this.buildings) {
-      if (b.def.id !== 'campfire') continue;
+      const RADIUS = b.def.emitsLight ?? 0;
+      if (RADIUS <= 0) continue;
       const bx = key % this.width;
       const by = Math.floor(key / this.width);
       for (let dy = -RADIUS; dy <= RADIUS; dy++) {

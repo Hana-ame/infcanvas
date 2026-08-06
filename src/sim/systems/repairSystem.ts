@@ -10,6 +10,7 @@ export class RepairSystem implements GameSystem {
   constructor(private ctx: SimContext) {}
 
   update(dt: number): void {
+    const rp = this.ctx.tuning.repair;
     // 推进正在修理的
     for (const [eid, r] of [...this.repairing]) {
       // 若小人不在（死了）或建筑没了，移除
@@ -17,8 +18,8 @@ export class RepairSystem implements GameSystem {
       if (!st) { this.repairing.delete(eid); continue; }
       if (!this.ctx.world.getBuilding(r.x, r.y)) { this.repairing.delete(eid); continue; }
       r.progress += dt;
-      if (r.progress >= 1.5) {
-        this.ctx.world.repairBuilding(r.x, r.y, 20);
+      if (r.progress >= rp.workTime) {
+        this.ctx.world.repairBuilding(r.x, r.y, rp.repairAmount);
         this.repairing.delete(eid);
         st.job = '闲逛';
         this.ctx.logEvent('🔧 小人修好了建筑');
@@ -37,7 +38,7 @@ export class RepairSystem implements GameSystem {
       const pos = this.ctx.readPosition(eid);
       if (!pos) continue;
       // 找受损建筑
-      const target = this.findDamaged(pos, 15);
+      const target = this.findDamaged(pos, this.ctx.tuning.repair.searchRadius);
       if (!target) continue;
       st.job = '修理';
       // 距离近则直接开始修，否则走过去

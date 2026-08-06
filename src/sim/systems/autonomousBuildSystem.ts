@@ -21,23 +21,35 @@ const avgFaith = (ctx: SimContext): number => {
   return sum / ctx.pawnList.length;
 };
 
-// 扩建计划（按优先级）
-const EXPANSION_PLAN: { defId: string; minWood: number; need: (ctx: SimContext) => boolean }[] = [
-  // 营地无篝火 → 先起篝火（社会锚点）
-  { defId: 'campfire', minWood: 6, need: (c) => !c.world.hasBuilding('campfire') },
-  // 人多且篝火少 → 加篝火
-  { defId: 'campfire', minWood: 10, need: (c) => c.pawnList.length >= 4 && countBuilding(c, 'campfire') < 2 },
-  // 食物常短缺 → 扩农田
-  { defId: 'farm', minWood: 12, need: (c) => (c.stockpile.food ?? 0) < 80 && countBuilding(c, 'farm') < 3 },
-  // 工具缺 → 建工作台
-  { defId: 'workbench', minWood: 20, need: (c) => (c.stockpile.tools ?? 0) < 2 && countBuilding(c, 'workbench') < 2 },
-  // 矿少 → 建矿洞（持续产矿）
-  { defId: 'cave', minWood: 15, need: (c) => (c.stockpile.ore ?? 0) < 20 && countBuilding(c, 'cave') < 2 },
-  // 信仰高 → 把营地篝火升级为教堂（Q9 即时指令：教堂=篝火升级）
-  { defId: 'church', minWood: 25, need: (c) => avgFaith(c) >= 35 && countBuilding(c, 'church') < 1 },
-  // 资源富余 → 围营地墙
-  { defId: 'wall', minWood: 30, need: (c) => c.stockpile.wood > 60 && countBuilding(c, 'wall') < 6 },
-];
+// 扩建计划（数据驱动：阈值来自 tuning.autobuild，mod 可注册额外计划）
+export interface ExpansionPlan {
+  id: string;
+  defId: string;
+  minWood: number;
+  need: (ctx: SimContext) => boolean;
+  onExisting?: boolean;  // 为 true 时在"可升级为此建筑"的现有建筑（def.upgradesTo === defId）上原地升级，而非找空地新建
+}
+
+// 内置计划构造：所有阈值读 tuning.autobuild（docs/DATA_DRIVEN.md §4）
+const buildBasePlans = (ctx: SimContext): ExpansionPlan[] => {
+  const t = ctx.tuning.autobuild;
+  return [
+    // 营地无篝火 → 先起篝火（社会锚点）
+    { id: 'campfire', defId: 'campfire', minWood: t.campfireWood, need: (c) => !c.world.hasBuilding('campfire') },
+    // 人多且篝火少 → 加篝火
+    { id: 'campfire2', defId: 'campfire', minWood: t.campfireWoodExtra, need: (c) => c.pawnList.length >= t.pawnsPerCampfire && countBuilding(c, 'campfire') < t.campfireTarget },
+    // 食物常短缺 → 扩农田
+    { id: 'farm', defId: 'farm', minWood: t.farmWood, need: (c) => (c.stockpile.food ?? 0) < t.foodThreshold && countBuilding(c, 'farm') < t.farmTarget },
+    // 工具缺 → 建工作台
+    { id: 'workbench', defId: 'workbench', minWood: t.workbenchWood, need: (c) => (c.stockpile.tools ?? 0) < t.toolsThreshold && countBuilding(c, 'workbench') < t.workbenchTarget },
+    // 矿少 → 建矿洞（持续产矿）
+    { id: 'cave', defId: 'cave', minWood: t.caveWood, need: (c) => (c.stockpile.ore ?? 0) < t.oreThreshold && countBuilding(c, 'cave') < t.caveTarget },
+    // 信仰高 → 把营地篝火升级为教堂（数据驱动：campfire.def.upgradesTo==='church'）
+    { id: 'church', defId: 'church', minWood: t.churchWood, onExisting: true, need: (c) => avgFaith(c) >= t.faithThreshold && countBuilding(c, 'church') < 1 },
+    // 资源富余 → 围营地墙
+    { id: 'wall', defId: 'wall', minWood: t.wallWood, need: (c) => c.stockpile.wood > t.wallWood && countBuilding(c, 'wall') < t.wallTarget },
+  ];
+};
 
 export class AutonomousBuildSystem implements GameSystem {
   id = 'autobuild';
@@ -50,25 +62,27 @@ export class AutonomousBuildSystem implements GameSystem {
   update(dt: number): void {
     this.timer -= dt;
     if (this.timer > 0) return;
-    this.timer = 20 + Math.floor(this.ctx.rng.next() * 10); // 20-30s 评估一次
-    this.evaluate();
+    const t = this.ctx.tuning.autobuild;
+    this.timer = t.evaluateMin + Math.floor(this.ctx.rng.next() * (t.evaluateMax - t.evaluateMin)); // 每轮评估间隔
+    this.evaluate(t.maxPerEval);
   }
 
-  private evaluate(): void {
+  private evaluate(maxPerEval: number): void {
     const w = this.ctx.world;
     const cx = Math.floor(w.width / 2);
     const cy = Math.floor(w.height / 2);
+    // 内置计划 + mod 注册计划（mod 优先，可覆盖/追加）
+    const plans = [...buildBasePlans(this.ctx), ...this.ctx.mods.expansionPlans];
     let pushed = 0;
-    for (const plan of EXPANSION_PLAN) {
-      if (pushed >= 2) break; // 每次评估最多规划 2 个，防资源失控
+    for (const plan of plans) {
+      if (pushed >= maxPerEval) break; // 每次评估最多规划 N 个，防资源失控
       if (this.ctx.buildQueue.some((b) => b.defId === plan.defId)) continue; // 已有排队蓝图
       if (this.ctx.stockpile.wood < plan.minWood) continue;
       if (!plan.need(this.ctx)) continue;
-      // 教堂 = 篝火升级：在原篝火位置重建为教堂（Q9 即时指令）
+      // 升级计划：在可升级源（def.upgradesTo === plan.defId）上原地升级；否则找空地新建
       let spot: { x: number; y: number } | null = null;
-      if (plan.defId === 'church') {
-        const fire = this.findCampfire();
-        if (fire) spot = fire;
+      if (plan.onExisting) {
+        spot = this.findUpgradeSource(plan.defId);
       } else {
         spot = this.findBuildSpot(cx, cy);
       }
@@ -77,17 +91,17 @@ export class AutonomousBuildSystem implements GameSystem {
           x: spot.x, y: spot.y, defId: plan.defId, progress: 0, faction: 'auto',
           cost: { wood: 1, ore: 0 },
         });
-        this.ctx.logEvent(`🏗 AI 规划：${plan.defId === 'church' ? '把篝火升级为教堂' : `建造【${plan.defId}】`}`);
+        this.ctx.logEvent(`🏗 AI 规划：${plan.onExisting ? '升级' : '建造'}【${plan.defId}】`);
         pushed++;
       }
     }
   }
 
-  // 找一个篝火单位的位置（用于升级为教堂）
-  private findCampfire(): { x: number; y: number } | null {
+  // 找一个可升级源建筑（def.upgradesTo === targetDefId），用于原地升级
+  private findUpgradeSource(targetDefId: string): { x: number; y: number } | null {
     const w = this.ctx.world;
     for (const [key, b] of w.buildings) {
-      if (b.def.id === 'campfire') {
+      if (b.def.upgradesTo === targetDefId) {
         return { x: key % w.width, y: Math.floor(key / w.width) };
       }
     }

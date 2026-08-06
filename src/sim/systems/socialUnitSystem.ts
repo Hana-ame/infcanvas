@@ -129,7 +129,7 @@ export class SocialUnitSystem implements GameSystem {
     // 信任：双方单位成员相邻时，看法朝友好漂移（协作凝聚）
     this.trustTimer -= dt;
     if (this.trustTimer > 0) return;
-    this.trustTimer = 8; // 每 8 秒推动一次
+    this.trustTimer = this.ctx.tuning.faction.trustTimer; // 推动周期读 tuning.faction
     this.updateTrust();
     this.unitRelations();
     this.allocateResources(dt);
@@ -138,6 +138,7 @@ export class SocialUnitSystem implements GameSystem {
   // 分派系资源（Q9 利益最大化 + 报告差距"生产走全局"的轻量打通）
   // 玩家单位 = 全局库存镜像（生产全进玩家营地）；野生/其他单位按成员数被动产出
   private allocateResources(dt: number): void {
+    const f = this.ctx.tuning.faction;
     const s = this.ctx.stockpile;
     const playerId = this.ctx.playerUnitId;
     for (const u of this.units.values()) {
@@ -147,9 +148,9 @@ export class SocialUnitSystem implements GameSystem {
       } else {
         // 其他单位：按成员数被动自给（成员在野外采集微薄资源）
         const members = Math.max(1, u.members.length);
-        u.resources.wood = (u.resources.wood ?? 0) + 0.4 * members * dt;
-        u.resources.food = (u.resources.food ?? 0) + 0.3 * members * dt;
-        u.resources.ore = (u.resources.ore ?? 0) + 0.15 * members * dt;
+        u.resources.wood = (u.resources.wood ?? 0) + f.resourceGrowthWood * members * dt;
+        u.resources.food = (u.resources.food ?? 0) + f.resourceGrowthFood * members * dt;
+        u.resources.ore = (u.resources.ore ?? 0) + f.resourceGrowthOre * members * dt;
       }
     }
   }
@@ -157,6 +158,7 @@ export class SocialUnitSystem implements GameSystem {
   // 产出归集（Q9：各单位营地建筑产出归该单位；玩家单位=全局）
   // 在世界坐标附近找最近单位，把产出记入其库存
   addProductionNear(x: number, y: number, item: string, amount: number): void {
+    const f = this.ctx.tuning.faction;
     let best: SocialUnit | null = null;
     let bestD = Infinity;
     for (const u of this.units.values()) {
@@ -168,9 +170,9 @@ export class SocialUnitSystem implements GameSystem {
     if (!best) return;
     if (best.id === this.ctx.playerUnitId) {
       // 玩家单位 → 全局生产池
-      this.ctx.stockpile[item] = Math.min(500, (this.ctx.stockpile[item] ?? 0) + amount);
+      this.ctx.stockpile[item] = Math.min(f.resourceCap, (this.ctx.stockpile[item] ?? 0) + amount);
     } else {
-      best.resources[item] = Math.min(500, (best.resources[item] ?? 0) + amount);
+      best.resources[item] = Math.min(f.resourceCap, (best.resources[item] ?? 0) + amount);
     }
   }
 
@@ -178,6 +180,7 @@ export class SocialUnitSystem implements GameSystem {
   // 双向敌对(≤-40)：派掠夺者袭击对方营地；双向友好(≥40)：贸易交换资源
   // 逆差联动：某单位对另一单位持续大逆差(≤-20) → 心生怨恨，好感下滑 → 可能破裂开战
   private unitRelations(): void {
+    const f = this.ctx.tuning.faction;
     const ids = [...this.units.keys()];
     for (let i = 0; i < ids.length; i++) {
       const a = ids[i];
@@ -192,14 +195,14 @@ export class SocialUnitSystem implements GameSystem {
         // 逆差 → 怨恨：欠债方（逆差≤-20）对债主好感下滑，债主也不满
         const balA = ua.tradeBalance.get(b) ?? 0;
         const balB = ub.tradeBalance.get(a) ?? 0;
-        if (balA <= -20) adjustOpinion(ua, b, -0.8, this.ctx.time); // 欠得多 → 怨恨债主
-        if (balB <= -20) adjustOpinion(ub, a, -0.8, this.ctx.time);
+        if (balA <= f.deficitAt) adjustOpinion(ua, b, f.opinionDeficit, this.ctx.time); // 欠得多 → 怨恨债主
+        if (balB <= f.deficitAt) adjustOpinion(ub, a, f.opinionDeficit, this.ctx.time);
         // 双向敌对 → 袭击（利益冲突升级为战争，Q9）
-        if (ab <= -40 && ba <= -40) {
+        if (ab <= f.warAt && ba <= f.warAt) {
           this.raidBetween(ua, ub);
         }
         // 双向友好 → 贸易（友好派系互惠）
-        else if (ab >= 40 && ba >= 40) {
+        else if (ab >= f.tradeAt && ba >= f.tradeAt) {
           this.tradeBetween(ua, ub);
         }
         // 关系中性 → 传话（Q9：派系间没有直接控制权，只有传话）
@@ -212,19 +215,21 @@ export class SocialUnitSystem implements GameSystem {
 
   // 袭击：从 a 营地派掠夺者去打 b 营地
   private raidBetween(ua: SocialUnit, ub: SocialUnit): void {
+    const f = this.ctx.tuning.faction;
     const cd = this.raidCd.get(ua.id) ?? 0;
     if (this.ctx.time < cd) return;
-    this.raidCd.set(ua.id, this.ctx.time + 45);
+    this.raidCd.set(ua.id, this.ctx.time + f.raidCooldown);
     const bx = ub.key % this.ctx.world.width;
     const by = Math.floor(ub.key / this.ctx.world.width);
     const ax = ua.key % this.ctx.world.width;
     const ay = Math.floor(ua.key / this.ctx.world.width);
-    const count = 2 + Math.floor(this.ctx.rng.next() * 3);
+    const count = f.unitRaidCountMin + Math.floor(this.ctx.rng.next() * (f.unitRaidCountMax - f.unitRaidCountMin + 1));
+    const cb = this.ctx.tuning.combat;
     for (let k = 0; k < count; k++) {
       this.ctx.hostiles.push({
-        x: ax, y: ay, hp: 90, maxHp: 90,
+        x: ax, y: ay, hp: cb.unitHp, maxHp: cb.unitHp,
         targetX: bx, targetY: by,
-        name: ua.name, faction: 'unit', dmgPerSec: 7,
+        name: ua.name, faction: 'unit', dmgPerSec: cb.unitDmg,
         loot: { item: 'ore', amount: 4 },
       });
     }
@@ -233,16 +238,17 @@ export class SocialUnitSystem implements GameSystem {
     addMemory(ua, this.ctx.time, `⚔ 出兵攻打 ${ub.name}`);
     addMemory(ub, this.ctx.time, `⚔ 遭到 ${ua.name} 攻打`);
     // 战争加深仇恨
-    adjustOpinion(ua, ub.id, -5, this.ctx.time);
-    adjustOpinion(ub, ua.id, -5, this.ctx.time);
+    adjustOpinion(ua, ub.id, f.opinionRaid, this.ctx.time);
+    adjustOpinion(ub, ua.id, f.opinionRaid, this.ctx.time);
   }
 
   // 传话（Q9：派系间不直接控制，只有传话等事件）
   // 中性关系时：传话带信息，态度倾向决定方向（友善→关系更近，敌意→更疏）
   private messaging(ua: SocialUnit, ub: SocialUnit, ab: number, ba: number): void {
+    const f = this.ctx.tuning.faction;
     const cd = this.msgCd.get(ua.id) ?? 0;
     if (this.ctx.time < cd) return;
-    this.msgCd.set(ua.id, this.ctx.time + 90); // 90s 一次
+    this.msgCd.set(ua.id, this.ctx.time + f.msgCooldown);
     const sum = ab + ba;
     if (sum >= 0) {
       adjustOpinion(ua, ub.id, 1, this.ctx.time);
@@ -251,8 +257,8 @@ export class SocialUnitSystem implements GameSystem {
       this.ctx.bus.emit({ type: 'faction_event', kind: 'message', from: ua.name, to: ub.name });
       addMemory(ua, this.ctx.time, `💬 向 ${ub.name} 传友善的话`);
     } else {
-      adjustOpinion(ua, ub.id, -1.5, this.ctx.time);
-      adjustOpinion(ub, ua.id, -1.5, this.ctx.time);
+      adjustOpinion(ua, ub.id, f.opinionThreat, this.ctx.time);
+      adjustOpinion(ub, ua.id, f.opinionThreat, this.ctx.time);
       this.ctx.logEvent(`📣 ${ua.name} 传话给 ${ub.name}："退让，否则刀兵相见"`);
       this.ctx.bus.emit({ type: 'faction_event', kind: 'threat', from: ua.name, to: ub.name });
       addMemory(ub, this.ctx.time, `📣 收到 ${ua.name} 的威胁`);
@@ -262,40 +268,42 @@ export class SocialUnitSystem implements GameSystem {
   // 贸易（Q9）：友好派系按汇率交换资源；汇率随供需波动（稀缺方付出更多）
   // 逆差追踪：长期逆差 → 关系破裂 → 战争
   private tradeBetween(ua: SocialUnit, ub: SocialUnit): void {
+    const f = this.ctx.tuning.faction;
     const cd = this.tradeCd.get(ua.id) ?? 0;
     if (this.ctx.time < cd) return;
-    this.tradeCd.set(ua.id, this.ctx.time + 60);
+    this.tradeCd.set(ua.id, this.ctx.time + f.tradeCooldown);
 
     // 玩家单位 = 全局库存（生产池）；贸易时直接操作全局
     const isPlayer = ua.id === this.ctx.playerUnitId;
     const uaFood = isPlayer ? (this.ctx.stockpile.food ?? 0) : (ua.resources.food ?? 0);
     const uaWood = isPlayer ? this.ctx.stockpile.wood : (ua.resources.wood ?? 0);
-    const rate = uaFood < 40 ? 3 : 1.5;
-    if (uaWood >= 4) {
+    const rate = uaFood < 40 ? f.tradeRateShort : f.tradeRateNormal;
+    if (uaWood >= f.tradeWood) {
       if (isPlayer) {
-        this.ctx.stockpile.wood = uaWood - 4;
-        this.ctx.stockpile.food = Math.min(500, (this.ctx.stockpile.food ?? 0) + 4 * rate);
+        this.ctx.stockpile.wood = uaWood - f.tradeWood;
+        this.ctx.stockpile.food = Math.min(f.resourceCap, (this.ctx.stockpile.food ?? 0) + f.tradeWood * rate);
       } else {
-        ua.resources.wood = uaWood - 4;
-        ua.resources.food = (ua.resources.food ?? 0) + 4 * rate;
+        ua.resources.wood = uaWood - f.tradeWood;
+        ua.resources.food = (ua.resources.food ?? 0) + f.tradeWood * rate;
       }
       // 记账逆差：a 付出木、得到食 → 对 b 顺差（b 逆差）
       const balA = (ua.tradeBalance.get(ub.id) ?? 0);
       const balB = (ub.tradeBalance.get(ua.id) ?? 0);
-      ua.tradeBalance.set(ub.id, balA + 4);
-      ub.tradeBalance.set(ua.id, balB - 4);
+      ua.tradeBalance.set(ub.id, balA + f.tradeWood);
+      ub.tradeBalance.set(ua.id, balB - f.tradeWood);
       this.ctx.logEvent(`🤝 ${ua.name} 与 ${ub.name} 交易（汇率 1木=${rate}食）`);
       this.ctx.bus.emit({ type: 'faction_event', kind: 'trade', from: ua.name, to: ub.name });
       addMemory(ua, this.ctx.time, `🤝 与 ${ub.name} 交易（${rate}食/木）`);
       addMemory(ub, this.ctx.time, `🤝 与 ${ua.name} 交易`);
       // 贸易增进好感，但持续逆差方心生不满
-      adjustOpinion(ua, ub.id, 1, this.ctx.time);
-      adjustOpinion(ub, ua.id, -0.5, this.ctx.time);
+      adjustOpinion(ua, ub.id, f.opinionTrade, this.ctx.time);
+      adjustOpinion(ub, ua.id, f.opinionTradeRecipient, this.ctx.time);
     }
   }
 
   private updateTrust(): void {
     // 不同单位成员相遇到一起工作 → 双向看法正向 → 派系凝聚
+    const f = this.ctx.tuning.faction;
     const list = this.ctx.pawnList;
     for (let i = 0; i < list.length; i++) {
       const a = list[i];
@@ -311,8 +319,8 @@ export class SocialUnitSystem implements GameSystem {
         if (!posB) continue;
         if (Math.hypot(posA.x - posB.x, posA.y - posB.y) > 4) continue;
         // 两单位成员协作 → 双向看法增进（信任机制 → 派系涌现）
-        adjustOpinion(this.units.get(uaId)!, ubId, 0.5, this.ctx.time);
-        adjustOpinion(this.units.get(ubId)!, uaId, 0.5, this.ctx.time);
+        adjustOpinion(this.units.get(uaId)!, ubId, f.opinionFriendly, this.ctx.time);
+        adjustOpinion(this.units.get(ubId)!, uaId, f.opinionFriendly, this.ctx.time);
       }
     }
   }

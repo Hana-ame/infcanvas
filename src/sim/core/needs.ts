@@ -1,5 +1,7 @@
 // 小人需求系统（P0 简化）：饥饿/休息/心情
 // 需求不满足 → 行为变化（意图失真简化版）
+// 数值参数来自 tuning（docs/DATA_DRIVEN.md §3.4），不写死魔法数字
+import type { NeedsTuning } from '../defs/tuning';
 
 export interface Needs {
   food: number; // 0-100，100=饱，<30 饿
@@ -12,17 +14,17 @@ export function initNeeds(): Needs {
   return { food: 80, rest: 90, mood: 60, san: 100 };
 }
 
-// 每 tick 衰减
-export function tickNeeds(n: Needs, dt: number): void {
-  n.food -= 0.15 * dt; // 饿
-  n.rest -= 0.08 * dt; // 困
+// 每 tick 衰减（t = tuning.needs）
+export function tickNeeds(n: Needs, dt: number, t: NeedsTuning): void {
+  n.food -= t.foodDecay * dt; // 饿
+  n.rest -= t.restDecay * dt; // 困
   // 心情随满足度漂移（简化）
-  if (n.food < 30) n.mood -= 0.05 * dt;
-  else if (n.food > 70) n.mood += 0.01 * dt;
+  if (n.food < t.foodMoodLow) n.mood -= t.moodDriftDown * dt;
+  else if (n.food > t.foodMoodHigh) n.mood += t.moodDriftUp * dt;
   // 理智缓慢自然恢复（人天生会自我调节）
-  n.san += 0.02 * dt;
+  n.san += t.sanRecover * dt;
   // 严重受创（重伤/低满足）动摇理智
-  if (n.food < 15 || n.mood < 15) n.san -= 0.03 * dt;
+  if (n.food < t.sanTraumaThreshold || n.mood < t.sanTraumaThreshold) n.san -= t.sanTraumaDrain * dt;
   n.food = clamp(n.food);
   n.rest = clamp(n.rest);
   n.mood = clamp(n.mood);
@@ -34,8 +36,8 @@ function clamp(v: number): number {
 }
 
 // 紧急需求：返回最高优先级的动作（返回 null = 无紧急需求）
-export function urgentNeedAction(n: Needs): 'eat' | 'rest' | null {
-  if (n.food < 30) return 'eat';
-  if (n.rest < 20) return 'rest';
+export function urgentNeedAction(n: Needs, t: NeedsTuning): 'eat' | 'rest' | null {
+  if (n.food < t.hungerAt) return 'eat';
+  if (n.rest < t.sleepyAt) return 'rest';
   return null;
 }

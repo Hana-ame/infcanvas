@@ -1,6 +1,8 @@
-// 生产系统：工作台把木头 → 工具（工具提升采集产出）
+// 生产系统：工作台等 craft 建筑按各自配方把材料 → 产物（工具提升采集产出）
+// 数据驱动：每座 craft 建筑读自己的 def.recipe（mod 新加工建筑带配方即接入，不写死 workbench）
 import type { GameSystem } from './registry';
 import type { SimContext } from './context';
+import type { RecipeDef } from '../defs/recipes';
 import type { EventBus } from '../core/events';
 
 export class CraftSystem implements GameSystem {
@@ -12,23 +14,40 @@ export class CraftSystem implements GameSystem {
   init(_bus: EventBus): void {}
 
   update(dt: number): void {
-    let benches: { x: number; y: number }[] = [];
+    // 收集所有 craft 建筑，按各自配方聚合（同一配方多座共享一次产出节奏）
+    const groups = new Map<string, { recipe: RecipeDef; count: number }>();
     for (const [key, b] of this.ctx.world.buildings) {
-      if (b.def.tags?.includes('craft')) {
-        benches.push({ x: key % this.ctx.world.width, y: Math.floor(key / this.ctx.world.width) });
-      }
+      const rid = b.def.recipe;
+      if (!rid || !b.def.tags?.includes('craft')) continue;
+      const def = this.ctx.recipe(rid);
+      if (!def || def.kind !== 'batch') continue;
+      const g = groups.get(rid) ?? { recipe: def, count: 0 };
+      g.count++;
+      groups.set(rid, g);
     }
-    if (benches.length === 0) return;
-    // 冷却：每 6 秒尝试做 1 个工具（每个工作台）
+    if (groups.size === 0) return;
     this.craftCd -= dt;
-    if (this.craftCd <= 0) {
-      this.craftCd = 6 / benches.length;
-      const woodCost = 5;
-      if (this.ctx.stockpile.wood >= woodCost) {
-        this.ctx.stockpile.wood -= woodCost;
-        this.ctx.stockpile.tools = (this.ctx.stockpile.tools ?? 0) + 1;
-        this.ctx.logEvent('🛠 工作台造出工具');
-      }
+    if (this.craftCd > 0) return;
+    this.craftCd = this.craftNextInterval(groups);
+    // 每配方组各做一批（各自成本/产物）
+    for (const g of groups.values()) {
+      const input = g.recipe.input?.[0];
+      const cost = input?.amount ?? 5;
+      if (this.ctx.stockpile.wood < cost) continue;
+      this.ctx.stockpile.wood -= cost;
+      const item = g.recipe.output.item;
+      this.ctx.stockpile[item] = (this.ctx.stockpile[item] ?? 0) + (g.recipe.output.amount ?? 1);
+      this.ctx.logEvent(`🛠 ${g.recipe.name ?? item} 完成`);
     }
+  }
+
+  // 下一次生产节奏：取所有在产配方中最小的 interval/count（保持与原"共享冷却"近似的均匀节奏）
+  private craftNextInterval(groups: Map<string, { recipe: RecipeDef; count: number }>): number {
+    let next = Infinity;
+    for (const g of groups.values()) {
+      const itv = (g.recipe.interval ?? 6) / Math.max(1, g.count);
+      if (itv < next) next = itv;
+    }
+    return next === Infinity ? 6 : next;
   }
 }

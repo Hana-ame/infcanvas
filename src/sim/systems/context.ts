@@ -5,6 +5,9 @@ import type { EventBus } from '../core/events';
 import type { PawnState } from '../sim';
 import type { SkillId } from '../ai/pawn';
 import type { World as BitecsWorld } from 'bitecs';
+import type { TuningConfig } from '../defs/tuning';
+import type { RecipeDef } from '../defs/recipes';
+import type { ModRegistry } from '../mods/registry';
 
 export interface Hostile {
   x: number; y: number;
@@ -30,6 +33,11 @@ export interface SimContext {
   readonly world: World;
   readonly rng: SimRng;
   readonly bus: EventBus;
+  readonly mods: ModRegistry;
+  readonly tuning: TuningConfig; // 平衡参数总表（docs/DATA_DRIVEN.md §3.4）
+  // 数据驱动查询：建筑 def / 配方（mod 覆盖后生效）
+  buildingDef(id: string): import('../defs').BuildingDef | undefined;
+  recipe(id: string): RecipeDef | undefined;
   stockpile: Record<string, number>;
   hostiles: Hostile[];
   buildQueue: BuildItem[];

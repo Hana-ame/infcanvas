@@ -15,7 +15,10 @@ import { initDesires, type DesireId } from './core/desires';
 import { initEnv, tickEnv, type EnvState } from './core/env';
 import { addMemory, setUnitSeq, type SocialUnit } from './core/socialUnit';
 import { initLean, adjustLean, type LeanKey } from './core/lean';
-import { BUILDINGS, TILES, ITEMS } from './defs';
+import { BUILDINGS, TILES, ITEMS, type BuildingDef } from './defs';
+import { RECIPES } from './defs/recipes';
+import { TUNING, type TuningConfig } from './defs/tuning';
+import type { RecipeDef } from './defs/recipes';
 import { ModRegistry } from './mods/registry';
 import type { SimContext } from './systems/context';
 import { SystemRegistry } from './systems/registry';
@@ -91,6 +94,7 @@ export interface PawnState {
   oracleBuff?: { until: number; mood: number }; // 神谕祝福（到期时间戳，心情加成）
   assignedJob?: string; // 指派职业（Q10 生产线：lumberjack/miner/farmer/crafter）
   lean?: Record<LeanKey, number>; // 行为倾向（勒沙特列反馈：按 profit 自平衡）
+  onArriveWork?: () => void; // mod 工作的到达回执（非序列化，仅当 tick 行为态：走到点后调用）
 }
 
 export interface SimOptions {
@@ -172,8 +176,23 @@ export class Sim implements SimContext {
     buildings: BUILDINGS,
     items: ITEMS,
     cards: BASE_CARDS,
+    recipes: RECIPES,
+    tuning: TUNING,
     intents: [],
+    works: [],
   });
+  // 平衡参数总表（mod 可覆盖）——getter 保证 mods 回调后读到覆盖后的值
+  get tuning(): TuningConfig {
+    return this.mods.tuning;
+  }
+
+  // mod 可覆盖的 def 查询（SimContext）
+  buildingDef(id: string): BuildingDef | undefined {
+    return this.mods.buildings[id];
+  }
+  recipe(id: string): RecipeDef | undefined {
+    return this.mods.recipes[id];
+  }
   private behavior: BehaviorSystem;
   private _started = false;
   socialUnits: SocialUnitSystem; // 篝火单位/部落记忆/派系涌现
@@ -183,12 +202,14 @@ export class Sim implements SimContext {
     const seed = opts.seed ?? 12345;
     const pawnCount = opts.pawnCount ?? 4;
     this.tickHz = opts.tickHz ?? 20;
+    // 应用 mod（在 world/spawn 前，可覆盖 defs/tuning/配方）——构造期回调
+    opts.mods?.(this.mods);
     this.ecs = createWorld();
     registerAutoStore(this.ecs, Position);
     registerAutoStore(this.ecs, NeedsComp);
     registerAutoStore(this.ecs, Speed);
     registerAutoStore(this.ecs, Health);
-    this.world = new World(seed);
+    this.world = new World(seed, { tiles: this.mods.tiles, buildings: this.mods.buildings });
     this.rng = new SimRng(seed + 1);
     this.bus = new EventBus();
     // 所有事件 → 结构化历史
@@ -203,8 +224,6 @@ export class Sim implements SimContext {
 
     this.behavior = new BehaviorSystem(this);
     this.socialUnits = new SocialUnitSystem(this);
-    // 应用 mod（在 spawn 前，注册系统/卡/意图）——构造期回调
-    opts.mods?.(this.mods);
     this.applyMods();
     this.registerSystems();
     this._started = true;
@@ -227,6 +246,10 @@ export class Sim implements SimContext {
     for (const [id, fn] of this.mods.intents) {
       this.behavior.registerIntent(id, fn);
     }
+    // mod 注册的工作类型执行器交给行为系统
+    for (const [type, fn] of this.mods.works) {
+      this.behavior.registerWork(type, fn);
+    }
   }
 
   private registerSystems(): void {
@@ -244,7 +267,7 @@ export class Sim implements SimContext {
       .register(new RepairSystem(this))
       .register(new RaidSystem(this))
       .register(new PopulationSystem(this))
-      .register(new EventSystem(this, SCRIPTED_EVENTS))
+      .register(new EventSystem(this, [...SCRIPTED_EVENTS, ...this.mods.events]))
       .register(new AutonomousBuildSystem(this));
   }
 
@@ -292,8 +315,8 @@ export class Sim implements SimContext {
       st.praying = undefined;
       st.healTarget = undefined;
       st.healing = undefined;
-      // 玩家命令优先：3 秒内不自动决策
-      st.commandCooldown = 3;
+      // 玩家命令优先：短暂时间内不自动决策
+      st.commandCooldown = this.tuning.card.commandCooldown;
     }
   }
 
@@ -352,10 +375,10 @@ export class Sim implements SimContext {
     addComponent(this.ecs, eid, NeedsComp);
     setComponent(this.ecs, eid, NeedsComp, initNeeds());
     addComponent(this.ecs, eid, Speed);
-    setComponent(this.ecs, eid, Speed, { v: 4 });
+    setComponent(this.ecs, eid, Speed, { v: this.tuning.pawn.baseSpeed });
     const dna = generateDna(this.seedFor(eid));
     addComponent(this.ecs, eid, Health);
-    const maxHp = 40 + Math.floor((dna.con + dna.siz) / 2);
+    const maxHp = this.tuning.pawn.hpBase + Math.floor((dna.con + dna.siz) / 2);
     setComponent(this.ecs, eid, Health, { hp: maxHp, maxHp });
     // COC 技能初始值：INT + EDU 高 → 起点高（百分制）
     const intBase = Math.floor((dna.int - 30) / 4) + Math.floor((dna.edu - 30) / 8);
@@ -573,15 +596,16 @@ export class Sim implements SimContext {
     return this.world.upgradeBuilding(x, y, defId, faction);
   }
 
-  // 神谕影响（用户 Q2/Q3）：在教堂发布，祝福附近的高信仰小人  // 玩家不直接指挥 → 只影响"目标层"（心情/信仰），执行仍由小人自主
+  // 神谕影响（用户 Q2/Q3）：在具备 'oracle' 能力的建筑发布，祝福附近的高信仰小人  // 玩家不直接指挥 → 只影响"目标层"（心情/信仰），执行仍由小人自主
   private oracleInfluence(x: number, y: number): void {
-    // 必须落在教堂上才能降下神谕（DESIGN §3 教堂是唯一物理接口）
-    const church = this.world.getBuilding(x, y);
-    if (!church || church.def.id !== 'church') {
-      this.logEvent('⛪ 神谕只能在教堂降下');
+    // 必须落在声明了 oracle 能力的建筑上（数据驱动：mod 加"神圣建筑"声明 capabilities:['oracle'] 即可）
+    const b = this.world.getBuilding(x, y);
+    if (!b || !(b.def.capabilities?.includes?.('oracle'))) {
+      this.logEvent('⛪ 神谕只能在神圣祭坛降下');
       return;
     }
-    const R = 6;
+    const f = this.mods.tuning.faith;
+    const R = f.oracleRadius;
     let affected = 0;
     for (const eid of this.pawnList) {
       const pos = this.pawnPositions.get(eid);
@@ -592,10 +616,10 @@ export class Sim implements SimContext {
       if (!st) continue;
       // 信任过滤：信仰越高影响越深；低信仰者几乎不受影响
       const trust = (st.faith ?? 0) / 100;
-      if (trust < 0.3) continue;
-      st.oracleBuff = { until: this.time + 30, mood: 12 * trust };
-      this.adjustMood(eid, Math.round(6 * trust));
-      st.faith = Math.min(100, (st.faith ?? 0) + 3);
+      if (trust < f.oracleTrustAt) continue;
+      st.oracleBuff = { until: this.time + f.oracleDuration, mood: f.oracleMood * trust };
+      this.adjustMood(eid, Math.round(f.oracleMood / 2 * trust));
+      st.faith = Math.min(100, (st.faith ?? 0) + f.oracleFaith);
       affected++;
     }
     if (affected > 0) this.logEvent(`✨ 神谕降下，${affected} 位信众受到祝福`);
@@ -603,7 +627,7 @@ export class Sim implements SimContext {
   }
 
   private queueBuild(x: number, y: number, defId: string): void {
-    const def = BUILDINGS[defId];
+    const def = this.buildingDef(defId);
     if (!def) return;
     if (!this.world.canBuildFootprint(x, y, def)) return;
     const cost = {
@@ -634,31 +658,37 @@ export class Sim implements SimContext {
     this.prioTimer = 10; // 每 10 秒评估一次环境 → 派系工作优先级
     const s = this.stockpile;
     const pri: Record<string, number> = {};
-    // 基线 1.0，短缺的资源对应工作权重升高（AI 下达优先指令）
-    const foodLow = (s.food ?? 0) < 60 ? 1.6 : 1;
-    const woodLow = s.wood < 40 ? 1.5 : 1;
-    const oreLow = s.ore < 15 ? 1.4 : 1;
-    const building = this.buildQueue.length > 0 ? 1.8 : 1;
-    pri.farm = foodLow;
-    pri.chop = woodLow;
-    pri.mine = oreLow;
-    pri.caveMine = oreLow;
-    pri.build = building;
-    // 饥饿紧急时优先生产食物
-    if ((s.food ?? 0) < 20) pri.farm = 2.4;
+    // 基线 1.0，短缺的资源对应工作权重升高（数据驱动：规则表 tuning.card.priority）
+    for (const r of this.mods.tuning.card.priority) {
+      let boost = 1;
+      const low = this.priorityStock(r.resource, s);
+      if (low < r.lowAt) boost = r.boost;
+      if (r.urgentAt !== undefined && low < r.urgentAt && r.urgentBoost !== undefined) boost = r.urgentBoost;
+      pri[r.cardId] = boost;
+    }
     this.factionPriority = pri;
+  }
+
+  // 取某资源当前量（'queue'：非空返回 -1 恒触发 boost，空返回 Infinity 恒不触发）
+  private priorityStock(resource: string, s: Record<string, number>): number {
+    if (resource === 'queue') return this.buildQueue.length > 0 ? -1 : Infinity;
+    return s[resource] ?? 0;
   }
 
   // ---- 主循环 ----
   step(dt: number): void {
     if (this.paused) return;
     dt *= this.speed;
+    // mod 钩子：step 前（可读改 sim 状态）
+    this.mods.runHooks('step:before', { sim: this, dt });
     this.time += dt;
     this.dayTime = (this.time % this.dayLength) / this.dayLength;
-    tickEnv(this.env, dt, this.dayTime, this.rng);
+    tickEnv(this.env, dt, this.dayTime, this.rng, this.tuning.env);
     this.updateFactionPriority(dt);
     this.registry.updateAll(dt);
     this.checkPossession(); // Q3 团灭附身
+    // mod 钩子：step 后（观察结果）
+    this.mods.runHooks('step:after', { sim: this, dt });
   }
 
   // ---- UI 读取 ----

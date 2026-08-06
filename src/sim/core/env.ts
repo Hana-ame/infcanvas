@@ -1,6 +1,8 @@
 // 环境状态（DESIGN §6 卡相互作用：环境调制）
 // 气温：随时间波动（热/温和/冷）；天气：晴/雨（确定性，种子 RNG）
 // 影响：下雨 → 户外工作权重低、室内/娱乐权重高；酷暑/严寒 → 户外工作低
+// 数值参数来自 tuning（docs/DATA_DRIVEN.md §3.4）
+import type { EnvTuning } from '../defs/tuning';
 
 export interface EnvState {
   raining: boolean;
@@ -13,26 +15,28 @@ export function initEnv(): EnvState {
 }
 
 // 环境 tick：气温随昼夜（白天热、夜晚凉）波动；降雨周期性
-export function tickEnv(env: EnvState, dt: number, dayTime: number, rng: { next(): number }): void {
-  // 气温：基础 18°C + 昼夜波动（正午 ~28°，深夜 ~8°）+ 随机天气偏移
+export function tickEnv(env: EnvState, dt: number, dayTime: number, rng: { next(): number }, t: EnvTuning): void {
+  // 气温：基础 + 昼夜波动 + 随机天气偏移
   const dayFactor = Math.sin((dayTime - 0.25) * Math.PI * 2); // 正午峰值
-  env.temperature = 18 + dayFactor * 10 + (env.raining ? -4 : 0);
+  env.temperature = t.baseTemp + dayFactor * t.dayAmplitude + (env.raining ? t.rainCool : 0);
 
-  // 降雨：随机的雨-晴循环（平均每 45 秒有 20% 概率开始下雨）
+  // 降雨：随机的雨-晴循环
   if (env.rainLeft > 0) {
     env.rainLeft -= dt;
     if (env.rainLeft <= 0) env.raining = false;
-  } else if (!env.raining && rng.next() < 0.003 * dt) {
-    // 开始下雨，持续 15-35 秒
+  } else if (!env.raining && rng.next() < t.rainChancePerSec * dt) {
+    // 开始下雨，持续 rainMin-rainMax 秒
     env.raining = true;
-    env.rainLeft = 15 + rng.next() * 20;
+    env.rainLeft = t.rainMin + rng.next() * (t.rainMax - t.rainMin);
   }
 }
 
-export const weatherLabel = (env: EnvState): string => {
-  const t = Math.round(env.temperature);
-  if (env.raining) return `🌧 雨 ${t}°C`;
-  if (t > 32) return `☀️ 酷暑 ${t}°C`;
-  if (t < 0) return `❄️ 严寒 ${t}°C`;
-  return `☁️ ${t}°C`;
+export const weatherLabel = (env: EnvState, t?: EnvTuning): string => {
+  const temp = Math.round(env.temperature);
+  const hotAt = t?.hotAt ?? 32;
+  const coldAt = t?.coldAt ?? 0;
+  if (env.raining) return `🌧 雨 ${temp}°C`;
+  if (temp > hotAt) return `☀️ 酷暑 ${temp}°C`;
+  if (temp < coldAt) return `❄️ 严寒 ${temp}°C`;
+  return `☁️ ${temp}°C`;
 };

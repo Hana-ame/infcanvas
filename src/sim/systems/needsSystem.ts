@@ -19,8 +19,13 @@ export class NeedsSystem implements GameSystem {
     if (ver !== this.wonderVersion) {
       this.wonderVersion = ver;
       let found = false;
+      this._wonderAura = null;
       for (const [, b] of this.ctx.world.buildings) {
-        if (b.def.tags?.includes('wonder')) { found = true; break; }
+        if (b.def.tags?.includes('wonder')) {
+          found = true;
+          this._wonderAura = b.def.aura ?? null;
+          break;
+        }
       }
       this.wonderCache = found;
     }
@@ -28,18 +33,20 @@ export class NeedsSystem implements GameSystem {
   }
 
   update(dt: number): void {
+    const t = this.ctx.tuning.needs;
     for (const eid of this.ctx.pawnList) {
       const st = this.ctx.pawnStates.get(eid);
       if (!st) continue;
       const n = this.ctx.readNeeds(eid);
       if (!n) continue;
-      tickNeeds(n, dt);
-      // 夜晚精力消耗加快
-      if (this.ctx.isNight()) n.rest -= 0.12 * dt;
-      // 篝火光环（饥荒式社会锚点）：火边心情回暖、夜晚不易困
-      if (this.nearCampfire(eid)) {
-        n.mood = Math.min(100, n.mood + 0.5 * dt);
-        n.rest = Math.min(100, n.rest + 0.3 * dt);
+      tickNeeds(n, dt, t);
+      // 夜晚精力消耗加快（读 tuning.needs）
+      if (this.ctx.isNight()) n.rest -= t.nightRestDrain * dt;
+      // 篝火光环（饥荒式社会锚点）：火边心情回暖、夜晚不易困（读 BuildingDef.aura）
+      const aura = this.nearAura(eid);
+      if (aura) {
+        if (aura.moodPerSec) n.mood = Math.min(100, n.mood + aura.moodPerSec * dt);
+        if (aura.restPerSec) n.rest = Math.min(100, n.rest + aura.restPerSec * dt);
       }
       // 神谕祝福（buff 持续期间心情加成）
       if (st.oracleBuff && st.oracleBuff.until > this.ctx.time) {
@@ -47,14 +54,15 @@ export class NeedsSystem implements GameSystem {
       }
       // 奇观光环（Q10）：纪念碑建成 → 全营地敬畏（心情+信仰）
       if (this.hasWonder) {
-        n.mood = Math.min(100, n.mood + 0.3 * dt);
+        const wonderAura = this.wonderAura;
+        if (wonderAura?.moodPerSec) n.mood = Math.min(100, n.mood + wonderAura.moodPerSec * dt);
       }
       this.ctx.setNeeds(eid, n);
       // 饿死
       if (n.food <= 0) {
         const h = this.ctx.readHealth(eid);
         if (h) {
-          h.hp -= 2.5 * dt;
+          h.hp -= t.starvationDmg * dt;
           if (h.hp <= 0) {
             this.ctx.setHealth(eid, { hp: 0, maxHp: h.maxHp });
             const pos = this.ctx.readPosition(eid);
@@ -65,26 +73,37 @@ export class NeedsSystem implements GameSystem {
           this.ctx.setHealth(eid, h);
         }
       }
-      const urgent = urgentNeedAction(n);
+      const urgent = urgentNeedAction(n, this.ctx.tuning.needs);
       if (urgent) st.urgent = urgent;
     }
   }
 
-  // 篝火半径内（社交/安心锚点）
-  private nearCampfire(eid: number): boolean {
+  // 附近 aura 建筑（篝火/纪念碑）——返回最近的 aura 定义（读 BuildingDef.aura）
+  private nearAura(eid: number): { moodPerSec?: number; restPerSec?: number } | null {
     const pos = this.ctx.pawnPositions.get(eid);
-    if (!pos) return false;
+    if (!pos) return null;
     const w = this.ctx.world;
     const R = 6;
+    let best: { moodPerSec?: number; restPerSec?: number } | null = null;
+    let bestD = Infinity;
     for (let dy = -R; dy <= R; dy++) {
       for (let dx = -R; dx <= R; dx++) {
         const bx = Math.round(pos.x) + dx;
         const by = Math.round(pos.y) + dy;
         if (!w.inBounds(bx, by)) continue;
         const b = w.getBuilding(bx, by);
-        if (b && b.def.tags?.includes('warmth')) return true;
+        if (b && b.def.aura) {
+          const d = dx * dx + dy * dy;
+          if (d < bestD) { bestD = d; best = b.def.aura; }
+        }
       }
     }
-    return false;
+    return best;
+  }
+
+  // 奇观（纪念碑）aura 定义——hasWonder 按 buildingVersion 缓存填充
+  private _wonderAura: { moodPerSec?: number } | null = null;
+  private get wonderAura(): { moodPerSec?: number } | null {
+    return this._wonderAura;
   }
 }

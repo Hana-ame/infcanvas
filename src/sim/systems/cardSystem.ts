@@ -6,15 +6,18 @@ import type { EventBus } from '../core/events';
 import type { PawnState } from '../sim';
 import type { BehaviorCard, CardContext, CardView, BehaviorIntent } from '../ai/pawn';
 import { drawCards, pickBest, BASE_CARDS, JOB_CARD } from '../ai/pawn';
-import { BUILDINGS } from '../defs';
 import { fulfill } from '../core/desires';
 
 // 意图执行器：mod 可注册新意图
 export type IntentExecutor = (ctx: SimContext, eid: number, st: PawnState, intent: BehaviorIntent) => void;
 
+// 工作执行器：mod 可注册新工作类型（walkAndWork 按 workType 分派到执行器）
+export type WorkExecutor = (ctx: SimContext, eid: number, st: PawnState, intent: BehaviorIntent) => void;
+
 export class BehaviorSystem implements GameSystem {
   id = 'behavior';
   private intentExecutors = new Map<string, IntentExecutor>();
+  private workExecutors = new Map<string, WorkExecutor>();
 
   constructor(private ctx: SimContext) {
     // 注册内建意图执行器
@@ -24,11 +27,22 @@ export class BehaviorSystem implements GameSystem {
     this.intentExecutors.set('heal', (c, eid, st, intent) => this.execHeal(c, eid, st, intent));
     this.intentExecutors.set('pray', (c, eid, st, intent) => this.execPray(c, eid, st, intent));
     this.intentExecutors.set('idle', (c, eid, st) => { st.job = '闲逛'; });
+    // 注册内建工作执行器（walkAndWork 的 workType 分派）
+    this.workExecutors.set('chop', (c, eid, st) => this.workChop(c, eid, st));
+    this.workExecutors.set('mine', (c, eid, st) => this.workMine(c, eid, st));
+    this.workExecutors.set('caveMine', (c, eid, st) => this.workCaveMine(c, eid, st));
+    this.workExecutors.set('build', (c, eid, st) => this.workBuild(c, eid, st));
   }
 
   // mod 入口：注册新意图执行器
   registerIntent(action: string, fn: IntentExecutor): this {
     this.intentExecutors.set(action, fn);
+    return this;
+  }
+
+  // mod 入口：注册新工作类型执行器（配合卡 decide 产出的 workType）
+  registerWork(type: string, fn: WorkExecutor): this {
+    this.workExecutors.set(type, fn);
     return this;
   }
 
@@ -43,7 +57,7 @@ export class BehaviorSystem implements GameSystem {
 
       // 理智崩溃：狂乱行为由 SanSystem 接管（发呆/乱跑），不自动决策
       const n = this.ctx.readNeeds(eid);
-      if (n && n.san < 25) {
+      if (n && n.san < this.ctx.tuning.san.crazyAt) {
         st.job = '理智崩溃';
         continue;
       }
@@ -116,6 +130,7 @@ export class BehaviorSystem implements GameSystem {
     if (!card) return null;
     // 意图失真：违抗 roll —— 仅当"工作卡被选但存在未选的本我卡"时才可能违抗
     // （若本来选的就是本我卡/闲逛，不算违抗）加冷却防刷屏
+    const cd = this.ctx.tuning.card;
     const picked = card;
     let chosen = picked;
     if (picked.series === 'work' && !(st.defyCd ?? 0)) {
@@ -123,12 +138,12 @@ export class BehaviorSystem implements GameSystem {
       if (idCard) {
         const n = this.ctx.readNeeds(eid);
         const lazy = st.dna.traits.includes('懒惰');
-        const moodLow = (n?.mood ?? 60) < 20;
-        const faithReduce = (st.faith ?? 0) * 0.005;
-        const base = Math.max(0, (lazy ? 0.25 : 0) + (moodLow ? 0.3 : 0) - faithReduce);
+        const moodLow = (n?.mood ?? 60) < cd.defyMoodAt;
+        const faithReduce = (st.faith ?? 0) * cd.faithReducePerFaith;
+        const base = Math.max(0, (lazy ? cd.defyLazy : 0) + (moodLow ? cd.defyMoodLow : 0) - faithReduce);
         if (base > 0 && this.ctx.rng.next() < base) {
           chosen = idCard;
-          st.defyCd = 30; // 30 秒内不再违抗
+          st.defyCd = cd.defyCd;
           this.ctx.logEvent('😒 小人违抗了安排');
         }
       }
@@ -141,50 +156,68 @@ export class BehaviorSystem implements GameSystem {
       time: this.ctx.time,
     };
     st.lastSeries = chosen.series;
+    // 卡自带"满足欲望"声明（数据驱动，替代按 job 文案匹配）：选中即满足
+    if (st.desires) {
+      for (const s of chosen.satisfies ?? []) fulfill(st.desires, s.desire, s.amount);
+    }
     return chosen.decide(ctx);
   }
 
   // ---- 意图执行 ----
   private execWalkAndWork(c: SimContext, eid: number, st: PawnState, intent: BehaviorIntent): void {
+    const exec = intent.workType ? this.workExecutors.get(intent.workType) : undefined;
+    if (exec) exec(c, eid, st, intent);
+    else st.job = '闲逛';
+  }
+
+  private workChop(c: SimContext, eid: number, st: PawnState): void {
     const pos = c.readPosition(eid);
     if (!pos) return;
-    if (intent.workType === 'chop') {
-      const tree = c.findNearest(pos, (x, y) => c.world.getTile(x, y) === 'tree', true);
-      if (tree) { st.chopTarget = tree; c.moveAdjacent(eid, tree.x, tree.y); }
-      else st.job = '闲逛';
-    } else if (intent.workType === 'mine') {
-      const ore = c.findNearest(pos, (x, y) => c.world.getTile(x, y) === 'ore', true);
-      if (ore) { st.mineTarget = ore; c.moveAdjacent(eid, ore.x, ore.y); }
-      else st.job = '闲逛';
-    } else if (intent.workType === 'caveMine') {
-      const cave = c.findNearest(pos, (x, y) => c.world.getBuilding(x, y)?.def.tags?.includes('mine') ?? false, true);
-      if (cave) { st.caveTarget = cave; c.moveAdjacent(eid, cave.x, cave.y); }
-      else st.job = '闲逛';
-    } else if (intent.workType === 'build') {
-      if (c.buildQueue.length > 0) {
-        // 找最近的蓝图（而不是永远第一个）
-        const pos = c.readPosition(eid);
-        let best: (typeof c.buildQueue)[number] | null = null;
-        let bestD = Infinity;
-        if (pos) {
-          for (const b of c.buildQueue) {
-            const d = (b.x - pos.x) ** 2 + (b.y - pos.y) ** 2;
-            if (d < bestD) { bestD = d; best = b; }
-          }
+    const tree = c.findNearest(pos, (x, y) => c.world.getTile(x, y) === 'tree', true);
+    if (tree) { st.chopTarget = tree; c.moveAdjacent(eid, tree.x, tree.y); }
+    else st.job = '闲逛';
+  }
+
+  private workMine(c: SimContext, eid: number, st: PawnState): void {
+    const pos = c.readPosition(eid);
+    if (!pos) return;
+    const ore = c.findNearest(pos, (x, y) => c.world.getTile(x, y) === 'ore', true);
+    if (ore) { st.mineTarget = ore; c.moveAdjacent(eid, ore.x, ore.y); }
+    else st.job = '闲逛';
+  }
+
+  private workCaveMine(c: SimContext, eid: number, st: PawnState): void {
+    const pos = c.readPosition(eid);
+    if (!pos) return;
+    const cave = c.findNearest(pos, (x, y) => c.world.getBuilding(x, y)?.def.tags?.includes('mine') ?? false, true);
+    if (cave) { st.caveTarget = cave; c.moveAdjacent(eid, cave.x, cave.y); }
+    else st.job = '闲逛';
+  }
+
+  private workBuild(c: SimContext, eid: number, st: PawnState): void {
+    if (c.buildQueue.length > 0) {
+      // 找最近的蓝图（而不是永远第一个）
+      const pos = c.readPosition(eid);
+      let best: (typeof c.buildQueue)[number] | null = null;
+      let bestD = Infinity;
+      if (pos) {
+        for (const b of c.buildQueue) {
+          const d = (b.x - pos.x) ** 2 + (b.y - pos.y) ** 2;
+          if (d < bestD) { bestD = d; best = b; }
         }
-        const b = best ?? c.buildQueue[0];
-        const def = BUILDINGS[b.defId];
-        st.job = `建造:${def.name}`;
-        c.moveTo(eid, b.x, b.y);
-      } else st.job = '闲逛';
-    }
+      }
+      const b = best ?? c.buildQueue[0];
+      const def = c.buildingDef(b.defId);
+      st.job = `建造:${def?.name ?? b.defId}`;
+      c.moveTo(eid, b.x, b.y);
+    } else st.job = '闲逛';
   }
 
   private execEat(c: SimContext, eid: number, st: PawnState, _intent: BehaviorIntent): void {
     const n = c.readNeeds(eid);
     if (n && c.stockpile.food > 0) {
       c.stockpile.food--;
-      n.food = Math.min(100, n.food + 40);
+      n.food = Math.min(100, n.food + c.tuning.card.eatAmount);
       c.setNeeds(eid, n);
       if (st.desires) fulfill(st.desires, 'gluttony', 12);
       c.recordLean(eid, 'eat', 1);
@@ -195,7 +228,7 @@ export class BehaviorSystem implements GameSystem {
   private execRest(c: SimContext, eid: number, st: PawnState, _intent: BehaviorIntent): void {
     const n = c.readNeeds(eid);
     if (n) {
-      n.rest = Math.min(100, n.rest + 40);
+      n.rest = Math.min(100, n.rest + c.tuning.card.restAmount);
       c.setNeeds(eid, n);
       if (st.desires) fulfill(st.desires, 'sloth', 10);
       c.recordLean(eid, 'rest', 1);
@@ -231,18 +264,18 @@ export class BehaviorSystem implements GameSystem {
     void dt;
     const n = this.ctx.readNeeds(eid);
     if (!n) return;
-    if (st.urgent === 'eat' && n.food >= 70) { st.urgent = undefined; return; }
-    if (st.urgent === 'rest' && n.rest >= 70) { st.urgent = undefined; return; }
+    if (st.urgent === 'eat' && n.food >= this.ctx.tuning.needs.urgentEatAt) { st.urgent = undefined; return; }
+    if (st.urgent === 'rest' && n.rest >= this.ctx.tuning.needs.urgentRestAt) { st.urgent = undefined; return; }
     if (st.urgent === 'eat' && this.ctx.stockpile.food > 0) {
       this.ctx.stockpile.food--;
-      n.food = Math.min(100, n.food + 50);
+      n.food = Math.min(100, n.food + this.ctx.tuning.card.eatAmountUrgent);
       this.ctx.setNeeds(eid, n);
       if (st.desires) fulfill(st.desires, 'gluttony', 12);
       this.ctx.recordLean(eid, 'eat', 1);
       this.ctx.bus.emit({ type: 'eat', eid });
       st.urgent = undefined;
     } else if (st.urgent === 'rest') {
-      n.rest = Math.min(100, n.rest + 40);
+      n.rest = Math.min(100, n.rest + this.ctx.tuning.card.restAmountUrgent);
       this.ctx.setNeeds(eid, n);
       if (st.desires) fulfill(st.desires, 'sloth', 10);
       this.ctx.recordLean(eid, 'rest', 1);
@@ -297,6 +330,11 @@ export class BehaviorSystem implements GameSystem {
     } else if (st.healTarget) {
       st.healTarget = undefined;
       st.healing = { progress: 0 };
+    } else if (st.onArriveWork) {
+      // mod 工作的到达回执：executor 设 st.onArriveWork，走到点后调用
+      const w = st.onArriveWork;
+      st.onArriveWork = undefined;
+      w();
     }
   }
 }

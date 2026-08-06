@@ -12,10 +12,11 @@ export class PopulationSystem implements GameSystem {
   init(_bus: EventBus): void {}
 
   update(dt: number): void {
-    if (this.ctx.pawnList.length >= 12) return;
+    const p = this.ctx.tuning.population;
+    if (this.ctx.pawnList.length >= p.maxPawns) return;
     this.recruitTimer += dt;
-    if (this.recruitTimer < 45) return;
-    if (this.ctx.stockpile.food < 60) { this.recruitTimer = 30; return; }
+    if (this.recruitTimer < p.recruitInterval) return;
+    if (this.ctx.stockpile.food < p.foodThreshold) { this.recruitTimer = p.recruitRetryAfter; return; }
     this.recruitTimer = 0;
     // 找出生点附近空位生成
     const cx = Math.floor(this.ctx.world.width / 2);

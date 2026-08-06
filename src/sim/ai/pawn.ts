@@ -54,7 +54,7 @@ export type IntentAction = 'walkAndWork' | 'eat' | 'rest' | 'pray' | 'heal' | 'i
 
 export interface BehaviorIntent {
   action: IntentAction;
-  workType?: 'chop' | 'mine' | 'caveMine' | 'build'; // walkAndWork 用
+  workType?: string; // walkAndWork 用（开放字符串：内置 chop/mine/caveMine/build，mod 可注册新工作类型）
   label: string; // 显示的工作名
 }
 
@@ -66,6 +66,8 @@ export interface BehaviorCard {
   weight: number;
   condition?: (ctx: CardContext) => boolean;
   utility?: (ctx: CardContext) => number;
+  // 满足欲望声明（数据驱动）：卡被选中执行后满足对应欲望（mod 新工作卡可声明，替代文案匹配）
+  satisfies?: { desire: DesireId; amount: number }[];
   decide(ctx: CardContext): BehaviorIntent;
 }
 
@@ -91,29 +93,34 @@ export const BASE_CARDS: BehaviorCard[] = [
   {
     id: 'chop', name: '伐木', series: 'work', weight: 6,
     utility: () => 30,
+    satisfies: [{ desire: 'greed', amount: 2 }],
     decide: () => ({ action: 'walkAndWork', workType: 'chop', label: '伐木' }),
   },
   {
     id: 'mine', name: '采矿', series: 'work', weight: 4,
     utility: () => 25,
+    satisfies: [{ desire: 'greed', amount: 2 }],
     decide: () => ({ action: 'walkAndWork', workType: 'mine', label: '采矿' }),
   },
   {
     id: 'caveMine', name: '矿洞采掘', series: 'work', weight: 6,
     condition: (c) => c.view.hasCave(),
     utility: () => 28,
+    satisfies: [{ desire: 'greed', amount: 2 }],
     decide: () => ({ action: 'walkAndWork', workType: 'caveMine', label: '矿洞采掘' }),
   },
   {
     id: 'build', name: '建造', series: 'work', weight: 5,
     condition: (c) => c.view.buildQueueCount > 0,
     utility: (c) => c.view.buildQueueCount * 20,
+    satisfies: [{ desire: 'greed', amount: 1.5 }],
     decide: () => ({ action: 'walkAndWork', workType: 'build', label: '建造' }),
   },
   {
     id: 'pray', name: '祈祷', series: 'religion', weight: 1,
     condition: (c) => c.view.hasCampfire(),
     utility: () => 6,
+    satisfies: [{ desire: 'pride', amount: 2 }],
     decide: () => ({ action: 'pray', label: '祈祷' }),
   },
   {
@@ -227,20 +234,19 @@ export const TRAIT_CARDS: Record<string, BehaviorCard> = {
   },
 };
 
-// 初始卡池：天赋卡 + 基础卡（+ mod 卡）
+// 初始卡池：天赋卡 + mod 卡（全部进入，确保 mod 卡必在池中）+ 基础卡填到 maxSlots
 export function initSlots(dna: Dna, extraCards?: BehaviorCard[]): (BehaviorCard | null)[] {
   const slots: (BehaviorCard | null)[] = [];
   const traitCards = dna.traits
     .map((t) => TRAIT_CARDS[t])
     .filter((c): c is BehaviorCard => c !== undefined);
   for (const tc of traitCards) slots.push(tc);
+  // mod 卡全部进池（去重排除基础卡；即使超 maxSlots 也保留——抽卡按权重，容量不再挤出 mod 玩法）
+  const extra = (extraCards ?? []).filter((c) => !BASE_CARDS.some((b) => b.id === c.id));
+  for (const ec of extra) slots.push(ec);
   let baseIdx = 0;
-  const pool = [...BASE_CARDS, ...(extraCards ?? [])];
-  while (slots.length < dna.maxSlots && baseIdx < pool.length) {
-    slots.push(pool[baseIdx++]);
-  }
-  while (slots.length < dna.maxSlots) {
-    slots.push(pool[0]);
+  while (slots.length < dna.maxSlots && baseIdx < BASE_CARDS.length) {
+    slots.push(BASE_CARDS[baseIdx++]);
   }
   return slots;
 }

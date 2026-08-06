@@ -4,10 +4,7 @@ import type { GameSystem } from './registry';
 import type { SimContext } from './context';
 import type { EventBus, GameEvent } from '../core/events';
 import type { PawnState, NeedsData } from '../sim';
-
-const CRAZY_SAN = 25; // 低于此值触发狂乱
-const WITNESS_RADIUS = 8; // 目睹死亡的距离
-const FIRE_COMFORT = 7; // 篝火安全感半径
+import type { SanTuning } from '../defs/tuning';
 
 export class SanSystem implements GameSystem {
   id = 'san';
@@ -19,22 +16,23 @@ export class SanSystem implements GameSystem {
     bus.on('pawn_died', (ev) => {
       const died = ev as Extract<GameEvent, { type: 'pawn_died' }>;
       if (died.cause === 'starvation' || died.cause === 'combat') {
+        const s = this.ctx.tuning.san;
         for (const eid of this.ctx.pawnList) {
           const pos = this.ctx.pawnPositions.get(eid);
           if (!pos) continue;
           const d = Math.hypot(pos.x - died.x, pos.y - died.y);
-          if (d <= WITNESS_RADIUS) {
+          if (d <= s.witnessRadius) {
             const n = this.ctx.readNeeds(eid);
             if (n) {
               // POW 意志抗压：高意志对死亡冲击耐受（COC §3）
               const dna = this.ctx.dnaOf(eid);
               const resist = dna ? 1 - Math.max(0, (dna.pow - 40)) / 100 : 1;
-              const shock = 12 * Math.max(0.4, 1 - d / WITNESS_RADIUS) * Math.max(0.4, resist);
+              const shock = s.deathShock * Math.max(0.4, 1 - d / s.witnessRadius) * Math.max(0.4, resist);
               n.san -= shock;
-              n.mood -= 4;
+              n.mood -= s.deathMood;
               this.ctx.setNeeds(eid, n);
-              this.ctx.adjustMood(eid, -4);
-              if (n.san < CRAZY_SAN) this.ctx.logEvent('😨 目睹死亡，理智崩溃');
+              this.ctx.adjustMood(eid, -s.deathMood);
+              if (n.san < s.crazyAt) this.ctx.logEvent('😨 目睹死亡，理智崩溃');
             }
           }
         }
@@ -43,6 +41,7 @@ export class SanSystem implements GameSystem {
   }
 
   update(dt: number): void {
+    const s = this.ctx.tuning.san;
     for (const eid of this.ctx.pawnList) {
       const st = this.ctx.pawnStates.get(eid);
       if (!st) continue;
@@ -52,30 +51,42 @@ export class SanSystem implements GameSystem {
       if (!pos) continue;
 
       // 黑夜 + 远离篝火 → 黑暗恐惧，理智流失（POW 高更镇定）
-      if (this.ctx.isNight() && !this.nearCampfire(pos.x, pos.y)) {
+      if (this.ctx.isNight() && !this.nearCampfire(pos.x, pos.y, s.fireComfortRadius)) {
         const dna = this.ctx.dnaOf(eid);
         const resist = dna ? 1 - Math.max(0, (dna.pow - 40)) / 100 : 1;
-        n.san -= 0.35 * Math.max(0.4, resist) * dt;
+        n.san -= s.nightDrain * Math.max(0.4, resist) * dt;
       }
 
-      // 篝火旁休息 → 理智恢复
-      if (this.nearCampfire(pos.x, pos.y)) {
-        n.san += 2.5 * dt;
+      // 篝火旁休息 → 理智恢复（BuildingDef.aura.sanPerSec 优先）
+      if (this.nearCampfire(pos.x, pos.y, s.fireComfortRadius)) {
+        n.san += this.fireRecoverAt(pos.x, pos.y, s.fireRecover) * dt;
       }
 
       this.ctx.setNeeds(eid, n);
 
       // 狂乱行为：理智过低 → 发呆 / 乱跑（行为变化极端档）
-      if (n.san < CRAZY_SAN) {
-        this.handleCrazy(eid, st, n, dt);
+      if (n.san < s.crazyAt) {
+        this.handleCrazy(eid, st, n, dt, s);
       }
     }
   }
 
-  private nearCampfire(x: number, y: number): boolean {
+  // 篝火光环理智恢复：aura.sanPerSec 优先，否则 tuning.san.fireRecover
+  private fireRecoverAt(x: number, y: number, fallback: number): number {
     const w = this.ctx.world;
-    for (let dy = -FIRE_COMFORT; dy <= FIRE_COMFORT; dy++) {
-      for (let dx = -FIRE_COMFORT; dx <= FIRE_COMFORT; dx++) {
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const b = w.getBuilding(Math.round(x) + dx, Math.round(y) + dy);
+        if (b && b.def.aura?.sanPerSec !== undefined) return b.def.aura.sanPerSec;
+      }
+    }
+    return fallback;
+  }
+
+  private nearCampfire(x: number, y: number, radius: number): boolean {
+    const w = this.ctx.world;
+    for (let dy = -radius; dy <= radius; dy++) {
+      for (let dx = -radius; dx <= radius; dx++) {
         const bx = Math.round(x) + dx;
         const by = Math.round(y) + dy;
         if (!w.inBounds(bx, by)) continue;
@@ -87,7 +98,7 @@ export class SanSystem implements GameSystem {
   }
 
   // 狂乱：发呆或随机乱跑
-  private handleCrazy(eid: number, st: PawnState, n: NeedsData, dt: number): void {
+  private handleCrazy(eid: number, st: PawnState, n: NeedsData, dt: number, s: SanTuning): void {
     // 狂乱中不工作、不进食决策
     if (st.path && st.pathIndex < st.path.length) return; // 继续走完当前路径
     st.job = '理智崩溃';
@@ -103,7 +114,7 @@ export class SanSystem implements GameSystem {
       const ty = Math.round(pos.y) + this.ctx.rng.int(-6, 6);
       if (w.inBounds(tx, ty) && w.isPassable(tx, ty)) {
         this.ctx.moveTo(eid, tx, ty);
-        st.crazyCooldown = 3 + this.ctx.rng.next() * 4;
+        st.crazyCooldown = s.crazyCooldownMin + this.ctx.rng.next() * (s.crazyCooldownMax - s.crazyCooldownMin);
         return;
       }
     }

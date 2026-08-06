@@ -2,7 +2,6 @@
 import type { GameSystem } from './registry';
 import type { SimContext } from './context';
 import type { EventBus } from '../core/events';
-import { BUILDINGS } from '../defs';
 
 export class BuildSystem implements GameSystem {
   id = 'build';
@@ -16,15 +15,16 @@ export class BuildSystem implements GameSystem {
     for (let i = q.length - 1; i >= 0; i--) {
       const b = q[i];
       b.progress += dt;
-      const def = BUILDINGS[b.defId];
+      const def = this.ctx.buildingDef(b.defId);
+      if (!def) continue;
       if (b.progress >= def.buildTime) {
         if (b.cost) {
           this.ctx.stockpile.wood -= b.cost.wood;
           if (b.cost.ore) this.ctx.stockpile.ore = Math.max(0, (this.ctx.stockpile.ore ?? 0) - b.cost.ore);
         }
-        // 教堂：若原地已有篝火则升级（Q9 即时指令），否则新建
+        // 升级语义数据化：若原地已有"会升级成此建筑"的建筑（def.upgradesTo === b.defId）→ 原地升级而非新建
         const existing = this.ctx.world.getBuilding(b.x, b.y);
-        if (b.defId === 'church' && existing) {
+        if (existing && existing.def.upgradesTo === b.defId) {
           this.ctx.upgradeBuilding(b.x, b.y, b.defId, b.faction);
         } else {
           this.ctx.world.placeBuilding(b.x, b.y, b.defId, b.faction);

@@ -22,7 +22,6 @@ export type EventProvider = () => ScriptedEvent | null;
 export class EventSystem implements GameSystem {
   id = 'events';
   private timer = 0;
-  private interval = 45; // 每 45 秒 roll 一次
   private lastTrigger = new Map<string, number>(); // id → 上次触发时间
   private provider: EventProvider;
 
@@ -40,7 +39,8 @@ export class EventSystem implements GameSystem {
   update(dt: number): void {
     this.timer -= dt;
     if (this.timer > 0) return;
-    this.timer = this.interval + Math.floor(this.ctx.rng.next() * 30); // 45-75s 一次
+    const e = this.ctx.tuning.event;
+    this.timer = e.interval + Math.floor(this.ctx.rng.next() * e.intervalJitter);
     const ev = this.provider();
     if (ev) {
       this.lastTrigger.set(ev.id, this.ctx.time);

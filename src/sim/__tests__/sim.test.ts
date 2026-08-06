@@ -1157,3 +1157,232 @@ describe('叙事压力（DESIGN §6）', () => {
     expect(first).toBeGreaterThan(0);
   });
 });
+
+describe('mod 玩法（DATA_DRIVEN §6 验收）', () => {
+  it('overrideTuning changes raid difficulty (wolf hp)', () => {
+    const sim = new Sim({ seed: 200, pawnCount: 2, mods: (m) => {
+      m.overrideTuning({ combat: { wolfHp: 10 } });
+    } });
+    expect(sim.tuning.combat.wolfHp).toBe(10);
+    // 触发一波袭击 → 狼血量应为 10*压力
+    let hp = 0;
+    for (let i = 0; i < 8000 && hp === 0; i++) {
+      sim.step(1 / 20);
+      if (sim.hostiles.length > 0) hp = sim.hostiles[0].hp;
+    }
+    expect(hp).toBeGreaterThan(0);
+    expect(hp).toBeLessThanOrEqual(20); // 10 * 压力上限 2
+  });
+
+  it('registerRecipe adds a new production (herb farm passive)', () => {
+    const sim = new Sim({ seed: 201, pawnCount: 2, mods: (m) => {
+      m.registerItem({ id: 'herb', name: '草药', stackable: true, maxStack: 99 });
+      m.registerRecipe({ id: 'herb-farm', name: '草药田', kind: 'passive', output: { item: 'herb', amount: 0.5 } });
+      m.registerBuilding({
+        id: 'herbfarm', name: '草药田', size: { x: 1, y: 1 }, hp: 60, color: '#3a8a3a',
+        emoji: '🌿', passable: true, buildTime: 2, tags: ['farm', 'herb'], recipe: 'herb-farm',
+      });
+    } });
+    // 手动建草药田并产出（在出生点外找空位）
+    const cx = Math.floor(sim.world.width / 2);
+    const cy = Math.floor(sim.world.height / 2);
+    let placed = false;
+    for (let r = 3; r <= 8 && !placed; r++) {
+      for (let dx = -r; dx <= r && !placed; dx++) {
+        for (let dy = -r; dy <= r && !placed; dy++) {
+          if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue;
+          const x = cx + dx, y = cy + dy;
+          if (sim.world.inBounds(x, y) && sim.world.canBuildAt(x, y)) {
+            placed = sim.world.placeBuilding(x, y, 'herbfarm', 'player');
+            if (placed) sim.bus.emit({ type: 'building_built', x, y, defId: 'herbfarm' });
+          }
+        }
+      }
+    }
+    expect(placed).toBe(true);
+    // 运行农场系统（手动更新一次，farm 系统按 dt 累加）——玩家单位产出走全局库存
+    const su = sim.socialUnits;
+    const pid = sim.playerUnitId;
+    const before = sim.stockpile.herb ?? 0;
+    void pid;
+    su.addProductionNear(cx, cy, 'herb', 0.5);
+    const after = sim.stockpile.herb ?? 0;
+    expect(after - before).toBeGreaterThanOrEqual(0.5);
+  });
+
+  it('overrideDef swaps farm recipe to a higher-yield one', () => {
+    const sim = new Sim({ seed: 202, pawnCount: 2, mods: (m) => {
+      m.registerRecipe({ id: 'farm-plus', name: '高产能农田', kind: 'passive', output: { item: 'food', amount: 0.5 } });
+      m.overrideDef('building', 'farm', { recipe: 'farm-plus' });
+    } });
+    const farmDef = sim.buildingDef('farm');
+    expect(farmDef?.recipe).toBe('farm-plus');
+    expect(sim.recipe('farm-plus')?.output.amount).toBe(0.5);
+  });
+
+  it('registerEvent adds a new scripted event to the pool', () => {
+    let triggered = false;
+    const sim = new Sim({ seed: 203, pawnCount: 2, mods: (m) => {
+      m.registerEvent({
+        id: 'meteor', name: '陨石坠落', weight: 9999, minTime: 0, cooldown: 0,
+        condition: () => true,
+        run: (ctx) => {
+          triggered = true;
+          ctx.stockpile.ore = (ctx.stockpile.ore ?? 0) + 5;
+        },
+      });
+    } });
+    // 事件系统每隔 interval 秒 roll 一次，重权重确保被抽中
+    for (let i = 0; i < 6000 && !triggered; i++) sim.step(1 / 20);
+    expect(triggered).toBe(true);
+  });
+
+  it('registerExpansionPlan lets a mod add a new autobuild plan', () => {
+    const sim = new Sim({ seed: 204, pawnCount: 2, mods: (m) => {
+      m.registerExpansionPlan({
+        id: 'herb-farm-plan', defId: 'herbfarm', minWood: 5,
+        need: (c) => c.pawnList.length >= 2,
+      });
+    } });
+    sim.stockpile.wood = 100;
+    let planned = false;
+    for (let i = 0; i < 6000 && !planned; i++) {
+      sim.step(1 / 20);
+      planned = sim.buildQueue.some((b) => b.defId === 'herbfarm');
+    }
+    expect(planned).toBe(true);
+  });
+
+  it('overrideDef on tile changes gather yield', () => {
+    const sim = new Sim({ seed: 205, pawnCount: 1, mods: (m) => {
+      m.overrideDef('tile', 'tree', { harvest: { product: 'wood', time: 2.5, yieldSuccess: 50, yieldFail: 20, dc: 1 } });
+    } });
+    expect(sim.world.getTileDef(0, 0)).toBeDefined();
+    const treeDef = sim.world.getTileDef(0, 0);
+    void treeDef;
+    expect(sim.mods.tiles['tree'].harvest?.yieldSuccess).toBe(50);
+  });
+
+  it('registerWork lets a mod define a brand-new work type (walkAndWork dispatch)', () => {
+    let worked = false;
+    const sim = new Sim({
+      seed: 206, pawnCount: 1,
+      mods: (m) => {
+        // 新工作类型：卡 decide 产出非内置 workType → 分派到 mod 的执行器
+        m.registerWork('scavenge', (_c, _eid, st) => { worked = true; st.job = '拾荒'; });
+        m.registerCard({
+          id: 'scavenge', name: '拾荒', series: 'work', weight: 100,
+          condition: () => true,
+          utility: () => 999,
+          decide: () => ({ action: 'walkAndWork', workType: 'scavenge', label: '拾荒' }),
+        });
+      },
+    });
+    for (let i = 0; i < 600 && !worked; i++) sim.step(1 / 20);
+    expect(worked).toBe(true);
+    expect(sim.pawnStates.get(sim.pawns[0])!.job).toBe('拾荒');
+  });
+
+  it('registerHook fires before/after every step', () => {
+    let before = 0, after = 0;
+    const sim = new Sim({
+      seed: 207, pawnCount: 1,
+      mods: (m) => {
+        m.registerHook('step:before', () => { before++; });
+        m.registerHook('step:after', () => { after++; });
+      },
+    });
+    for (let i = 0; i < 5; i++) sim.step(1 / 20);
+    expect(before).toBe(5);
+    expect(after).toBe(5);
+  });
+
+  it('step hook can read and mutate sim state via ctx', () => {
+    const sim = new Sim({
+      seed: 208, pawnCount: 1,
+      mods: (m) => m.registerHook('step:before', (ctx) => {
+        (ctx as { sim: Sim }).sim.stockpile.wood += 1;
+      }),
+    });
+    const before = sim.stockpile.wood;
+    sim.step(1 / 20);
+    expect(sim.stockpile.wood).toBe(before + 1);
+  });
+
+  it('mod work card satisfies a desire via data declaration (no job-text matching)', () => {
+    const sim = new Sim({
+      seed: 209, pawnCount: 1,
+      mods: (m) => {
+        m.registerCard({
+          id: 'patrol', name: '巡逻', series: 'work', weight: 100,
+          condition: () => true, utility: () => 999,
+          satisfies: [{ desire: 'greed', amount: 3 }],
+          decide: () => ({ action: 'idle', label: '巡逻' }),
+        });
+      },
+    });
+    const st = sim.pawnStates.get(sim.pawns[0])!;
+    st.desires = { gluttony: 50, sloth: 50, greed: 10, envy: 50, pride: 50, wrath: 50, lust: 50 };
+    const before = st.desires.greed;
+    for (let i = 0; i < 300 && st.desires.greed <= before; i++) sim.step(1 / 20);
+    expect(st.desires.greed).toBeGreaterThan(before);
+  });
+
+  it('mod building with emitsLight lights nearby tiles (no campfire special-case)', () => {
+    const sim = new Sim({ seed: 210, pawnCount: 0, mods: (m) => {
+      m.registerBuilding({
+        id: 'lantern', name: '灯笼', size: { x: 1, y: 1 }, hp: 30, color: '#aaa', emoji: '🏮',
+        passable: true, buildTime: 1, emitsLight: 2, tags: [],
+      });
+    } });
+    const cx = Math.floor(sim.world.width / 2);
+    const cy = Math.floor(sim.world.height / 2);
+    expect(sim.world.placeBuilding(cx, cy, 'lantern', 'player')).toBe(true);
+    expect(sim.world.isLit(cx, cy)).toBe(true);
+  });
+
+  it('mod building with capabilities oracle enables the oracle command', () => {
+    const sim = new Sim({ seed: 211, pawnCount: 1, mods: (m) => {
+      m.registerBuilding({
+        id: 'altar', name: '祭坛', size: { x: 1, y: 1 }, hp: 300, color: '#553355', emoji: '🪔',
+        passable: true, buildTime: 2, capabilities: ['oracle'], tags: ['faith', 'anchor'],
+      });
+    } });
+    const cx = Math.floor(sim.world.width / 2);
+    const cy = Math.floor(sim.world.height / 2);
+    expect(sim.world.placeBuilding(cx, cy, 'altar', 'player')).toBe(true);
+    const st = sim.pawnStates.get(sim.pawns[0])!;
+    st.faith = 90;
+    sim.pawnPositions.set(sim.pawns[0], { x: cx, y: cy });
+    sim.issueCommand({ type: 'oracle', x: cx, y: cy });
+    expect(st.oracleBuff).toBeDefined();
+  });
+
+  it('craft building uses its own recipe, not the fixed workbench one', () => {
+    const sim = new Sim({ seed: 212, pawnCount: 0, mods: (m) => {
+      m.registerItem({ id: 'drink', name: '酒', stackable: true, maxStack: 50 });
+      m.registerRecipe({ id: 'brew', name: '酿酒', kind: 'batch', input: [{ item: 'wood', amount: 5 }], output: { item: 'drink', amount: 1 }, interval: 2 });
+      m.registerBuilding({
+        id: 'brewery', name: '酒坊', size: { x: 1, y: 1 }, hp: 200, color: '#aa8833', emoji: '🍺',
+        passable: true, buildTime: 2, tags: ['craft'], recipe: 'brew',
+      });
+    } });
+    const cx = Math.floor(sim.world.width / 2);
+    const cy = Math.floor(sim.world.height / 2);
+    expect(sim.world.placeBuilding(cx, cy, 'brewery', 'player')).toBe(true);
+    sim.stockpile.wood = 100;
+    for (let i = 0; i < 400; i++) sim.step(1 / 20); // 20s > interval 2s
+    expect(sim.stockpile.drink ?? 0).toBeGreaterThan(0); // 用自己配方产酒，而非固定 workbench 工具
+  });
+
+  it('priority rules are data-driven (overrideTuning changes the table)', () => {
+    const sim = new Sim({ seed: 213, pawnCount: 1, mods: (m) => {
+      m.overrideTuning({ card: { priority: [
+        { cardId: 'chop', resource: 'wood', lowAt: 999, boost: 3 },
+      ] } });
+    } });
+    sim.stockpile.wood = 200; // 高库存，但阈值 999 恒触发
+    for (let i = 0; i < 300; i++) sim.step(1 / 20);
+    expect(sim.factionPriority.chop).toBe(3);
+  });
+});

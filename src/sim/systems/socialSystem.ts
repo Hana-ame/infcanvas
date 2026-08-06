@@ -49,21 +49,22 @@ export class SocialSystem implements GameSystem {
   }
 
   // 关系效应（用户 Q8：社会关系支持协作/战争）
-  // 好感高 → 协作心情加成；敌对(≤-20) → 口角，积累冲突可能动手
+  // 好感高 → 协作心情加成；敌对 → 口角，积累冲突可能动手
   private relationEffects(a: number, b: number): void {
+    const s = this.ctx.tuning.social;
     const stA = this.ctx.pawnStates.get(a)!;
     const rel = stA.relationships?.get(b) ?? 0;
-    if (rel >= 40) {
+    if (rel >= s.friendAt) {
       // 亲密：一起干活心情好
-      this.ctx.adjustMood(a, 0.5);
+      this.ctx.adjustMood(a, s.moodFriend);
       const stB = this.ctx.pawnStates.get(b);
-      if (stB) this.ctx.adjustMood(b, 0.5);
-    } else if (rel <= -20) {
+      if (stB) this.ctx.adjustMood(b, s.moodFriend);
+    } else if (rel <= s.hostileAt) {
       // 敌对：口角升级，仇恨越深越容易动手
       const stB = this.ctx.pawnStates.get(b);
       if (!stB) return;
-      // 关系每敌对 10 点 +4% 动手概率（rel=-50 → 28%），比固定 5% 更合理
-      const punchChance = Math.max(0.08, Math.min(0.4, 0.08 + (Math.abs(rel) - 20) * 0.004));
+      // 关系每敌对 10 点 +0.4% 动手概率（rel=-50 → 28%），比固定 5% 更合理
+      const punchChance = Math.max(s.punchChanceMin, Math.min(s.punchChanceMax, s.punchChanceBase + (Math.abs(rel) - Math.abs(s.hostileAt)) * s.punchChancePerHostility));
       if (this.ctx.rng.next() < punchChance) {
         // 动手（战争萌芽）：低力量者吃亏，负好感加深
         const dnaA = this.ctx.dnaOf(a);
@@ -74,7 +75,7 @@ export class SocialSystem implements GameSystem {
         const loser = winner === a ? b : a;
         const hk = this.ctx.readHealth(loser);
         if (hk) {
-          hk.hp = Math.max(1, hk.hp - 8);
+          hk.hp = Math.max(1, hk.hp - s.punchDmg);
           this.ctx.setHealth(loser, hk);
         }
         const relLoser = stA.relationships ?? new Map();
@@ -89,21 +90,22 @@ export class SocialSystem implements GameSystem {
         this.ctx.adjustMood(loser, -5);
         this.ctx.logEvent(`👊 #${winner} 与 #${loser} 动手了！`);
       } else {
-        this.ctx.adjustMood(a, -0.5);
-        this.ctx.adjustMood(b, -0.5);
+        this.ctx.adjustMood(a, s.moodHostile);
+        this.ctx.adjustMood(b, s.moodHostile);
       }
     }
   }
 
   private interact(a: number, b: number, aCd: number): void {
+    const s = this.ctx.tuning.social;
     // 社交冷却：避免连续刷屏
     if (aCd > 0) return;
     const stA = this.ctx.pawnStates.get(a)!;
     const stB = this.ctx.pawnStates.get(b);
-    stA.socialCd = 15 + Math.floor(this.ctx.rng.next() * 10);
+    stA.socialCd = s.interactCdMin + Math.floor(this.ctx.rng.next() * (s.interactCdMax - s.interactCdMin));
 
     // 传教（信仰对抗，DESIGN §3 对抗检定）：高信仰者尝试说服邻居改信
-    if (stB && (stA.faith ?? 0) >= 30 && this.ctx.rng.next() < 0.25) {
+    if (stB && (stA.faith ?? 0) >= s.preachFaithAt && this.ctx.rng.next() < s.preachChance) {
       this.preach(a, b);
       return;
     }
@@ -123,14 +125,14 @@ export class SocialSystem implements GameSystem {
 
     // 好感度变化（双向，轻微）
     const relA = stA.relationships ?? new Map<number, number>();
-    const delta = tone === 'positive' ? 3 : tone === 'negative' ? -4 : 1;
+    const delta = tone === 'positive' ? s.relDeltaPositive : tone === 'negative' ? s.relDeltaNegative : s.relDeltaNeutral;
     const curA = relA.get(b) ?? 0;
     relA.set(b, Math.max(-50, Math.min(100, curA + delta)));
     stA.relationships = relA;
 
     // 心情微调
-    if (tone === 'positive') this.ctx.adjustMood(a, 1);
-    else if (tone === 'negative') this.ctx.adjustMood(a, -2);
+    if (tone === 'positive') this.ctx.adjustMood(a, s.moodPositive);
+    else if (tone === 'negative') this.ctx.adjustMood(a, s.moodNegative);
 
     // 文本（日志用）
     const line = this.line(tone);
@@ -143,6 +145,7 @@ export class SocialSystem implements GameSystem {
   // 传教：对抗检定（DESIGN §3）。传教者 魅力+信仰 vs 目标 意志
   // 成功 → 目标信仰升 + 好感升；失败 → 目标反感，传教者受挫
   private preach(a: number, b: number): void {
+    const s = this.ctx.tuning.social;
     const stA = this.ctx.pawnStates.get(a)!;
     const stB = this.ctx.pawnStates.get(b);
     if (!stB) return;
@@ -159,16 +162,16 @@ export class SocialSystem implements GameSystem {
     const relA = stA.relationships ?? new Map<number, number>();
     if (rollA > rollB) {
       // 成功传教
-      stB.faith = Math.min(100, (stB.faith ?? 0) + 4);
+      stB.faith = Math.min(100, (stB.faith ?? 0) + s.preachSucceedFaith);
       stA.faith = Math.min(100, faithA + 1);
       this.ctx.growSkill(a, 'social');
-      relA.set(b, Math.max(-50, Math.min(100, (relA.get(b) ?? 0) + 6)));
+      relA.set(b, Math.max(-50, Math.min(100, (relA.get(b) ?? 0) + s.preachSucceedRel)));
       stA.relationships = relA;
       this.ctx.bus.emit({ type: 'social', eid: a, target: b, tone: 'positive', topic: '布道' });
       this.ctx.logEvent(`🙏 #${a} 向 #${b} 布道，对方听了进去`);
     } else {
       // 失败：目标无动于衷甚至反感
-      relA.set(b, Math.max(-50, Math.min(100, (relA.get(b) ?? 0) - 5)));
+      relA.set(b, Math.max(-50, Math.min(100, (relA.get(b) ?? 0) + s.preachFailRel)));
       stA.relationships = relA;
       this.ctx.adjustMood(a, -2);
       this.ctx.bus.emit({ type: 'social', eid: a, target: b, tone: 'negative', topic: '布道' });
