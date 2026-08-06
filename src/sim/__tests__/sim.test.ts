@@ -1402,3 +1402,52 @@ describe('mod 玩法（DATA_DRIVEN §6 验收）', () => {
     expect(sim.factionPriority.chop).toBe(3);
   });
 });
+
+describe('存档 JSON 往返（save/load 修复）', () => {
+  it('slots 序列化为卡 id：JSON 往返后卡完整还原、step 不崩', () => {
+    const sim = new Sim({ seed: 800, pawnCount: 2, mods: (m) => {
+      m.registerWork('fish', (_c, _eid, st) => { st.job = '捕鱼中'; });
+      m.registerCard({
+        id: 'fish', name: '捕鱼', series: 'work', weight: 100,
+        condition: () => true, utility: () => 999,
+        satisfies: [{ desire: 'greed', amount: 2 }],
+        decide: () => ({ action: 'walkAndWork', workType: 'fish', label: '捕鱼' }),
+      });
+    } });
+    const eid = sim.pawns[0];
+    const idsBefore = sim.pawnStates.get(eid)!.slots.map((c) => c?.id ?? null);
+    expect(idsBefore).toContain('fish'); // mod 卡在池中
+    // 模拟浏览器真实路径：JSON 序列化往返
+    const data = JSON.parse(JSON.stringify(sim.save())) as ReturnType<Sim['save']>;
+    const sim2 = new Sim({ seed: 801, pawnCount: 2, mods: (m) => {
+      m.registerWork('fish', (_c, _eid, st) => { st.job = '捕鱼中'; });
+      m.registerCard({
+        id: 'fish', name: '捕鱼', series: 'work', weight: 100,
+        condition: () => true, utility: () => 999,
+        satisfies: [{ desire: 'greed', amount: 2 }],
+        decide: () => ({ action: 'walkAndWork', workType: 'fish', label: '捕鱼' }),
+      });
+    } });
+    sim2.load(data);
+    const eid2 = sim2.pawns[0];
+    const idsAfter = sim2.pawnStates.get(eid2)!.slots.map((c) => c?.id ?? null);
+    expect(idsAfter).toEqual(idsBefore); // trait/基础/mod 卡全部还原
+    // 抽卡执行不再崩溃（修复前 JSON 往返后 decide 为 undefined）
+    for (let i = 0; i < 600; i++) sim2.step(1 / 20);
+    expect(sim2.pawnStates.get(eid2)!.slots.length).toBeGreaterThan(0);
+  });
+
+  it('load 后 units.members 重新填充，不触发假团灭', () => {
+    const sim = new Sim({ seed: 802, pawnCount: 3 });
+    const data = JSON.parse(JSON.stringify(sim.save())) as ReturnType<Sim['save']>;
+    const sim2 = new Sim({ seed: 803, pawnCount: 3 });
+    sim2.load(data);
+    const pid = sim2.playerUnitId;
+    expect(pid).toBeTruthy();
+    // 修复前：members 恒空 → 首个 step 触发"本体团灭，附身"日志
+    sim2.step(1);
+    expect(sim2.playerUnitId).toBe(pid);
+    const unit = sim2.socialUnits.units.get(pid!)!;
+    expect(unit.members.length).toBeGreaterThan(0);
+  });
+});

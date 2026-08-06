@@ -10,7 +10,7 @@ import { SimRng } from './core/rng';
 import { initNeeds } from './core/needs';
 import { EventBus } from './core/events';
 import { HistoryLog } from './core/history';
-import { generateDna, initSlots, type Dna, type SkillId, BASE_CARDS } from './ai/pawn';
+import { generateDna, initSlots, type Dna, type SkillId, BASE_CARDS, TRAIT_CARDS } from './ai/pawn';
 import { initDesires, type DesireId } from './core/desires';
 import { initEnv, tickEnv, type EnvState } from './core/env';
 import { addMemory, setUnitSeq, type SocialUnit } from './core/socialUnit';
@@ -122,7 +122,7 @@ export interface SaveData {
   buildings: { key: number; defId: string; hp: number; faction: string }[];
   pawns: {
     eid: number; x: number; y: number;
-    dna: Dna; slots: ReturnType<typeof initSlots>;
+    dna: Dna; slots: (string | null)[]; // 卡 id（非函数）——JSON-safe
     needs: NeedsData | null; health: HealthData | null;
     faith?: number;
     skills?: Partial<Record<SkillId, number>>;
@@ -793,7 +793,7 @@ export class Sim implements SimContext {
           eid,
           x: pos.x, y: pos.y,
           dna: st.dna,
-          slots: st.slots,
+          slots: st.slots.map((c) => (c ? c.id : null)),
           needs: this.readNeeds(eid),
           health: this.readHealth(eid),
           faith: st.faith ?? 0,
@@ -837,15 +837,19 @@ export class Sim implements SimContext {
       if (m) maxSeq = Math.max(maxSeq, parseInt(m[1], 10));
     }
     setUnitSeq(maxSeq);
-    // 重建小人
-    for (const eid of this._pawnList) this.killPawn(eid);
+    // 重建小人（拷贝列表遍历，否则 killPawn 的 splice 会跳过隔一个）
+    for (const eid of [...this._pawnList]) this.killPawn(eid);
     if (data.pawns) {
       for (const p of data.pawns) {
         const eid = this.spawnPawn(Math.round(p.x), Math.round(p.y));
         if (eid === -1) continue;
         const st = this.pawnStates.get(eid)!;
         st.dna = p.dna;
-        st.slots = p.slots;
+        // 卡槽存 id（JSON-safe）：还原时按 id 从 mod 卡 → 基础卡 → 天赋卡 重取；查不到降级 null（抽卡跳过）
+        st.slots = (p.slots ?? []).map((id) => {
+          if (!id) return null;
+          return this.mods.cards.get(id) ?? BASE_CARDS.find((b) => b.id === id) ?? Object.values(TRAIT_CARDS).find((c) => c.id === id) ?? null;
+        });
         st.faith = p.faith ?? 0;
         st.skills = p.skills ?? {};
         st.desires = p.desires ?? initDesires(this.rng);
@@ -855,5 +859,9 @@ export class Sim implements SimContext {
         if (p.health) this.setHealth(eid, p.health);
       }
     }
+    // 重建后把小人重新归入最近的派系单位（否则 members 恒空 → 首轮 step 误判团灭附身）
+    for (const eid of this._pawnList) this.socialUnits.assignPawn(eid);
+    // 玩家单位若已不存在（坏档）则置空，由 checkPossession 逻辑接管
+    if (this.playerUnitId && !this.socialUnits.units.has(this.playerUnitId)) this.playerUnitId = null;
   }
 }
