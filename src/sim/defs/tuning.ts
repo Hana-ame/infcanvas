@@ -58,25 +58,22 @@ export interface FaithTuning {
 }
 
 export interface CombatTuning {
-  wolfHp: number;          // 狼基础血量
-  wolfSpeed: number;       // 狼移动速度（格/秒）
-  wolfDmg: number;         // 狼每秒伤害
-  unitDmg: number;         // 派系掠夺者每秒伤害
-  pawnDmg: number;         // 小人近战每秒伤害
-  unitHp: number;          // 掠夺者血量
-  initialRaidDelay: number; // 开局首波前等待
-  baseInterval: number;    // 基线袭击间隔
-  pressureCap: number;     // 叙事压力上限
-  pressureScale: number;   // 压力增速（和平秒数 / 基数）
+  raidEnemy: string;         // 袭击刷的敌人种类 id（查 enemies 表；mod 可切换/注册新敌人）
+  unitDmg: number;           // 派系掠夺者每秒伤害
+  pawnDmg: number;           // 小人近战每秒伤害
+  unitHp: number;            // 掠夺者血量
+  initialRaidDelay: number;  // 开局首波前等待
+  baseInterval: number;      // 基线袭击间隔
+  pressureCap: number;       // 叙事压力上限
+  pressureScale: number;     // 压力增速（和平秒数 / 基数）
   raidCountBase: number;
   raidCountPerPawn: number;
-  meleeRange: number;      // 接敌距离
-  buildingDmg: number;     // 打建筑每秒伤害
-  buildingRadius: number;  // 打建筑搜索半径
-  minDodge: number;        // DEX 闪避下限
-  dodgePerPoint: number;   // 每点 DEX 闪避
+  meleeRange: number;        // 接敌距离
+  buildingDmg: number;       // 打建筑每秒伤害
+  buildingRadius: number;    // 打建筑搜索半径
+  minDodge: number;          // DEX 闪避下限
+  dodgePerPoint: number;     // 每点 DEX 闪避
   dodgeBase: number;
-  wolfLootOre: number;     // 击杀掉矿
 }
 
 export interface SocialTuning {
@@ -312,9 +309,7 @@ export const TUNING: TuningConfig = {
     oracleTrustAt: 0.3,
   },
   combat: {
-    wolfHp: 60,
-    wolfSpeed: 3.5,
-    wolfDmg: 5,
+    raidEnemy: 'wolf',
     unitDmg: 7,
     pawnDmg: 8,
     unitHp: 90,
@@ -330,7 +325,6 @@ export const TUNING: TuningConfig = {
     minDodge: 0.05,
     dodgeBase: 30,
     dodgePerPoint: 0.01,
-    wolfLootOre: 2,
   },
   social: {
     interactCdMin: 15,

@@ -37,6 +37,7 @@ defs/           世界物定义（数据）：tile / building / item / recipe / 
   index.ts      tile·building·item
   recipes.ts    RecipeDef + RECIPES          （新增）
   tuning.ts     TuningConfig + TUNING        （新增，平衡参数总表）
+  enemies.ts    EnemyDef + ENEMIES           （新增，敌对种类：hp/speed/dmg/loot）
   events.ts     ScriptedEvent                （从 systems/scripts.ts 迁出）
 systems/        通用逻辑系统：只读 defs/tuning，不写死数值
 mods/registry.ts 注册表：register* / override* / tuning 覆盖
@@ -161,6 +162,7 @@ interface TuningConfig {
 registerTile(def: TileDef): this
 registerBuilding(def: BuildingDef): this
 registerItem(def: ItemDef): this
+registerEnemy(def: EnemyDef): this              // 新敌对种类（raidSystem 从 enemies 表查）
 registerCard(card: BehaviorCard): this
 registerRecipe(def: RecipeDef): this
 registerEvent(ev: ScriptedEvent): this          // 事件系统从 mods.events 读（不再只吃内置 SCRIPTED_EVENTS）
@@ -169,7 +171,7 @@ registerIntent(id, fn): this                     // 新意图执行器（新 act
 registerWork(type, fn): this                     // 新工作类型执行器（walkAndWork 按 workType 分派，配合卡 decide）
 registerSystem(s: GameSystem): this
 registerHook(stage, fn): this                    // 生命周期钩子（已接线 step:before / step:after）
-overrideDef(kind: 'tile'|'building'|'item'|'card'|'recipe', id, patch): this  // 部分覆盖数值
+overrideDef(kind: 'tile'|'building'|'item'|'card'|'recipe'|'enemy', id, patch): this  // 部分覆盖数值
 overrideTuning(patch: DeepPartial<TuningConfig>): this  // 覆盖平衡参数（deepMerge，只动传的键）
 ```
 
@@ -199,6 +201,7 @@ overrideTuning(patch: DeepPartial<TuningConfig>): this  // 覆盖平衡参数（
 11. ✅ **新神谕建筑**：`capabilities:['oracle']` 声明 → 可降下神谕
 12. ✅ **craft 用自己配方**：`recipe` 声明 → 每座加工建筑各产各的，不写死 workbench
 13. ✅ **派系优先级数据表**：`tuning.card.priority` rules，overrideTuning 改阈值生效
+14. ✅ **敌对种类数据化**：`registerEnemy` 新增 + `overrideTuning({combat:{raidEnemy:'boar'}})` 切换袭击类型；wolf 的 hp/speed/dmg/loot 全进 `defs/enemies.ts`
 
 > 修复记录：
 > - `Sim.tuning` 由字段改为 getter → `this.mods.tuning`，否则 mods 回调对 tuning 的覆盖在构造后对 `this.tuning` 快照不可见（最初 2 个 mod 测试因此失败）。

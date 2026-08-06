@@ -1159,11 +1159,11 @@ describe('叙事压力（DESIGN §6）', () => {
 });
 
 describe('mod 玩法（DATA_DRIVEN §6 验收）', () => {
-  it('overrideTuning changes raid difficulty (wolf hp)', () => {
+  it('overrideEnemy changes raid difficulty (wolf hp)', () => {
     const sim = new Sim({ seed: 200, pawnCount: 2, mods: (m) => {
-      m.overrideTuning({ combat: { wolfHp: 10 } });
+      m.overrideDef('enemy', 'wolf', { hp: 10 });
     } });
-    expect(sim.tuning.combat.wolfHp).toBe(10);
+    expect(sim.mods.enemies['wolf'].hp).toBe(10);
     // 触发一波袭击 → 狼血量应为 10*压力
     let hp = 0;
     for (let i = 0; i < 8000 && hp === 0; i++) {
@@ -1172,6 +1172,22 @@ describe('mod 玩法（DATA_DRIVEN §6 验收）', () => {
     }
     expect(hp).toBeGreaterThan(0);
     expect(hp).toBeLessThanOrEqual(20); // 10 * 压力上限 2
+  });
+
+  it('registerEnemy + raidEnemy swaps in a brand-new enemy type', () => {
+    const sim = new Sim({ seed: 214, pawnCount: 2, mods: (m) => {
+      m.registerEnemy({ id: 'boar', name: '野猪', hp: 40, speed: 4, dmg: 6, loot: { item: 'wood', amount: 3 } });
+      m.overrideTuning({ combat: { raidEnemy: 'boar' } });
+    } });
+    let h: typeof sim.hostiles[0] | undefined;
+    for (let i = 0; i < 8000 && !h; i++) {
+      sim.step(1 / 20);
+      if (sim.hostiles.length > 0) h = sim.hostiles[0];
+    }
+    expect(h).toBeDefined();
+    expect(h!.enemyId).toBe('boar');
+    expect(h!.name).toBe('野猪');
+    expect(h!.hp).toBeLessThanOrEqual(80); // 40 * 压力上限 2
   });
 
   it('registerRecipe adds a new production (herb farm passive)', () => {

@@ -2,6 +2,7 @@
 // 目标：任何 mod 能力都应能通过注册表实现，不改 sim 源码。
 // 注册时机：Sim 构造后立即调用（服务端加载 mod → 注册 → defs 只读下发客户端）。
 import type { TileDef, BuildingDef, ItemDef } from '../defs';
+import type { EnemyDef } from '../defs/enemies';
 import type { RecipeDef } from '../defs/recipes';
 import type { TuningConfig } from '../defs/tuning';
 import type { BehaviorCard } from '../ai/pawn';
@@ -18,6 +19,7 @@ export class ModRegistry {
   tilesMap = new Map<string, TileDef>();
   buildingsMap = new Map<string, BuildingDef>();
   itemsMap = new Map<string, ItemDef>();
+  enemiesMap = new Map<string, EnemyDef>();
   cards = new Map<string, BehaviorCard>();
   intents = new Map<string, IntentExecutor>();
   works = new Map<string, WorkExecutor>();
@@ -33,6 +35,7 @@ export class ModRegistry {
     tiles: Record<string, TileDef>;
     buildings: Record<string, BuildingDef>;
     items: Record<string, ItemDef>;
+    enemies: Record<string, EnemyDef>;
     cards: BehaviorCard[];
     recipes: Record<string, RecipeDef>;
     tuning: TuningConfig;
@@ -42,6 +45,7 @@ export class ModRegistry {
     for (const [k, v] of Object.entries(seed.tiles)) this.tilesMap.set(k, v);
     for (const [k, v] of Object.entries(seed.buildings)) this.buildingsMap.set(k, v);
     for (const [k, v] of Object.entries(seed.items)) this.itemsMap.set(k, v);
+    for (const [k, v] of Object.entries(seed.enemies)) this.enemiesMap.set(k, v);
     for (const [k, v] of Object.entries(seed.recipes)) this.recipesMap.set(k, v);
     for (const c of seed.cards) this.cards.set(c.id, c);
     for (const [k, v] of seed.intents) this.intents.set(k, v);
@@ -58,6 +62,9 @@ export class ModRegistry {
   }
   get items(): Record<string, ItemDef> {
     return this.record('items', this.itemsMap);
+  }
+  get enemies(): Record<string, EnemyDef> {
+    return this.record('enemies', this.enemiesMap);
   }
   get recipes(): Record<string, RecipeDef> {
     return this.record('recipes', this.recipesMap);
@@ -91,6 +98,13 @@ export class ModRegistry {
     this.assertNew('item', def.id, this.itemsMap);
     this.itemsMap.set(def.id, def);
     this.cache.delete('items');
+    return this;
+  }
+
+  registerEnemy(def: EnemyDef): this {
+    this.assertNew('enemy', def.id, this.enemiesMap);
+    this.enemiesMap.set(def.id, def);
+    this.cache.delete('enemies');
     return this;
   }
 
@@ -141,7 +155,7 @@ export class ModRegistry {
   }
 
   // ---- 覆盖既有定义（部分字段合并，不改未覆盖字段）----
-  overrideDef(kind: 'tile' | 'building' | 'item' | 'card' | 'recipe', id: string, patch: Record<string, unknown>): this {
+  overrideDef(kind: 'tile' | 'building' | 'item' | 'card' | 'recipe' | 'enemy', id: string, patch: Record<string, unknown>): this {
     const map = this.mapFor(kind);
     if (!map || !map.has(id)) throw new Error(`mod: 覆盖目标 ${kind} "${id}" 不存在`);
     map.set(id, { ...(map.get(id) as Record<string, unknown>), ...patch });
@@ -150,13 +164,14 @@ export class ModRegistry {
     return this;
   }
 
-  private mapFor(kind: 'tile' | 'building' | 'item' | 'card' | 'recipe'): RegistryMap {
+  private mapFor(kind: 'tile' | 'building' | 'item' | 'card' | 'recipe' | 'enemy'): RegistryMap {
     switch (kind) {
       case 'tile': return this.tilesMap;
       case 'building': return this.buildingsMap;
       case 'item': return this.itemsMap;
       case 'card': return this.cards;
       case 'recipe': return this.recipesMap;
+      case 'enemy': return this.enemiesMap;
     }
   }
 

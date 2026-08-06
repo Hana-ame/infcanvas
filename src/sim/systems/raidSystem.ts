@@ -52,7 +52,7 @@ export class RaidSystem implements GameSystem {
 
   private spawnRaid(count: number, pressure = 1): void {
     const w = this.ctx.world;
-    const t = this.ctx.tuning.combat;
+    const enemy = this.raidEnemyDef();
     const edge = Math.floor(this.ctx.rng.next() * 4);
     const cx = Math.floor(w.width / 2);
     const cy = Math.floor(w.height / 2);
@@ -62,8 +62,20 @@ export class RaidSystem implements GameSystem {
       else if (edge === 1) { x = this.ctx.rng.int(0, w.width - 1); y = w.height - 1; }
       else if (edge === 2) { x = 0; y = this.ctx.rng.int(0, w.height - 1); }
       else { x = w.width - 1; y = this.ctx.rng.int(0, w.height - 1); }
-      this.ctx.hostiles.push({ x, y, hp: t.wolfHp * pressure, maxHp: t.wolfHp * pressure, targetX: cx, targetY: cy });
+      this.ctx.hostiles.push({
+        x, y, hp: enemy.hp * pressure, maxHp: enemy.hp * pressure,
+        targetX: cx, targetY: cy,
+        name: enemy.name, enemyId: enemy.id, faction: enemy.faction,
+        speed: enemy.speed, dmgPerSec: enemy.dmg, loot: enemy.loot,
+      });
     }
+  }
+
+  // 当前袭击敌人种类（tuning.combat.raidEnemy → enemies 表；查不到回退第一项）
+  private raidEnemyDef() {
+    const enemies = this.ctx.mods.enemies;
+    const id = this.ctx.tuning.combat.raidEnemy;
+    return enemies[id] ?? Object.values(enemies)[0];
   }
 
   private updateCombat(dt: number): void {
@@ -73,7 +85,7 @@ export class RaidSystem implements GameSystem {
       const dx = h.targetX - h.x;
       const dy = h.targetY - h.y;
       const d = Math.hypot(dx, dy);
-      const step = t.wolfSpeed * dt;
+      const step = (h.speed ?? 3.5) * dt;
       if (d > step) {
         h.x += (dx / d) * step;
         h.y += (dy / d) * step;
@@ -110,8 +122,9 @@ export class RaidSystem implements GameSystem {
         this.ctx.growSkill(nearest, 'fight');
         if (h.hp <= 0) {
           this.ctx.hostiles.splice(i, 1);
-          this.ctx.stockpile.ore += t.wolfLootOre;
-          this.ctx.bus.emit({ type: 'resource_gained', eid: nearest, item: 'ore', amount: t.wolfLootOre });
+          const loot = h.loot ?? { item: 'ore', amount: 2 };
+          this.ctx.stockpile[loot.item] = (this.ctx.stockpile[loot.item] ?? 0) + loot.amount;
+          this.ctx.bus.emit({ type: 'resource_gained', eid: nearest, item: loot.item, amount: loot.amount });
           continue;
         }
         const hk = this.ctx.readHealth(nearest);
@@ -120,7 +133,7 @@ export class RaidSystem implements GameSystem {
           const dna = this.ctx.dnaOf(nearest);
           const dodgeChance = dna ? Math.max(t.minDodge, (dna.dex - t.dodgeBase) * t.dodgePerPoint) : 0;
           const dodge = dna && this.ctx.rng.next() < dodgeChance;
-          const dmg = dodge ? 0 : Math.min(hk.hp, t.wolfDmg * dt);
+          const dmg = dodge ? 0 : Math.min(hk.hp, (h.dmgPerSec ?? 5) * dt);
           hk.hp -= dmg;
           if (hk.hp <= 0) {
             this.ctx.setHealth(nearest, { hp: 0, maxHp: hk.maxHp });

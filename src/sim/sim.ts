@@ -16,6 +16,7 @@ import { initEnv, tickEnv, type EnvState } from './core/env';
 import { addMemory, setUnitSeq, type SocialUnit } from './core/socialUnit';
 import { initLean, adjustLean, type LeanKey } from './core/lean';
 import { BUILDINGS, TILES, ITEMS, type BuildingDef } from './defs';
+import { ENEMIES } from './defs/enemies';
 import { RECIPES } from './defs/recipes';
 import { TUNING, type TuningConfig } from './defs/tuning';
 import type { RecipeDef } from './defs/recipes';
@@ -161,7 +162,7 @@ export class Sim implements SimContext {
   pawnStates = new Map<number, PawnState>();
   pawnPositions = new Map<number, { x: number; y: number }>();
   selected: number[] = [];
-  hostiles: { x: number; y: number; hp: number; maxHp: number; targetX: number; targetY: number; name?: string; faction?: string; dmgPerSec?: number; loot?: { item: string; amount: number } }[] = [];
+  hostiles: { x: number; y: number; hp: number; maxHp: number; targetX: number; targetY: number; name?: string; faction?: string; enemyId?: string; speed?: number; dmgPerSec?: number; loot?: { item: string; amount: number } }[] = [];
   buildQueue: { x: number; y: number; defId: string; progress: number; faction: string; cost?: { wood: number; ore: number } }[] = [];
   stockpile: Record<string, number> = { wood: 50, ore: 0, food: 30, tools: 0 };
 
@@ -175,6 +176,7 @@ export class Sim implements SimContext {
     tiles: TILES,
     buildings: BUILDINGS,
     items: ITEMS,
+    enemies: ENEMIES,
     cards: BASE_CARDS,
     recipes: RECIPES,
     tuning: TUNING,
