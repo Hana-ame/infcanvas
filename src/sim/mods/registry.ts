@@ -1,6 +1,7 @@
 // mod 注册表（DESIGN §7 扩展性原则 + docs/DATA_DRIVEN.md §5）
 // 目标：任何 mod 能力都应能通过注册表实现，不改 sim 源码。
 // 注册时机：Sim 构造后立即调用（服务端加载 mod → 注册 → defs 只读下发客户端）。
+import type { Sim } from '../sim';
 import type { TileDef, BuildingDef, ItemDef } from '../defs';
 import type { EnemyDef } from '../defs/enemies';
 import type { RecipeDef } from '../defs/recipes';
@@ -10,6 +11,12 @@ import type { IntentExecutor, WorkExecutor } from '../systems/cardSystem';
 import type { GameSystem } from '../systems/registry';
 import type { ScriptedEvent } from '../systems/eventSystem';
 import type { ExpansionPlan } from '../systems/autonomousBuildSystem';
+
+// 生命周期钩子上下文（step:before / step:after，见 sim.step）
+export interface HookContext {
+  sim: Sim;
+  dt: number;
+}
 
 type RegistryMap = Map<string, unknown>;
 
@@ -28,7 +35,7 @@ export class ModRegistry {
   expansionPlans: ExpansionPlan[] = [];
   tuning: TuningConfig;
   private systems: GameSystem[] = [];
-  private hooks = new Map<string, Array<(ctx: unknown) => void>>();
+  private hooks = new Map<string, Array<(ctx: HookContext) => void>>();
   private cache = new Map<string, Record<string, unknown>>();
 
   constructor(seed: {
@@ -189,13 +196,13 @@ export class ModRegistry {
   }
 
   // 阶段钩子：check 流程 beforeRoll 等（mod 可插入）
-  registerHook(stage: string, fn: (ctx: unknown) => void): this {
+  registerHook(stage: string, fn: (ctx: HookContext) => void): this {
     if (!this.hooks.has(stage)) this.hooks.set(stage, []);
     this.hooks.get(stage)!.push(fn);
     return this;
   }
 
-  runHooks(stage: string, ctx: unknown): void {
+  runHooks(stage: string, ctx: HookContext): void {
     this.hooks.get(stage)?.forEach((fn) => fn(ctx));
   }
 
