@@ -206,6 +206,7 @@ overrideTuning(patch: DeepPartial<TuningConfig>): this  // 覆盖平衡参数（
 15. ✅ **派系袭击数据化**：掠夺者不再是写死的 unitHp/unitDmg/ore×4，而是 `enemies.ts` 的 `raider` def，tuning `combat.unitRaidEnemy` 切换种类；`ModRegistry.enemyDef(id?)` 查询（自然袭击/派系袭击共用），overrideDef('enemy') 即时生效
 16. ✅ **采集目标数据化**：伐木/采矿不再按 `=== 'tree'/'ore'` 特判，改按 tile def `growable`/`mineral` + `harvest` 声明——mod 注册新可采集 tile（如浆果丛）小人会自动去采；`harvestReplaces` 声明采后变什么瓦片
 17. ✅ **光环/魔法值收敛**：nearAura 扫描半径进 `tuning.needs.auraScanRadius`、生效距离由各建筑 `def.aura.radius` 决定；派系优先级评估周期/目标搜索半径/兜底建筑/出生建筑全部进 tuning；AI 建造成本读 `def.costWood/costOre`（与手动队列一致，不再写死 1 木）
+18. ✅ **client 层数据驱动**：建造菜单遍历 `sim.mods.buildings`（新建筑自动进菜单）、tile 地基/图标查 `sim.mods.tiles`(未知 tile 兜底色不崩）、`sprite` 声明复用素材（tile/建筑）、敌人按 enemyId 稳定散列着色；`?mods=url` 运行时加载 ESM mod；e2e（scripts/e2e/mod-ui.mjs + src/mods/demo-berry.ts「浆果玩法」）5/5 绿——mod 不碰内核：新建筑进菜单、新 tile 进世界、渲染零崩溃
 
 > 修复记录：
 > - `Sim.tuning` 由字段改为 getter → `this.mods.tuning`，否则 mods 回调对 tuning 的覆盖在构造后对 `this.tuning` 快照不可见（最初 2 个 mod 测试因此失败）。

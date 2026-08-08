@@ -54,16 +54,15 @@
 
 | 项 | 目标（DESIGN） | 差距 |
 |---|---|---|
-| client 层数据驱动 UI | §7 分层原则（服务端 mod 逻辑 + 客户端 mod 表现） | **最大的 mod 堵点**：`main.ts`/`renderer.ts` 仍读静态 `BUILDINGS/TILES/资产表`——mod 新建筑进不了建造菜单、新 tile 渲染即崩（`TILES[w.getTile()].color`）。来源：静态 import（main.ts:5 等）、AssetId 闭合联合、`as AssetId` 强转、tile/敌人渲染按 id 特判。sim 侧已全量接通 |
+| client 层数据驱动 UI | §7 分层原则（服务端 mod 逻辑 + 客户端 mod 表现） | ✅ **已打通**：建造菜单遍历 `sim.mods.buildings`、tile 渲染查 `sim.mods.tiles`（未知 id 兜底色不崩）、tile/建筑图标可 `sprite` 声明复用素材、敌人按 enemyId 散列着色；`?mods=url` 运行时加载 ESM mod（demo: src/mods/demo-berry.ts，e2e: scripts/e2e）。剩余：mod 自带上传 SVG 素材管线未做（暂复用内置 sprite） |
 | 闭合类型开放 | §7 mod 扩展 | `BehaviorCard.series`、`IntentAction`、`DesireId`、`UnitLevel` 仍是 TS 闭合联合，mod 卡/欲望/建筑等级需 `as` 断言或不可扩展（series 映射表 MARKOV_BIAS 等按 key 查，新值静默降默认） |
-| 敌对渲染区分 | §3 战斗 | renderer 所有 hostiles 统一 pawn:strong 图标（仅 faction==='unit' 染色）；mod 新敌人视觉不可辨 |
 | 值得注意：maxSlots 被 trait 挤占 | §6 插槽 | `initSlots` 下 maxSlots=2 且 2 trait 的小人拿不到任何基础卡 → 永远闲逛（测试里观察到）。mod 卡无条件进池已解决 mod 侧，基础卡仍有此风险——待设计裁决 |
 | 丢失 chew：出生点/野营 'campfire'、派系掠夺者已数据化 | §7 | 出生建筑已读 `autobuild.starterBuilding`；`scripts.spawnWildCamp` 仍写死 'campfire'（语义上"野生营地=篝火"成立，暂留） |
 | 流言/对话完整 | §6 | 微互动已做（模板）；闲聊/深聊（引用记忆的 LLM 对话）、话题沿社交网络传播待 P1 |
 | 七宗罪欲望完整 | §3 欲望系统 | 贪婪途径（工作→satisfies 数据化）已通；色欲/嫉妒满足途径待设计（`DesireId` 闭合类型开放后 mod 可自建维度） |
 | COC 属性全用途 | §3 属性卡 | SIZ 负重、社交对抗（说服/传教已做对抗检定 APP/POW）——SIZ 负重未做 |
 | LLM 层 | §6 | P1：`eventSystem.setProvider` 预留口（当前无调用，详情见 DATA_DRIVEN.md）；server 权威模型 + WSS 未动 |
-| mod 打包/沙箱 | §10 待定 | 远程 JS mod（ES module + `import(/* @vite-ignore */)` + `install(mods)` 约定）方向已认可，未落地；打包格式/信任模型待定 |
+| mod 打包/沙箱 | §10 待定 | 远程 JS mod 已落地（`?mods=` + ESM default 导出，见 src/mods/demo-berry.ts）；打包格式（zip/远程 URL 批量）、服务端沙箱/信任模型待定 |
 | 联机 | §8 | P2：WSS 协议、多客户端同步、兴趣管理、持久化、鉴权 |
 
 ## 技术栈

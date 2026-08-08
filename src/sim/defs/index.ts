@@ -26,6 +26,7 @@ export interface TileDef {
   moveCost?: number; // 寻路代价（默认 1）
   harvest?: HarvestDef; // 采集定义（树/矿），生产数值进数据
   harvestReplaces?: string; // 采集后替换的 tile id（缺省：growable→'grass'，mineral→'dirt'）
+  sprite?: string; // 客户端表现层：素材 id（如 'terrain:tree'），缺省按 growable/mineral/内置 id 推断；sim 不消费
 }
 
 export interface BuildingDef {
@@ -51,6 +52,7 @@ export interface BuildingDef {
     restPerSec?: number;
     sanPerSec?: number;
   };
+  sprite?: string; // 客户端表现层：素材 id（如 'building:church'），缺省 `building:${id}`；sim 不消费
 }
 
 export interface ItemDef {

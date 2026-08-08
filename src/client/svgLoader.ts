@@ -29,7 +29,7 @@ export class SvgAssets {
     }));
   }
 
-  get(id: AssetId): any | null {
+  get(id: string): any | null {
     return this.textures.get(id) ?? null;
   }
 }

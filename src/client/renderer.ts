@@ -1,10 +1,20 @@
 // Pixi 渲染器 —— SVG 图标: 地形/建筑/小人 + 相机
 import { Application, Container, Graphics, Rectangle, Text, TextStyle } from 'pixi.js';
 import { Sim } from '../sim/sim';
-import { TILES, BUILDINGS } from '../sim/defs';
-import { SvgAssets, type AssetId } from './svgLoader';
+import type { TileDef } from '../sim/defs';
+import { SvgAssets } from './svgLoader';
 
 const TILE = 32;
+
+// 敌人种类 → 稳定染色（内置两个暖色，mod 新敌人自动散列取值，可辨）
+const ENEMY_TINTS: Record<string, number> = { wolf: 0xff5555, raider: 0xff6688, boar: 0xcc8855 };
+function hostileTint(enemyId: string): number {
+  const fixed = ENEMY_TINTS[enemyId];
+  if (fixed) return fixed;
+  let h = 0;
+  for (const ch of enemyId) h = (h * 31 + ch.charCodeAt(0)) | 0;
+  return 0xff0000 | ((Math.abs(h) % 256) << 8) | (Math.abs(h >> 3) % 256);
+}
 
 export class Renderer {
   app: Application;
@@ -156,7 +166,7 @@ export class Renderer {
     const w = this.sim.world;
     for (let y = 0; y < w.height; y++) {
       for (let x = 0; x < w.width; x++) {
-        const def = TILES[w.getTile(x, y)];
+        const def = this.tileDefOf(w.getTile(x, y));
         g.rect(x * TILE, y * TILE, TILE, TILE);
         g.fill(def.color);
       }
@@ -164,8 +174,13 @@ export class Renderer {
     this.terrainLayer.addChildAt(g, 0);
   }
 
+  // tile def 查表（mod 可覆盖/新增 tile；未知 id 给兜底色，渲染不崩）
+  private tileDefOf(id: string): TileDef {
+    return this.sim.mods.tiles[id] ?? { id, name: id, passable: true, buildable: true, color: '#2a2a3a' };
+  }
+
   // 用 SVG GraphicsContext 生成一个图标（定位到格中心）
-  private makeIcon(id: AssetId, scale = 1): Graphics | null {
+  private makeIcon(id: string, scale = 1): Graphics | null {
     const ctx = this.assets.get(id);
     if (!ctx) return null;
     const g = new Graphics(ctx);
@@ -189,21 +204,15 @@ export class Renderer {
   // 地形图标（树/矿/水）—— SVG。树进入 entityLayer 参与 2.5D 遮挡
   private drawTerrainIcons(): void {
     const w = this.sim.world;
-    const assetByTile: Record<string, AssetId> = {
-      tree: 'terrain:tree',
-      ore: 'terrain:ore',
-      water: 'terrain:water',
-      stone: 'terrain:stone',
-    };
     for (let y = 0; y < w.height; y++) {
       for (let x = 0; x < w.width; x++) {
-        const tile = w.getTile(x, y);
-        const aid = assetByTile[tile];
+        const id = w.getTile(x, y);
+        const aid = this.tileIconId(this.tileDefOf(id));
         if (!aid) continue;
         const g = this.makeIcon(aid);
         if (!g) continue;
         this.placeEntity(g, x, y);
-        if (tile === 'tree') {
+        if (id === 'tree') {
           this.treeSprites.push({ g, x, y });
           this.entityLayer.addChild(g);
         } else {
@@ -211,6 +220,17 @@ export class Renderer {
         }
       }
     }
+  }
+
+  // tile 图标选型：def.sprite 显式声明优先 → growable/mineral 推断 → 内置装饰 id（水/石）
+  // mod 新 tile：给 sprite 声明（如 'terrain:tree'）即有表现；否则只渲底色不崩
+  private tileIconId(def: TileDef): string | null {
+    if (def.sprite) return def.sprite;
+    if (def.growable) return 'terrain:tree';
+    if (def.mineral) return 'terrain:ore';
+    if (def.id === 'water') return 'terrain:water';
+    if (def.id === 'stone') return 'terrain:stone';
+    return null;
   }
 
   private render(dt = 0.016): void {
@@ -263,7 +283,7 @@ export class Renderer {
       bg.fill(dmg < 0.5 ? 0x7a2a2a : dmg < 1 ? 0x5a4a3a : b.def.color);
       this.entityLayer.addChild(bg);
       this.buildingSprites.push({ g: bg, x, y });
-      const aid = `building:${b.def.id}` as AssetId;
+      const aid = b.def.sprite ?? `building:${b.def.id}`;
       const icon = this.makeIcon(aid);
       if (icon) {
         // 图标定位到 footprint 中心
@@ -337,8 +357,8 @@ export class Renderer {
         this.entityLayer.addChild(g);
         this.hostileSprites.set(idx, g);
       }
-      // 染红区分敌我；派系掠夺者（unit）用暗红紫（更强威胁），每帧刷新保证缓存正确
-      g.tint = h.faction === 'unit' ? 0xff6688 : 0xff5555;
+      // 按敌人种类稳定着色（enemyId 散列；未带 id 时按阵营兜底），mod 新敌人自动可辨
+      g.tint = hostileTint(h.enemyId ?? (h.faction === 'unit' ? 'raider' : 'wolf'));
       g.visible = true;
       this.placeEntity(g, h.x, h.y);
       if (this.viewMode === 'iso') g.zIndex = Math.round(h.y) * 10 + 9;
@@ -363,7 +383,7 @@ export class Renderer {
   }
 
   // 根据 DNA 天赋选不同的鼠 SVG
-  private pawnAssetId(eid: number): AssetId {
+  private pawnAssetId(eid: number): string {
     const p = this.sim.pawnProfile(eid);
     if (!p) return 'pawn:mouse';
     const t = p.dna.traits;

@@ -692,10 +692,10 @@ export class Sim implements SimContext {
   get buildQueueItems(): { x: number; y: number; defId: string; progress: number }[] {
     return this.buildQueue.map((b) => ({ x: b.x, y: b.y, defId: b.defId, progress: b.progress }));
   }
-  buildingAt(x: number, y: number): { defId: string; hp: number; maxHp: number; faction: string } | null {
+  buildingAt(x: number, y: number): { def: BuildingDef; defId: string; hp: number; maxHp: number; faction: string } | null {
     const b = this.world.getBuilding(x, y);
     if (!b) return null;
-    return { defId: b.def.id, hp: Math.round(b.hp), maxHp: b.def.hp, faction: b.faction };
+    return { def: b.def, defId: b.def.id, hp: Math.round(b.hp), maxHp: b.def.hp, faction: b.faction };
   }
 
   // 篝火/教堂 → 所属派系单位（部落记忆/看法）

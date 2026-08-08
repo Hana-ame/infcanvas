@@ -919,7 +919,7 @@ registerHook('beforeRoll', (prob, ctx) => ...);          // check 流程阶段�
 
 **历史（§3）**：所有 GameEvent → 结构化条目（时间/类型/实体/地点/原因/事实），可查询可导出；LLM 只润色原则就位。
 
-**mod（§7）**：ModRegistry 运行时注册 tile/building/item/card/intent/system/hook，冲突检测；`SimOptions.mods` 构造期挂载。
+**mod（§7）**：ModRegistry 运行时注册 tile/building/item/enemy/card/recipe/event/expansionPlan/intent/work/system/hook + overrideDef/overrideTuning，冲突检测；`SimOptions.mods` 构造期挂载。**客户端 mod 表现**：UI 全部走 defs（建造菜单/tile 渲染/建筑图标/sprite 声明/敌人散列色），`?mods=url` 运行时加载 ESM mod（demo: src/mods/demo-berry.ts，e2e: scripts/e2e/mod-ui.mjs）。
 
 **存档**：IndexedDB（异步、大容量），30s 自动存档；含社会单位（派系/记忆/看法/库存/玩家所属/成员归属）持久化。
 

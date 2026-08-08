@@ -1,8 +1,8 @@
 // infcanvas 入口 —— P0 单机可玩版 + HUD 菜单
 import { Sim } from '../sim/sim';
+import type { ModRegistry } from '../sim/mods/registry';
 import { Renderer } from './renderer';
 import { SvgAssets } from './svgLoader';
-import { BUILDINGS } from '../sim/defs';
 import { weatherLabel } from '../sim/core/env';
 import { loadSave, writeSave } from './storage';
 
@@ -168,7 +168,7 @@ function createHud(sim: Sim, onSelectBuild: (id: string | null) => void, onZoom?
     if (selectedBuilding) {
       const b = sim.buildingAt(selectedBuilding.x, selectedBuilding.y);
       if (b) {
-        const def = BUILDINGS[b.defId];
+        const def = b.def;
         // 篝火/教堂 = 派系单位：显示部落记忆 + 对邻近单位的看法
         const unit = sim.unitAt(selectedBuilding.x, selectedBuilding.y);
         const unitHtml = unit
@@ -186,7 +186,7 @@ function createHud(sim: Sim, onSelectBuild: (id: string | null) => void, onZoom?
         selPanel.innerHTML =
           `<b>${def?.emoji ?? '🏗'} ${def?.name ?? b.defId}</b> (${selectedBuilding.x},${selectedBuilding.y})<br>` +
           `耐久 ${nf(b.hp)}/${b.maxHp}<br>派系：${b.faction}${unitHtml}` +
-          (b.defId === 'church'
+          (b.def.capabilities?.includes('oracle')
             ? `<br><button id="oracleBtn" style="pointer-events:auto;border:1px solid #a07ac0;background:#5a3a6a;color:#eee;border-radius:6px;padding:4px 10px;cursor:pointer;font:12px system-ui;margin-top:6px;">✨ 发布神谕</button>`
             : '');
         const ob = document.getElementById('oracleBtn');
@@ -246,7 +246,7 @@ function createHud(sim: Sim, onSelectBuild: (id: string | null) => void, onZoom?
     }
 
     // 提示
-    hint.textContent = bm ? `建造【${BUILDINGS[bm]?.name ?? bm}】——在地图点击放置` : '点击建造菜单选择，点地图放置';
+    hint.textContent = bm ? `建造【${sim.buildingDef(bm)?.name ?? bm}】——在地图点击放置` : '点击建造菜单选择，点地图放置';
 
     // 事件日志 feed（最近 5 条）
     const recent = sim.events.slice(-5).map((e) => `${Math.floor(e.time)}s ${e.text}`);
@@ -291,8 +291,8 @@ function createHud(sim: Sim, onSelectBuild: (id: string | null) => void, onZoom?
     return b;
   }
   buildMenu.appendChild(mkBtn('🚫', '取消', null));
-  for (const id of Object.keys(BUILDINGS)) {
-    const d = BUILDINGS[id];
+  for (const id of Object.keys(sim.mods.buildings)) {
+    const d = sim.mods.buildings[id];
     buildMenu.appendChild(mkBtn(d.emoji, d.name, id));
   }
 
@@ -304,7 +304,27 @@ async function main(): Promise<void> {
   const container = document.getElementById('app')!;
   const isTouch = 'ontouchstart' in window;
 
-  const sim = new Sim({ seed: 20260803, pawnCount: 4 });
+  // 运行时 mod 加载：?mods=url1,url2 动态 import（ESM，默认导出 mod 回调）。
+  // dev: 指向源码路径，如 ?mods=/src/mods/demo-berry.ts（vite 会 transform）
+  // build: dist 无独立模块，内联挂载（new Sim({ mods })）或自行托管 .js 于静态服务器
+  const modUrls = (new URLSearchParams(location.search).get('mods') ?? '').split(',').filter(Boolean);
+  const modFns: ((m: ModRegistry) => void)[] = [];
+  for (const u of modUrls) {
+    try {
+      const m = await import(/* @vite-ignore */ u);
+      if (typeof m.default === 'function') modFns.push(m.default);
+      else console.warn(`mod ${u}: 没有 default 导出函数`);
+    } catch (err) {
+      console.error(`[mod] ${u} 加载失败`, err);
+    }
+  }
+
+  const sim = new Sim({
+    seed: 20260803,
+    pawnCount: 4,
+    mods: modFns.length > 0 ? (m) => { for (const f of modFns) f(m); } : undefined,
+  });
+  (window as unknown as { __sim: Sim }).__sim = sim; // 调试/测试后门
   // 读取存档（IndexedDB）
   try {
     const raw = await loadSave<string>();
@@ -386,7 +406,7 @@ async function main(): Promise<void> {
     // 建造模式：显示幽灵预览
     if (buildMode && !mouseDragging) {
       const wt = renderer.screenToWorld(e.clientX, e.clientY);
-      const def = BUILDINGS[buildMode];
+      const def = sim.buildingDef(buildMode);
       const can = def ? sim.world.canBuildFootprint(wt.x, wt.y, def) : sim.world.canBuildAt(wt.x, wt.y);
       renderer.setGhost(wt, can ? 0x4cf : 0xf44);
     }
