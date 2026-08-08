@@ -24,7 +24,6 @@ export interface SocialUnit {
   memory: UnitMemory[];   // 部落记忆
   opinions: Map<string, UnitOpinion>; // 对其他 unit id 的看法
   createdAt: number;
-  upgradeProgress?: number; // 篝火→教堂升级进度
   resources: Record<string, number>; // 派系库存（Q9 贸易/逆差地基）
   tradeBalance: Map<string, number>; // 与其他单位的贸易逆差（正=顺差，负=逆差）
 }
@@ -35,9 +34,6 @@ export const UNIT_CAPACITY: Record<UnitLevel, number> = {
   church: 10,
 };
 
-// 升级门槛（篝火 → 教堂）：需要营地信仰达标
-export const UPGRADE_FAITH = 35;
-
 let unitSeq = 0;
 export function nextUnitId(): string {
   return `u${++unitSeq}`;
@@ -45,9 +41,6 @@ export function nextUnitId(): string {
 // 载入存档后恢复序列，避免 id 冲突
 export function setUnitSeq(n: number): void {
   unitSeq = n;
-}
-export function currentUnitSeq(): number {
-  return unitSeq;
 }
 
 // 生成派系名（确定性种子）
@@ -81,37 +74,4 @@ export function adjustOpinion(unit: SocialUnit, targetId: string, delta: number,
   const op = unit.opinions.get(targetId)!;
   op.value = Math.max(-100, Math.min(100, op.value + delta));
   op.lastChanged = now;
-}
-
-// 派系涌现：把单位聚成阵营（同盟 = 互相看法都 ≥ 阈值）
-export function clusterFactions(
-  units: Map<string, SocialUnit>,
-  allyThreshold = 30,
-): string[][] {  const ids = [...units.keys()];
-  const parent = new Map<string, string>();
-  const find = (x: string): string => {
-    if (!parent.has(x)) parent.set(x, x);
-    if (parent.get(x) !== x) parent.set(x, find(parent.get(x)!));
-    return parent.get(x)!;
-  };
-  const union = (a: string, b: string): void => {
-    parent.set(find(a), find(b));
-  };
-  for (let i = 0; i < ids.length; i++) {
-    for (let j = i + 1; j < ids.length; j++) {
-      const a = ids[i], b = ids[j];
-      const ua = units.get(a)!, ub = units.get(b)!;
-      const ab = ua.opinions.get(b)?.value ?? 0;
-      const ba = ub.opinions.get(a)?.value ?? 0;
-      if (ab >= allyThreshold && ba >= allyThreshold) union(a, b);
-    }
-  }
-  // 收集阵营
-  const groups = new Map<string, string[]>();
-  for (const id of ids) {
-    const root = find(id);
-    if (!groups.has(root)) groups.set(root, []);
-    groups.get(root)!.push(id);
-  }
-  return [...groups.values()];
 }

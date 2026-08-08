@@ -3,7 +3,6 @@
 // 事件不写死：触发逻辑全在 eventSystem 里按「状况匹配列表」执行
 import type { SimContext } from './context';
 import type { ScriptedEvent } from './eventSystem';
-import type { SocialUnitSystem } from './socialUnitSystem';
 
 // 是否已存在带某标签的建筑（condition 用的查询）
 function hasBuildingTag(ctx: SimContext, tag: string): boolean {
@@ -38,8 +37,7 @@ export function spawnWildCamp(ctx: SimContext): boolean {
     if (!w.inBounds(x, y) || !w.canBuildAt(x, y)) continue;
     if (w.placeBuilding(x, y, 'campfire', 'wild')) {
       // 创建野生派系单位
-      const su = ctx.socialUnits as SocialUnitSystem;
-      su.onBuildingBuilt(w.buildKey(x, y), 'campfire', ctx.time);
+      ctx.socialUnits.onBuildingBuilt(w.buildKey(x, y), 'campfire', ctx.time);
       ctx.bus.emit({ type: 'building_built', x, y, defId: 'campfire' });
       return true;
     }

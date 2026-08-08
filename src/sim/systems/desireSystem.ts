@@ -5,16 +5,7 @@ import type { GameSystem } from './registry';
 import type { SimContext } from './context';
 import type { EventBus } from '../core/events';
 import type { DesireId } from '../core/desires';
-import { DESIRES, tickDesires, fulfill, starvingDesires } from '../core/desires';
-
-// 卡系列 → 欲望映射（满足该行为即满足对应欲望）
-const SERIES_TO_DESIRE: Record<string, DesireId> = {
-  physio: 'gluttony',
-  leisure: 'sloth',
-  work: 'greed',
-  combat: 'wrath',
-  religion: 'pride',
-};
+import { tickDesires, fulfill, starvingDesires } from '../core/desires';
 
 export class DesireSystem implements GameSystem {
   id = 'desire';

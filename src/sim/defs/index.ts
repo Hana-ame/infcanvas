@@ -96,9 +96,3 @@ export const ITEMS: Record<string, ItemDef> = {
   ore: { id: 'ore', name: '矿石', stackable: true, maxStack: 50 },
   food: { id: 'food', name: '食物', stackable: true, maxStack: 100 },
 };
-
-export const ITEM_EMOJI: Record<string, string> = {
-  wood: '🪵',
-  ore: '⛏️',
-  food: '🍖',
-};

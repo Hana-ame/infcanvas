@@ -7,7 +7,9 @@ import type { SkillId } from '../ai/pawn';
 import type { World as BitecsWorld } from 'bitecs';
 import type { TuningConfig } from '../defs/tuning';
 import type { RecipeDef } from '../defs/recipes';
+import type { BuildingDef } from '../defs';
 import type { ModRegistry } from '../mods/registry';
+import type { SocialUnit } from '../core/socialUnit';
 
 export interface Hostile {
   x: number; y: number;
@@ -38,7 +40,7 @@ export interface SimContext {
   readonly mods: ModRegistry;
   readonly tuning: TuningConfig; // 平衡参数总表（docs/DATA_DRIVEN.md §3.4）
   // 数据驱动查询：建筑 def / 配方（mod 覆盖后生效）
-  buildingDef(id: string): import('../defs').BuildingDef | undefined;
+  buildingDef(id: string): BuildingDef | undefined;
   recipe(id: string): RecipeDef | undefined;
   stockpile: Record<string, number>;
   hostiles: Hostile[];
@@ -51,7 +53,7 @@ export interface SimContext {
   env: { raining: boolean; temperature: number };
   factionPriority: Record<string, number>; // 派系工作优先级（用户 Q8）
   socialUnits: {
-    units: Map<string, unknown>;
+    units: Map<string, SocialUnit>;
     membership: Map<number, string>;
     onBuildingBuilt(key: number, defId: string, now: number): void;
     assignPawn(eid: number): void;

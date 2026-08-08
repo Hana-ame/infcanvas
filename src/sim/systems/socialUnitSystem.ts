@@ -5,7 +5,7 @@ import type { GameSystem } from './registry';
 import type { SimContext } from './context';
 import type { EventBus } from '../core/events';
 import {
-  type SocialUnit, nextUnitId, generateUnitName, addMemory, adjustOpinion, clusterFactions,
+  type SocialUnit, nextUnitId, generateUnitName, addMemory, adjustOpinion,
   type UnitLevel,
 } from '../core/socialUnit';
 
@@ -323,19 +323,6 @@ export class SocialUnitSystem implements GameSystem {
         adjustOpinion(this.units.get(uaId)!, ubId, f.opinionFriendly, this.ctx.time);
         adjustOpinion(this.units.get(ubId)!, uaId, f.opinionFriendly, this.ctx.time);
       }
-    }
-  }
-
-  // 派系涌现：看法网络聚类成阵营
-  factions(): string[][] {
-    return clusterFactions(this.units);
-  }
-
-  // 记录单位记忆事件
-  rememberFor(unitIds: Iterable<string>, text: string): void {
-    for (const id of unitIds) {
-      const u = this.units.get(id);
-      if (u) addMemory(u, this.ctx.time, text);
     }
   }
 }

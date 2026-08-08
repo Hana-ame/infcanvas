@@ -50,9 +50,3 @@ export function adjustLean(
   const max = def.max ?? 100;
   lean[key] = Math.max(5, Math.min(max, cur + delta));
 }
-
-// 倾向 → 权重倍率（50 = 1x；高倾向放大、低倾向缩小）
-export function leanFactor(lean: Record<LeanKey, number>, key: LeanKey): number {
-  const v = lean[key] ?? 50;
-  return v / 50;
-}

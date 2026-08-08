@@ -1,8 +1,6 @@
 // 全局平衡参数表（tuning）—— 收敛散落在各系统的魔法数值
 // 铁律：一切跨实体的平衡数值（阈值/概率/倍率/速率/半径）都从这里读，系统不写死。
 // mod 可通过 ModRegistry.overrideTuning() 部分覆盖（DESIGN docs/DATA_DRIVEN.md §3.4）
-import type { SkillId } from '../ai/pawn';
-
 export interface NeedsTuning {
   foodDecay: number;       // 饥饿每秒衰减
   restDecay: number;       // 精力每秒衰减
@@ -37,8 +35,6 @@ export interface GatherTuning {
   toolBonus: number;
   strBonusPerPoint: number;
   strBase: number;
-  moodGainSuccess: number;
-  moodGainFail: number;
 }
 
 export interface FaithTuning {
@@ -110,9 +106,6 @@ export interface DesireTuning {
   malintentChance: number; // 恶意槽触发概率
   malintentMoodGain: number;
   malintentFulfill: number;
-  fulfillWork: number;     // 工作时满足贪婪
-  fulfillBuild: number;
-  fulfillPray: number;
   powResistBase: number;
   stealThreshold: number;  // 偷窃资源需库存超过此值
   stealAmount: number;     // 偷窃取走量
@@ -141,7 +134,6 @@ export interface FactionTuning {
   opinionThreat: number;   // 威胁传话看法变化
   opinionDeficit: number;  // 逆差怨恨看法下滑
   trustTimer: number;      // 信任评估周期
-  clusterAllyThreshold: number;
 }
 
 export interface PopulationTuning {
@@ -178,8 +170,6 @@ export interface AutobuildTuning {
   churchWood: number;
   wallWood: number;        // 围墙余木阈值
   wallTarget: number;
-  buildRadiusMin: number;
-  buildRadiusMax: number;
 }
 
 export interface EnvTuning {
@@ -191,10 +181,6 @@ export interface EnvTuning {
   rainMax: number;
   hotAt: number;
   coldAt: number;
-}
-
-export interface UpgradeTuning {
-  faithThreshold: number;  // 篝火→教堂信仰门槛
 }
 
 export interface PawnTuning {
@@ -230,10 +216,6 @@ export interface EventTuning {
   intervalJitter: number;  // 间隔随机抖动上限
 }
 
-export interface SkillTuning {
-  growSkillRoll: 'overCurrent'; // COC：d100 > 当前 才成长
-}
-
 export interface TuningConfig {
   needs: NeedsTuning;
   san: SanTuning;
@@ -247,13 +229,9 @@ export interface TuningConfig {
   repair: RepairTuning;
   autobuild: AutobuildTuning;
   env: EnvTuning;
-  upgrade: UpgradeTuning;
   pawn: PawnTuning;
   event: EventTuning;
   card: CardTuning;
-  skill: SkillTuning;
-  // 占位：保留给 SkillId 类型引用（避免未使用告警）
-  _?: SkillId;
 }
 
 export const TUNING: TuningConfig = {
@@ -289,8 +267,6 @@ export const TUNING: TuningConfig = {
     toolBonus: 1.3,
     strBonusPerPoint: 0.01,
     strBase: 40,
-    moodGainSuccess: 2,
-    moodGainFail: -3,
   },
   faith: {
     prayTime: 2,
@@ -358,9 +334,6 @@ export const TUNING: TuningConfig = {
     malintentChance: 0.12,
     malintentMoodGain: 8,
     malintentFulfill: 15,
-    fulfillWork: 2,
-    fulfillBuild: 1.5,
-    fulfillPray: 2,
     powResistBase: 0.3,
     stealThreshold: 10,
     stealAmount: 5,
@@ -388,7 +361,6 @@ export const TUNING: TuningConfig = {
     opinionThreat: -1.5,
     opinionDeficit: -0.8,
     trustTimer: 8,
-    clusterAllyThreshold: 30,
   },
   population: {
     maxPawns: 12,
@@ -422,8 +394,6 @@ export const TUNING: TuningConfig = {
     churchWood: 25,
     wallWood: 60,
     wallTarget: 6,
-    buildRadiusMin: 2,
-    buildRadiusMax: 6,
   },
   env: {
     baseTemp: 18,
@@ -434,9 +404,6 @@ export const TUNING: TuningConfig = {
     rainMax: 35,
     hotAt: 32,
     coldAt: 0,
-  },
-  upgrade: {
-    faithThreshold: 35,
   },
   pawn: {
     baseSpeed: 4,
@@ -464,8 +431,5 @@ export const TUNING: TuningConfig = {
       { cardId: 'caveMine', resource: 'ore', lowAt: 15, boost: 1.4 },
       { cardId: 'build', resource: 'queue', lowAt: 0, boost: 1.8 },
     ],
-  },
-  skill: {
-    growSkillRoll: 'overCurrent',
   },
 };

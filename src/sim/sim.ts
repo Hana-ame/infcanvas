@@ -149,7 +149,6 @@ export class Sim implements SimContext {
   tickHz: number;
   time = 0;
   dayLength = 120;
-  hasDayCycle = true;
   dayTime = 0;
   speed = 1;
   paused = false;
@@ -233,12 +232,6 @@ export class Sim implements SimContext {
     this.spawnPawns(pawnCount);
     // 出生点篝火 → 首个派系单位
     this.ensureInitialCamp();
-  }
-
-  // mod 挂载入口：mod 注册新系统/新卡/新意图（DESIGN §7）
-  useMods(fn: (m: ModRegistry) => void): void {
-    if (this._started) throw new Error('mod 必须在 sim 启动前注册');
-    fn(this.mods);
   }
 
   private applyMods(): void {
@@ -733,7 +726,6 @@ export class Sim implements SimContext {
     this.bus.emit({ type: 'faction_event', kind: 'conquest', from: conqueror.name, to: victim.name });
   }
   pawnJob(eid: number): string { return this.pawnStates.get(eid)?.job ?? ''; }
-  needsOf(eid: number) { return this.readNeeds(eid); }
   healthOf(eid: number) { return this.readHealth(eid); }
   get selectedIds(): number[] { return this.selected; }
   set selectedIds(list: number[]) { this.selected = list; }

@@ -228,27 +228,6 @@ export class World {
     return false;
   }
 
-  // 找最近带某标签的建筑
-  findNearestTag(tag: string, x: number, y: number, radius: number): { x: number; y: number } | null {
-    let best: { x: number; y: number } | null = null;
-    let bestD = Infinity;
-    for (const [, b] of this.buildings) {
-      if (!b.def.tags?.includes(tag)) continue;
-      // 主格位置（从 key 推算）
-      for (const [key, bb] of this.buildings) {
-        if (bb !== b) continue;
-        const bx = key % this.width;
-        const by = Math.floor(key / this.width);
-        const d = (x - bx) ** 2 + (y - by) ** 2;
-        if ((radius ? d <= radius * radius : true) && d < bestD) {
-          bestD = d;
-          best = { x: bx, y: by };
-        }
-      }
-    }
-    return best;
-  }
-
   // 建筑受损（袭击/火灾），返回是否被摧毁
   damageBuilding(x: number, y: number, dmg: number): { destroyed: boolean; building: { def: (typeof BUILDINGS)[string]; hp: number; faction: string } | null } {
     const main = this.mainKey(x, y);

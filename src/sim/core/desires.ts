@@ -6,18 +6,14 @@ import type { DesireTuning } from '../defs/tuning';
 
 export type DesireId = 'gluttony' | 'sloth' | 'greed' | 'envy' | 'pride' | 'wrath' | 'lust';
 
-export const DESIRES: Record<DesireId, {
-  label: string;         // 中文名（罪）
-  virtue: string;        // 对立美德
-  drivenBy: string;      // 满足途径描述
-}> = {
-  gluttony: { label: '暴食', virtue: '节制', drivenBy: '进食' },
-  sloth:    { label: '懒惰', virtue: '勤奋', drivenBy: '休息/清闲' },
-  greed:    { label: '贪婪', virtue: '慷慨', drivenBy: '囤积资源' },
-  envy:     { label: '嫉妒', virtue: '仁爱', drivenBy: '攀比（未实现）' },
-  pride:    { label: '傲慢', virtue: '谦卑', drivenBy: '祈祷/被尊重' },
-  wrath:    { label: '暴怒', virtue: '耐心', drivenBy: '战斗发泄' },
-  lust:     { label: '色欲', virtue: '贞洁', drivenBy: '繁衍（未实现）' },
+export const DESIRES: Record<DesireId, { label: string }> = {
+  gluttony: { label: '暴食' },
+  sloth:    { label: '懒惰' },
+  greed:    { label: '贪婪' },
+  envy:     { label: '嫉妒' },
+  pride:    { label: '傲慢' },
+  wrath:    { label: '暴怒' },
+  lust:     { label: '色欲' },
 };
 
 export const ALL_DESIRES = Object.keys(DESIRES) as DesireId[];

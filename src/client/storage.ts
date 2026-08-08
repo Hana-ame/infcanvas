@@ -46,16 +46,3 @@ export async function writeSave(data: unknown): Promise<void> {
     /* 忽略写失败 */
   }
 }
-
-export function clearSave(): Promise<void> {
-  return new Promise((resolve) => {
-    openDb()
-      .then(async (db) => {
-        const tx = db.transaction(STORE, 'readwrite');
-        tx.objectStore(STORE).delete(KEY);
-        tx.oncomplete = () => resolve();
-        tx.onerror = () => resolve();
-      })
-      .catch(() => resolve());
-  });
-}
