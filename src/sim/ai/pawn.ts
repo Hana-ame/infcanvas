@@ -234,7 +234,7 @@ export const TRAIT_CARDS: Record<string, BehaviorCard> = {
   },
 };
 
-// 初始卡池：天赋卡 + mod 卡（全部进入，确保 mod 卡必在池中）+ 基础卡填到 maxSlots
+// 初始卡池：天赋卡 + mod 卡（全部进入，确保 mod 卡必在池中）+ 基础卡保底
 export function initSlots(dna: Dna, extraCards?: BehaviorCard[]): (BehaviorCard | null)[] {
   const slots: (BehaviorCard | null)[] = [];
   const traitCards = dna.traits
@@ -244,7 +244,14 @@ export function initSlots(dna: Dna, extraCards?: BehaviorCard[]): (BehaviorCard 
   // mod 卡全部进池（去重排除基础卡；即使超 maxSlots 也保留——抽卡按权重，容量不再挤出 mod 玩法）
   const extra = (extraCards ?? []).filter((c) => !BASE_CARDS.some((b) => b.id === c.id));
   for (const ec of extra) slots.push(ec);
+  // 基础卡保底 GUARANTEED_BASE 张（eat/rest/chop）：maxSlots=2 且 2 trait 卡时若无保底 → 小人
+  // 没有任何基础卡、永久闲逛（曾实测发生）。保底让"天赋再强也有生存底线"。
+  const GUARANTEED_BASE = 3;
   let baseIdx = 0;
+  while (baseIdx < GUARANTEED_BASE && baseIdx < BASE_CARDS.length) {
+    slots.push(BASE_CARDS[baseIdx++]);
+  }
+  // 空槽（maxSlots 更大）再继续填
   while (slots.length < dna.maxSlots && baseIdx < BASE_CARDS.length) {
     slots.push(BASE_CARDS[baseIdx++]);
   }

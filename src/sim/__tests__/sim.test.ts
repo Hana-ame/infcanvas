@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { Sim } from '../sim';
 import { SimRng } from '../core/rng';
 import { generateDna, initSlots, drawCards, pickBest, BASE_CARDS, type BehaviorCard } from '../ai/pawn';
+import type { Dna } from '../ai/pawn';
 import { World } from '../core/world';
 import { BUILDINGS } from '../defs';
 import type { GameSystem } from '../systems/registry';
@@ -76,6 +77,16 @@ describe('DNA + slots', () => {
     const dna = generateDna(99);
     const slots = initSlots(dna);
     expect(slots.length).toBeGreaterThanOrEqual(dna.maxSlots);
+  });
+
+  it('guaranteed base cards: even 2 traits + maxSlots=2 keeps eat/rest/chop (no idle-lock), sim.test 回归：maxSlots 被 trait 挤占曾致永久闲逛', () => {
+    // 构造最坏情形：maxSlots=2，两个 trait（设计上各占一槽）——修复前基础卡 0 张
+    const dna: Dna = { traits: ['强壮', '机灵'], maxSlots: 2, str: 60, con: 50, siz: 55, dex: 50, int: 50, pow: 50, app: 50, edu: 50, skillBonuses: {}, sins: {} };
+    const slots = initSlots(dna as unknown as Parameters<typeof initSlots>[0]);
+    const ids = slots.filter(Boolean).map((c) => (c as BehaviorCard).id);
+    expect(ids).toContain('eat');
+    expect(ids).toContain('rest');
+    expect(ids).toContain('chop');
   });
 
   it('drawCards returns up to 3 cards, pickBest picks one', () => {
@@ -833,13 +844,11 @@ describe('自主建造（用户 Q1/Q8：营地自主扩张）', () => {
     su.units.get(a)!.opinions.set(b, { value: 50, lastChanged: 0 });
     su.units.get(b)!.opinions.set(a, { value: 50, lastChanged: 0 });
     // a 食物紧缺（<40）→ 高汇率贸易
-    const woodBefore = su.units.get(a)!.resources.wood!;
     const foodBefore = su.units.get(a)!.resources.food!;
     for (let i = 0; i < 400; i++) sim.step(1 / 20); // 20s > tradeCd
-    const woodAfter = su.units.get(a)!.resources.wood!;
     const foodAfter = su.units.get(a)!.resources.food!;
-    // 贸易发生：a 木减、食增，且记了顺差
-    expect(woodAfter).toBeLessThan(woodBefore);
+    // 贸易发生：a 出了木换食（记了顺差）、食物入账。
+    // 注：不断言 wood 减少——保底卡后小人更勤快，20s 采集增量可能盖过贸易量。
     expect(foodAfter).toBeGreaterThan(foodBefore);
     expect((su.units.get(a)!.tradeBalance.get(b) ?? 0)).toBeGreaterThan(0);
   });

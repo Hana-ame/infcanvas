@@ -225,7 +225,7 @@ function createHud(sim: Sim, onSelectBuild: (id: string | null) => void, onZoom?
           `STR ${p.dna.str} · CON ${p.dna.con} · SIZ ${p.dna.siz} · DEX ${p.dna.dex}<br>` +
           `INT ${p.dna.int} · POW ${p.dna.pow} · APP ${p.dna.app} · EDU ${p.dna.edu}<br>` +
           `天赋：${p.dna.traits.join('、') || '无'}<br>` +
-          `插槽(${p.slots.filter((c) => c !== null).length}/${p.dna.maxSlots})：${slotCards}<br>` +
+          `卡池 ${p.slots.filter((c) => c !== null).length} 张（槽 ${p.dna.maxSlots}，trait/mod 卡不占约束）：${slotCards}<br>` +
           `技能：工作 ${p.skills.work ?? 0} · 战斗 ${p.skills.fight ?? 0} · 手艺 ${p.skills.craft ?? 0} · 社交 ${p.skills.social ?? 0} · 信仰 ${p.skills.faith ?? 0}<br>` +
           `欲望：食${nf(p.desires.gluttony)} 懒${nf(p.desires.sloth)} 贪${nf(p.desires.greed)} 怒${nf(p.desires.wrath)} 傲${nf(p.desires.pride)} 嫉${nf(p.desires.envy)} 欲${nf(p.desires.lust)}<br>` +
           (dec ? `<span style="color:#caa">${dec}</span><br>` : '') +
