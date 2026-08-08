@@ -11,6 +11,7 @@ import type { IntentExecutor, WorkExecutor } from '../systems/cardSystem';
 import type { GameSystem } from '../systems/registry';
 import type { ScriptedEvent } from '../systems/eventSystem';
 import type { ExpansionPlan } from '../systems/autonomousBuildSystem';
+import { DESIRES } from '../core/desires';
 
 // 生命周期钩子上下文（step:before / step:after，见 sim.step）
 export interface HookContext {
@@ -146,6 +147,18 @@ export class ModRegistry {
   registerWork(type: string, fn: WorkExecutor): this {
     if (this.works.has(type)) throw new Error(`mod: work "${type}" 已存在`);
     this.works.set(type, fn);
+    return this;
+  }
+
+  // 新欲望维度（DESIGN §3）：进入欲望循环（初始值/衰减/匮乏/恶意槽/满足自动成立）。
+  // mod 卡用 satisfies / desire 字段引用新欲望 id 即完成接线。
+  // DESIRES 是模块级目录（跨 Sim 实例共享）：同 id 同 label 重复注册幂等，不同定义才抛冲突
+  registerDesire(id: string, label: string): this {
+    if (id in DESIRES) {
+      if (DESIRES[id].label === label) return this;
+      throw new Error(`mod: desire "${id}" 冲突（已定义为「${DESIRES[id].label}」）`);
+    }
+    DESIRES[id] = { label };
     return this;
   }
 

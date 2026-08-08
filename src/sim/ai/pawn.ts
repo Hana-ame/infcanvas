@@ -4,6 +4,7 @@
 
 import { SimRng } from '../core/rng';
 import type { DesireId } from '../core/desires';
+import { allDesires } from '../core/desires';
 
 export type SkillId = 'work' | 'fight' | 'social' | 'faith' | 'craft';
 
@@ -62,12 +63,16 @@ export interface BehaviorIntent {
 export interface BehaviorCard {
   id: string;
   name: string;
-  series: 'work' | 'combat' | 'social' | 'religion' | 'leisure' | 'physio';
+  // 系列开放为 string：内置 work/combat/social/religion/leisure/physio；
+  // MARKOV_BIAS 按 key 查（未列出默认 1）；火焰'work'等比较为字面量、兼容自定义系列
+  series: string;
   weight: number;
   condition?: (ctx: CardContext) => boolean;
   utility?: (ctx: CardContext) => number;
   // 满足欲望声明（数据驱动）：卡被选中执行后满足对应欲望（mod 新工作卡可声明，替代文案匹配）
   satisfies?: { desire: DesireId; amount: number }[];
+  // 欲望关联声明：匮乏时升该类卡权重（缺省按系列映射：work→greed 等；mod 新欲望可用此字段直接挂钩）
+  desire?: DesireId;
   decide(ctx: CardContext): BehaviorIntent;
 }
 
@@ -169,19 +174,13 @@ export function generateDna(seed: number): Dna {
   if (traits.includes('机灵')) { dna.int = Math.min(90, dna.int + 10); dna.dex = Math.min(90, dna.dex + 6); }
   if (traits.includes('夜猫子')) dna.pow = Math.min(90, dna.pow + 8);
 
-  // 天赋 → 罪孽倾向（个性权重 0-1）
+  // 天赋 → 罪孽倾向（个性权重 0-1）：遍历欲望目录（动态，mod 新欲望自动有先天倾向）
   const sins: Dna['sins'] = {};
-  sins.gluttony = 0.3 + rng.next() * 0.4;
-  sins.sloth = 0.3 + rng.next() * 0.4;
-  sins.greed = 0.3 + rng.next() * 0.4;
-  sins.envy = 0.2 + rng.next() * 0.4;
-  sins.pride = 0.3 + rng.next() * 0.4;
-  sins.wrath = 0.2 + rng.next() * 0.4;
-  sins.lust = 0.2 + rng.next() * 0.4;
-  if (traits.includes('懒惰')) sins.sloth = Math.min(1, sins.sloth + 0.3);
-  if (traits.includes('好斗')) sins.wrath = Math.min(1, sins.wrath + 0.3);
-  if (traits.includes('热爱工作')) sins.sloth = Math.max(0.1, sins.sloth - 0.3);
-  if (traits.includes('虔诚')) sins.pride = Math.max(0.1, sins.pride - 0.2);
+  for (const k of allDesires()) sins[k] = 0.2 + rng.next() * 0.5;
+  if (traits.includes('懒惰')) sins.sloth = Math.min(1, (sins.sloth ?? 0) + 0.3);
+  if (traits.includes('好斗')) sins.wrath = Math.min(1, (sins.wrath ?? 0) + 0.3);
+  if (traits.includes('热爱工作')) sins.sloth = Math.max(0.1, (sins.sloth ?? 0) - 0.3);
+  if (traits.includes('虔诚')) sins.pride = Math.max(0.1, (sins.pride ?? 0) - 0.2);
   dna.sins = sins;
 
   if (traits.includes('热爱工作')) dna.skillBonuses.work = 1.5;
@@ -301,8 +300,9 @@ function effectiveWeight(card: BehaviorCard, pawn: PawnLike, ctx?: CardContext):
   if (pawn.dna.traits.includes('热爱工作') && card.series === 'work') w *= 1.8;
   if (pawn.dna.traits.includes('懒惰') && card.series === 'work') w *= 0.5;
   // 欲望驱动：未满足的欲望 → 对应系列卡权重升高（DESIGN §3）
+  // 关联 = 卡声明 desire ?? 系列默认映射（可扩展不破坏）
   if (ctx?.view.desiresOf) {
-    const desire = seriesToDesire(card.series);
+    const desire = card.desire ?? seriesToDesire(card.series);
     if (desire) {
       const d = ctx.view.desiresOf(ctx.eid);
       if (d && d[desire] !== undefined) {

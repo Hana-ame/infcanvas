@@ -4,9 +4,11 @@
 // 数值参数来自 tuning（docs/DATA_DRIVEN.md §3.4）
 import type { DesireTuning } from '../defs/tuning';
 
-export type DesireId = 'gluttony' | 'sloth' | 'greed' | 'envy' | 'pride' | 'wrath' | 'lust';
+// 欲望 id 开放为 string：mod 可声明新欲望维度（卡 satisfies / 卡 desire 字段引用即生效）
+export type DesireId = string;
 
-export const DESIRES: Record<DesireId, { label: string }> = {
+// 欲望目录（label 供 HUD/日志显示）。mod 新欲望经 ModRegistry.registerDesire 加入，进入循环后初始值/衰减/匮乏/满足自动成立
+export const DESIRES: Record<string, { label: string }> = {
   gluttony: { label: '暴食' },
   sloth:    { label: '懒惰' },
   greed:    { label: '贪婪' },
@@ -16,12 +18,15 @@ export const DESIRES: Record<DesireId, { label: string }> = {
   lust:     { label: '色欲' },
 };
 
-export const ALL_DESIRES = Object.keys(DESIRES) as DesireId[];
+// 动态取欲望目录（registerDesire 后生效，勿缓存 Object.keys 结果）
+export function allDesires(): string[] {
+  return Object.keys(DESIRES);
+}
 
 // 初始满足度（各罪 50-75，随机）
 export function initDesires(rng: { next(): number }): Record<DesireId, number> {
   const d = {} as Record<DesireId, number>;
-  for (const k of ALL_DESIRES) d[k] = 50 + Math.floor(rng.next() * 25);
+  for (const k of allDesires()) d[k] = 50 + Math.floor(rng.next() * 25);
   return d;
 }
 
@@ -32,7 +37,7 @@ export function tickDesires(
   dt: number,
   t: DesireTuning,
 ): void {
-  for (const k of ALL_DESIRES) {
+  for (const k of allDesires()) {
     // 先天倾向高 → 该欲望流失快（更"欲求不满"）
     const lustFactor = 1 + ((personality[k] ?? 0.5) - 0.5) * t.personalityFactor;
     d[k] = clamp(d[k] - t.decayPerSec * lustFactor * dt);
@@ -51,7 +56,7 @@ function clamp(v: number): number {
 export function starvingDesires(d: Record<DesireId, number>, t: DesireTuning): { scarce: DesireId[]; critical: DesireId[] } {
   const scarce: DesireId[] = [];
   const critical: DesireId[] = [];
-  for (const k of ALL_DESIRES) {
+  for (const k of allDesires()) {
     if (d[k] < t.criticalAt) critical.push(k);
     else if (d[k] < t.scarceAt) scarce.push(k);
   }

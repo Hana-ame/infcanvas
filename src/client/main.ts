@@ -4,6 +4,7 @@ import type { ModRegistry } from '../sim/mods/registry';
 import { Renderer } from './renderer';
 import { SvgAssets } from './svgLoader';
 import { weatherLabel } from '../sim/core/env';
+import { DESIRES } from '../sim/core/desires';
 import { loadSave, writeSave } from './storage';
 
 const nf = (v: number | undefined): string => (v === undefined ? '-' : Math.round(v).toString());
@@ -227,7 +228,7 @@ function createHud(sim: Sim, onSelectBuild: (id: string | null) => void, onZoom?
           `天赋：${p.dna.traits.join('、') || '无'}<br>` +
           `卡池 ${p.slots.filter((c) => c !== null).length} 张（槽 ${p.dna.maxSlots}，trait/mod 卡不占约束）：${slotCards}<br>` +
           `技能：工作 ${p.skills.work ?? 0} · 战斗 ${p.skills.fight ?? 0} · 手艺 ${p.skills.craft ?? 0} · 社交 ${p.skills.social ?? 0} · 信仰 ${p.skills.faith ?? 0}<br>` +
-          `欲望：食${nf(p.desires.gluttony)} 懒${nf(p.desires.sloth)} 贪${nf(p.desires.greed)} 怒${nf(p.desires.wrath)} 傲${nf(p.desires.pride)} 嫉${nf(p.desires.envy)} 欲${nf(p.desires.lust)}<br>` +
+          `欲望：${Object.entries(DESIRES).map(([k, { label }]) => `${label}${nf(p.desires[k])}`).join(' ')}<br>` +
           (dec ? `<span style="color:#caa">${dec}</span><br>` : '') +
           (nd ? `饥饿 ${nf(nd.food)} · 精力 ${nf(nd.rest)} · 心情 ${nf(nd.mood)} · 理智 ${nf(nd.san)}` : '') +
           (p.oracleBuff && p.oracleBuff.until > sim.time ? `<br><span style="color:#e0b0ff">✨ 受神谕祝福</span>` : '');

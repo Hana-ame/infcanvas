@@ -1360,6 +1360,31 @@ describe('mod 玩法（DATA_DRIVEN §6 验收）', () => {
     expect(st.desires.greed).toBeGreaterThan(before);
   });
 
+  it('mod can register an entirely new desire dimension (registerDesire → init/decay/fulfill auto)', () => {
+    const sim = new Sim({ seed: 220, pawnCount: 1, mods: (m) => m.registerDesire('fame', '声望') });
+    const st = sim.pawnStates.get(sim.pawns[0])!;
+    expect(st.desires!.fame).toBeGreaterThanOrEqual(0);
+    expect(st.dna.sins.fame).toBeGreaterThanOrEqual(0); // 先天倾向自动初始化
+    st.desires!.fame = 10;
+    const before = st.desires!.fame;
+    // 声明 satisfies 的卡执行 → 新欲望维度被满足（验收 19：色欲/嫉妒等未内置途径 mod 可自建）
+    const sim2 = new Sim({ seed: 221, pawnCount: 1, mods: (m) => {
+      m.registerDesire('fame', '声望');
+      m.registerCard({
+        id: 'strut', name: '显摆', series: 'leisure', weight: 100,
+        condition: () => true, utility: () => 999,
+        desire: 'fame', // 新欲望直接挂钩权重（无需系列映射）
+        satisfies: [{ desire: 'fame', amount: 5 }],
+        decide: () => ({ action: 'idle', label: '显摆' }),
+      });
+    } });
+    const st2 = sim2.pawnStates.get(sim2.pawns[0])!;
+    st2.desires!.fame = 10;
+    for (let i = 0; i < 300 && st2.desires!.fame <= 10; i++) sim2.step(1 / 20);
+    expect(st2.desires!.fame).toBeGreaterThan(10);
+    void before;
+  });
+
   it('mod building with emitsLight lights nearby tiles (no campfire special-case)', () => {
     const sim = new Sim({ seed: 210, pawnCount: 0, mods: (m) => {
       m.registerBuilding({
