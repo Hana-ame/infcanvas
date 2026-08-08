@@ -1,7 +1,9 @@
-// infcanvas 入口 —— P0 单机可玩版 + HUD 菜单
+// infcanvas 入口 —— P0 单机可玩版 + HUD 菜单；?remote=ws://... 连 P1 server（权威在远端）
 import { Sim } from '../sim/sim';
 import type { ModRegistry } from '../sim/mods/registry';
 import { Renderer } from './renderer';
+import { RemoteSim } from './remote';
+import type { SimView } from './remote';
 import { SvgAssets } from './svgLoader';
 import { weatherLabel } from '../sim/core/env';
 import { DESIRES } from '../sim/core/desires';
@@ -12,7 +14,7 @@ const nf = (v: number | undefined): string => (v === undefined ? '-' : Math.roun
 // 当前选中的建筑（模块级，HUD 可读）
 let selectedBuilding: { x: number; y: number } | null = null;
 
-function createHud(sim: Sim, onSelectBuild: (id: string | null) => void, onZoom?: (factor: number) => void, onViewMode?: (mode: 'top' | 'iso') => void): { update: (bm: string | null) => void; hint: HTMLElement } {
+function createHud(sim: SimView, onSelectBuild: (id: string | null) => void, onZoom?: (factor: number) => void, onViewMode?: (mode: 'top' | 'iso') => void): { update: (bm: string | null) => void; hint: HTMLElement } {
   const root = document.createElement('div');
   root.style.cssText = 'position:fixed;inset:0;z-index:10;pointer-events:none;font:13px system-ui;color:#eee;';
 
@@ -305,6 +307,21 @@ async function main(): Promise<void> {
   const container = document.getElementById('app')!;
   const isTouch = 'ontouchstart' in window;
 
+  // ---- 连接模式（P1）：?remote=ws://host:port → server 权威，本页只读观察 + 命令 ----
+  const remoteUrl = new URLSearchParams(location.search).get('remote');
+  if (remoteUrl) {
+    const sim = new RemoteSim(remoteUrl);
+    await sim.connect();
+    (window as unknown as { __sim: unknown }).__sim = sim; // 调试/测试后门（远端视图）
+    const assets = new SvgAssets();
+    await assets.loadAll();
+    const renderer = new Renderer(sim, assets);
+    await renderer.init(container);
+    attachScene(sim, renderer, isTouch);
+    return;
+  }
+
+  // ---- 单机模式（P0） ----
   // 运行时 mod 加载：?mods=url1,url2 动态 import（ESM，默认导出 mod 回调）。
   // dev: 指向源码路径，如 ?mods=/src/mods/demo-berry.ts（vite 会 transform）
   // build: dist 无独立模块，内联挂载（new Sim({ mods })）或自行托管 .js 于静态服务器
@@ -325,7 +342,7 @@ async function main(): Promise<void> {
     pawnCount: 4,
     mods: modFns.length > 0 ? (m) => { for (const f of modFns) f(m); } : undefined,
   });
-  (window as unknown as { __sim: Sim }).__sim = sim; // 调试/测试后门
+  (window as unknown as { __sim: Sim }).__sim = sim as unknown as Sim; // 调试/测试后门
   // 读取存档（IndexedDB）
   try {
     const raw = await loadSave<string>();
@@ -349,6 +366,11 @@ async function main(): Promise<void> {
     } catch { /* 忽略写失败 */ }
   }, 30000);
 
+  attachScene(sim, renderer, isTouch);
+}
+
+// 共享场景：输入绑定 + 主循环（单机与远端共用；远端 sim.step 为 no-op）
+function attachScene(sim: SimView, renderer: Renderer, isTouch: boolean): void {
   let buildMode: string | null = null;
   const hud = createHud(sim, (id) => {
     buildMode = id;

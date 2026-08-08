@@ -8,7 +8,7 @@ import { World } from './core/world';
 import { findPath } from './core/pathfinding';
 import { SimRng } from './core/rng';
 import { initNeeds } from './core/needs';
-import { EventBus } from './core/events';
+import { EventBus, type GameEvent } from './core/events';
 import { HistoryLog } from './core/history';
 import { generateDna, initSlots, type Dna, type SkillId, BASE_CARDS, TRAIT_CARDS } from './ai/pawn';
 import { initDesires, type DesireId } from './core/desires';
@@ -213,6 +213,8 @@ export class Sim implements SimContext {
     this.world = new World(seed, { tiles: this.mods.tiles, buildings: this.mods.buildings });
     this.rng = new SimRng(seed + 1);
     this.bus = new EventBus();
+    // 瓦片变更 → 事件总线（server 增量推送 / mod 订阅 / 测试断言的统一入口）
+    this.world.onTileChange = (x, y, tileId) => this.bus.emit({ type: 'tile_changed', x, y, tileId });
     // 所有事件 → 结构化历史
     this.bus.onAny((ev) => this.history.record(ev, this.time, this.time / this.dayLength));
     // 建篝火/教堂 → 创建/升级派系单位
@@ -856,5 +858,14 @@ export class Sim implements SimContext {
     for (const eid of this._pawnList) this.socialUnits.assignPawn(eid);
     // 玩家单位若已不存在（坏档）则置空，由 checkPossession 逻辑接管
     if (this.playerUnitId && !this.socialUnits.units.has(this.playerUnitId)) this.playerUnitId = null;
+  }
+
+  // 瓦片变更监听：server 推增量 / 测试断言（P1 网络层）。订阅返回退订函数
+  addTileListener(fn: (x: number, y: number, tileId: string) => void): () => void {
+    const on = (ev: GameEvent) => {
+      if (ev.type === 'tile_changed') fn(ev.x, ev.y, ev.tileId);
+    };
+    const off = this.bus.on('tile_changed', on as never);
+    return off;
   }
 }

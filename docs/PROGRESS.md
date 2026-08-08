@@ -47,6 +47,7 @@
 | mod 注册表 | §7 | ✅ | **ModRegistry**（DESIGN §7 扩展性原则）：运行时注册 tile/building/item/**enemy**/card/recipe/event/expansionPlan/intent/work/system/hook + overrideDef/overrideTuning + 冲突检测；`SimOptions.mods` 构造期挂载；详见 docs/DATA_DRIVEN.md（§6 验收 17 项全 ✅，89 测试覆盖） |
 | 数据驱动化 | §7 | ✅ | **sim 层 defId 特判清零**：craft 自配方/发光/升级(upgradesTo)/神谕(capabilities)/派系优先级表/敌对种类(enemies.ts)/派系袭击(raider def)/采集目标(growable+harvest)/采后瓦片(harvestReplaces)/光环(aura.radius)/AI 建造成本(def.cost)/出生建筑(tuning) 全部走 defs/tuning/registry，mod 不改内核（DATA_DRIVEN.md §6） |
 | 存档健壮性 | §5 | ✅ | save/load JSON-safe：slots 存卡 id 还原（不再存闭包）、load 重建成员归属防假团灭、修复重建时 splice 跳杀残留 pawn |
+| P1 server 骨架 | §5/§8/§9 | ✅ | **权威在 server**：Node 复用 `src/sim`（零 DOM ✓ tsx 直跑）+ WSS 通道；协议 `src/shared/protocol.ts`（welcome 全量 tile+defs 只读表 / 2Hz snapshot / tileChanged+feed 增量 / C→S 复用 Sim.Command）；server：固定步进 accumulator + `addTileListener` 增量推送（world.setTile 相同值去重不触发）；client：`?remote=ws://…` 连入，`RemoteSim` 实现与本地 Sim 同构读取面（world/pawns/建筑/需求/属性/欲望/卡池/事件），HUD+Renderer 双端共用；命令经 WSS 上行、server 权威执行、快照回显（e2e：scripts/e2e/remote-viewer.mjs 8 断言全过） |
 
 ## 待办 / 差距
 
@@ -61,7 +62,8 @@
 | 流言/对话完整 | §6 | 微互动已做（模板）；闲聊/深聊（引用记忆的 LLM 对话）、话题沿社交网络传播待 P1 |
 | 七宗罪欲望完整 | §3 欲望系统 | 贪婪途径（工作→satisfies 数据化）已通；色欲/嫉妒满足途径待设计（`DesireId` 闭合类型开放后 mod 可自建维度） |
 | COC 属性全用途 | §3 属性卡 | SIZ 负重、社交对抗（说服/传教已做对抗检定 APP/POW）——SIZ 负重未做 |
-| LLM 层 | §6 | P1：`eventSystem.setProvider` 预留口（当前无调用，详情见 DATA_DRIVEN.md）；server 权威模型 + WSS 未动 |
+| LLM 层 | §6 | P1 剩余：`eventSystem.setProvider` 预留口（当前无调用）；server 已就绪（WSS 权威模型 + 命令通道），LLM 慢决策层（provider 网关）待接 |
+| server 增量优化 | §8 | P1 后续：snapshot 2Hz 全量（骨架够用）；tick delta / 实体事件 / chunk 按需 / 插值 / 兴趣管理 / 客户端权威提交验证待 P2 |
 | mod 打包/沙箱 | §10 待定 | 远程 JS mod 已落地（`?mods=` + ESM default 导出，见 src/mods/demo-berry.ts）；打包格式（zip/远程 URL 批量）、服务端沙箱/信任模型待定 |
 | 联机 | §8 | P2：WSS 协议、多客户端同步、兴趣管理、持久化、鉴权 |
 

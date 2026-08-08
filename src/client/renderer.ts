@@ -1,6 +1,6 @@
 // Pixi 渲染器 —— SVG 图标: 地形/建筑/小人 + 相机
 import { Application, Container, Graphics, Rectangle, Text, TextStyle } from 'pixi.js';
-import { Sim } from '../sim/sim';
+import type { SimView } from './remote';
 import type { TileDef } from '../sim/defs';
 import { SvgAssets } from './svgLoader';
 
@@ -19,7 +19,7 @@ function hostileTint(enemyId: string): number {
 export class Renderer {
   app: Application;
   worldContainer: Container;
-  sim: Sim;
+  sim: SimView;
   private assets: SvgAssets;
   private viewMode: 'top' | 'iso' = 'top';
   private entityLayer: Container; // 树/建筑/小人/敌人按 y 前后排序（2.5D）
@@ -43,7 +43,7 @@ export class Renderer {
   // 飘字反馈（资源获得等）
   private floaters: { text: Text; life: number; vy: number }[] = [];
 
-  constructor(sim: Sim, assets: SvgAssets) {
+  constructor(sim: SimView, assets: SvgAssets) {
     this.sim = sim;
     this.assets = assets;
     this.app = new Application();

@@ -101,9 +101,14 @@ export class World {
     return id ?? 'grass';
   }
 
+  // 瓦片变更监听（采集/事件改地形 → server 推送增量；null = 不监听）
+  onTileChange: ((x: number, y: number, tileId: string) => void) | null = null;
+
   setTile(x: number, y: number, tileId: string): void {
     if (!this.inBounds(x, y)) return;
+    if (this.tileIndex[this.idx(x, y)] === this.tileIdToIndex(tileId)) return;
     this.tileIndex[this.idx(x, y)] = this.tileIdToIndex(tileId);
+    this.onTileChange?.(x, y, tileId);
   }
 
   // 序列化：导出全部 tile id + 建筑（存档用）
