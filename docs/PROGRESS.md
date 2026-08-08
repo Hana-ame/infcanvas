@@ -38,26 +38,33 @@
 | 派系优先级 | §3/用户Q8 | ✅ | **AI 按环境下达工作优先指令**（RimWorld 工作优先的确定性版）：每 10s 评估资源短缺/建造队列 → 调制全营地对应工作卡权重（食<60→farm↑、木<40→chop↑、矿<15→mine↑、排队→build↑）；随环境自动转变 |
 | 自主扩张 | §3/用户Q1/Q8 | ✅ | **AutonomousBuildSystem**：AI 评估资源与营地状态自动规划扩建（无篝火→起篝火、人多吃紧→加火、缺粮→扩农田、缺工具→工作台、矿少→矿洞、富余→围墙、**信仰高→建教堂**）；20-30s 评估一次注入 buildQueue，小人照常执行；营地自主生长（观察模拟器核心） |
 | 教堂 + 神谕 | §3/用户Q2/Q3 | ✅ | **教堂**（2x2，信仰≥35 自动建）+ **神谕影响**：玩家选中教堂→"发布神谕"按钮→祝福附近(半径6)高信仰小人（信任=信仰/100 过滤，低信仰不受影响）：30s 心情 buff + 信仰↑；教堂是神谕唯一物理接口（DESIGN §3）；神谕不直接指挥，只影响目标层 |
-| 社会单位/部落记忆 | 用户Q9+即时指令 | ✅ | **有篝火 = 独立派系**。每个篝火 = SocialUnit：部落记忆（成员/事件/看法）、名字、成员归属。**教堂 = 篝火升级**（容量：篝火记 2-3 连接、教堂 5-10）。**篝火间信任机制**：成员协作→看法增；双向友好→贸易（木换食）；双向敌对→派掠夺者攻打对方（战争）→加深仇恨；**派系 = 看法网络涌现**（clusterFactions），非数据定义。出生点初始篝火=首派系；野生篝火事件刷新新势力 |
+| 社会单位/部落记忆 | 用户Q9+即时指令 | ✅ | **有篝火 = 独立派系**。每个篝火 = SocialUnit：部落记忆（成员/事件/看法）、名字、成员归属。**教堂 = 篝火升级**（容量：篝火记 2-3 连接、教堂 5-10）。**篝火间信任机制**：成员协作→看法增；双向友好→贸易（木换食）；双向敌对→派掠夺者攻打对方（战争）→加深仇恨；**派系 = 单位间的看法关系**（友好→贸易/伙伴、敌对→战争，无抽象联盟层）：双向敌对→派掠夺者攻打对方（战争）→加深仇恨。出生点初始篝火=首派系；野生篝火事件刷新新势力 |
 | 存档 | §5 | ✅ | **IndexedDB**（异步、大容量），30s 自动存档；旧 localStorage 存档已弃用；含社会单位（派系/记忆/看法/库存/玩家所属）持久化 |
 | 渲染 | §1 | ✅ | PixiJS v8；SVG 素材（btoa data-uri → GraphicsContext）；地形/建筑/小人/敌人生成 |
 | 视角切换 | §1 渲染 | ✅ | **2D 俯视 ↔ 2.5D 同轴**（右下角按钮）；2.5D 按世界 y 排序实现前后遮挡（树/建筑/小人/敌人统一进 entityLayer，zIndex=y×10+层级） |
 | HUD | §1 | ✅ | 资源条、建造菜单、速度控制（⏸/1x/2x/3x）、缩放按钮（+/-）+ PageUp/PageDown、帮助、事件 feed、选中面板（COC 属性/天赋/插槽/需求/HP/信仰/理智/闪念）、建筑面板 |
 | 测试 | §6 | ✅ | vitest：RNG 确定性、地形确定性、抽卡、移动/建造/采矿闭环、SAN 目睹死亡/篝火恢复 |
+| mod 注册表 | §7 | ✅ | **ModRegistry**（DESIGN §7 扩展性原则）：运行时注册 tile/building/item/**enemy**/card/recipe/event/expansionPlan/intent/work/system/hook + overrideDef/overrideTuning + 冲突检测；`SimOptions.mods` 构造期挂载；详见 docs/DATA_DRIVEN.md（§6 验收 17 项全 ✅，89 测试覆盖） |
+| 数据驱动化 | §7 | ✅ | **sim 层 defId 特判清零**：craft 自配方/发光/升级(upgradesTo)/神谕(capabilities)/派系优先级表/敌对种类(enemies.ts)/派系袭击(raider def)/采集目标(growable+harvest)/采后瓦片(harvestReplaces)/光环(aura.radius)/AI 建造成本(def.cost)/出生建筑(tuning) 全部走 defs/tuning/registry，mod 不改内核（DATA_DRIVEN.md §6） |
+| 存档健壮性 | §5 | ✅ | save/load JSON-safe：slots 存卡 id 还原（不再存闭包）、load 重建成员归属防假团灭、修复重建时 splice 跳杀残留 pawn |
 
 ## 待办 / 差距
 
+> 旧条目若已在上表 ✅ 则移除；以下为当前真实差距（按优先级排序，2026-08-09 核）。
+
 | 项 | 目标（DESIGN） | 差距 |
 |---|---|---|
-| 神谕/教堂/信仰 | §3 神谕交互 | 只有 faith 数值 + 祈祷卡 + 违抗概率；教堂建筑、影响圈、神谕发布未实现（P1.5） |
+| client 层数据驱动 UI | §7 分层原则（服务端 mod 逻辑 + 客户端 mod 表现） | **最大的 mod 堵点**：`main.ts`/`renderer.ts` 仍读静态 `BUILDINGS/TILES/资产表`——mod 新建筑进不了建造菜单、新 tile 渲染即崩（`TILES[w.getTile()].color`）。来源：静态 import（main.ts:5 等）、AssetId 闭合联合、`as AssetId` 强转、tile/敌人渲染按 id 特判。sim 侧已全量接通 |
+| 闭合类型开放 | §7 mod 扩展 | `BehaviorCard.series`、`IntentAction`、`DesireId`、`UnitLevel` 仍是 TS 闭合联合，mod 卡/欲望/建筑等级需 `as` 断言或不可扩展（series 映射表 MARKOV_BIAS 等按 key 查，新值静默降默认） |
+| 敌对渲染区分 | §3 战斗 | renderer 所有 hostiles 统一 pawn:strong 图标（仅 faction==='unit' 染色）；mod 新敌人视觉不可辨 |
+| 值得注意：maxSlots 被 trait 挤占 | §6 插槽 | `initSlots` 下 maxSlots=2 且 2 trait 的小人拿不到任何基础卡 → 永远闲逛（测试里观察到）。mod 卡无条件进池已解决 mod 侧，基础卡仍有此风险——待设计裁决 |
+| 丢失 chew：出生点/野营 'campfire'、派系掠夺者已数据化 | §7 | 出生建筑已读 `autobuild.starterBuilding`；`scripts.spawnWildCamp` 仍写死 'campfire'（语义上"野生营地=篝火"成立，暂留） |
 | 流言/对话完整 | §6 | 微互动已做（模板）；闲聊/深聊（引用记忆的 LLM 对话）、话题沿社交网络传播待 P1 |
-| 七宗罪欲望完整 | §3 欲望系统 | 贪婪满足途径（囤积→采矿）已接，色欲/嫉妒满足途径待实现 |
-| COC 属性全用途 | §3 属性卡 | 八属性已接入主要玩法；SIZ 负重、社交对抗（说服/传教）未做 |
-| COC 八属性 | §3 属性卡 | 只有 STR/CON/INT 三个 + d100 事件判定；DEX/APP/POW/EDU 未做 |
-| 日志/历史 | §3 历史系统 | ✅ 结构化历史日志（HistoryLog + 📜 面板） |
-| 流言/对话 | §6 | 未实现 |
-| mod 注册表 | §7 | ✅ | **ModRegistry**（DESIGN §7 扩展性原则）：运行时注册 tile/building/item/card/intent/system/hook，冲突检测（重复 id 抛错）；mod 通过 `SimOptions.mods` 构造期挂载；mod 系统进 tick、mod 卡注入卡池、mod 意图执行器可被卡调用；纯注册表不改 sim 源码 |
-| LLM 层 | §6 | P1 |
+| 七宗罪欲望完整 | §3 欲望系统 | 贪婪途径（工作→satisfies 数据化）已通；色欲/嫉妒满足途径待设计（`DesireId` 闭合类型开放后 mod 可自建维度） |
+| COC 属性全用途 | §3 属性卡 | SIZ 负重、社交对抗（说服/传教已做对抗检定 APP/POW）——SIZ 负重未做 |
+| LLM 层 | §6 | P1：`eventSystem.setProvider` 预留口（当前无调用，详情见 DATA_DRIVEN.md）；server 权威模型 + WSS 未动 |
+| mod 打包/沙箱 | §10 待定 | 远程 JS mod（ES module + `import(/* @vite-ignore */)` + `install(mods)` 约定）方向已认可，未落地；打包格式/信任模型待定 |
+| 联机 | §8 | P2：WSS 协议、多客户端同步、兴趣管理、持久化、鉴权 |
 
 ## 技术栈
 

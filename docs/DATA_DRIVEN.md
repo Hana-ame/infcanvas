@@ -63,6 +63,7 @@ interface TileDef {
     skill?: SkillId;   // 检定技能，默认 work
     dc?: number;       // 检定阈值，默认 60
   };
+  harvestReplaces?: string; // 采集后瓦片变为什么（缺省：growable→grass植物、mineral→dirt）
 }
 ```
 
@@ -105,28 +106,27 @@ interface BuildingDef {
 
 ### 3.4 TuningConfig —— 平衡参数总表（新）
 
-所有**跨实体、跟具体物无关**的平衡数值集中：
+**权威定义：`src/sim/defs/tuning.ts`（`TUNING` 默认值 = 迁移前基线，禁止改数值只许搬）。**
 
-```ts
-interface TuningConfig {
-  needs:   { foodDecay; restDecay; nightRestDrain; hungerAt; sleepyAt; starvationDmg; urgentEatAt; urgentRestAt; }
-  san:     { crazyAt; witnessRadius; fireComfortRadius; deathShock; nightDrain; fireRecover; }
-  gather:  { toolBonus; strBonusPerPoint; }
-  combat:  { raidEnemy; unitRaidEnemy; pawnDmg; baseInterval; initialRaidDelay; pressureCap; raidCountBase; raidCountPerPawn; }  // 敌人 hp/speed/dmg/loot 进 defs/enemies.ts
-  social:  { interactCdMin; interactCdMax; friendAt; hostileAt; punchChanceBase; punchChancePerHostility; punchDmg; }
-  desire:  { checkInterval; decay; scarceAt; criticalAt; moodCritical; moodScarce; malintentChance; stealThreshold; stealAmount; }
-  faction: { warAt; tradeAt; deficitAt; tradeRateNormal; tradeRateShort; resourceGrowthWood/Food/Ore; opinionTradeRecipient; opinionDeficit; unitRaidCountMin; unitRaidCountMax; }
-  population: { maxPawns; recruitInterval; foodThreshold; }
-  repair:  { workTime; repairAmount; searchRadius; }
-  autobuild: { minWood; campfireWood; foodThreshold; oreThreshold; toolsThreshold; faithThreshold; wallCap; farmWood; workbenchWood; caveWood; churchWood; }
-  env:     { baseTemp; dayAmplitude; rainCool; rainChancePerSec; rainMin; rainMax; }
-  upgrade: { faithThreshold; }  // 篝火→教堂
-  faith:   { prayTime; prayMood; prayFaith; appBase; appScale; healPerSec; healTime; caveWorkDuration; }
-  event:   { interval; intervalJitter; }
-  pawn:    { baseSpeed; hpBase; }
-  card:    { commandCooldown; }
-}
-```
+15 组接口，全部跨实体平衡数值：
+
+| 组 | 用途 | 含优先子字段 |
+|---|---|---|
+| `needs` | 饥饿/精力/心情衰减、紧急阈值、SAN 自然恢复、**auraScanRadius（光环扫描半径，生效距离由 def.aura.radius）** | foodDecay/restDecay/hungerAt/sleepyAt/starvationDmg/foodMoodLow-High/moodDrift/sanRecover/sanTrauma |
+| `san` | 狂乱阈值、目睹死亡、黑夜流失、篝火恢复 | crazyAt/witnessRadius/deathShock/nightDrain/fireRecover/crazyCooldown |
+| `gather` | 采集加成 | toolBonus/strBonusPerPoint/strBase |
+| `faith` | 祈祷/疗伤/矿洞/神谕（半径/时长/心情/信仰/信任门槛） | prayTime/healPerSec/caveWorkDuration/oracle* |
+| `combat` | 袭击节奏/压力/近战/打建筑/DEX 闪避 + **raidEnemy/unitRaidEnemy（敌人种类 id，查 enemies 表）** | baseInterval/pressureScale/pawnDmg/buildingDmg/dodge* |
+| `social` | 微互动冷却/亲密敌对阈值/动手/传教/delta | friendAt/hostileAt/punch*/mood*/preach* |
+| `desire` | 七宗罪检查/衰减/匮乏/恶意槽/偷窃 | checkInterval/decayPerSec/scarceAt/criticalAt/malintent*/steal* |
+| `faction` | 派系贸易/逆差/开战/看法增量 + **priorityTimer（派系工作优先级评估周期）** | warAt/tradeAt/tradeRate*/opinion*/resourceGrowth* |
+| `population` | 人口上限/招募 | maxPawns/recruitInterval/foodThreshold |
+| `repair` | 修理 | workTime/repairAmount/searchRadius |
+| `autobuild` | 自主建造各计划阈值 + **starterBuilding/fallbackBuilding（出生/兜底建筑）** | farmWood/caveWood/churchWood/wallWood/faithThreshold |
+| `env` | 气温/降水 | baseTemp/dayAmplitude/rain* |
+| `pawn` | 移动/血/目标搜索半径 | baseSpeed/hpBase/scanRadius |
+| `event` | 事件 roll 间隔 | interval/intervalJitter |
+| `card` | 违抗/进食/休息 + **派系优先级数据表 `priority: PriorityRule[]`** | commandCooldown/defy*/eatAmount/restAmount |
 
 `Sim` 的 `tuning` 是 **getter → `this.mods.tuning`**，mod 在构造回调里 `overrideTuning()` 后所有系统立即读到覆盖值。`SimContext.tuning` 暴露给所有系统。
 
@@ -148,7 +148,7 @@ interface TuningConfig {
 | repairSystem | ✅ 耗时/修复量/半径读 tuning.repair |
 | cardSystem | ✅ 违抗/冷却/进食量读 tuning.card |
 | core/needs·desires | ✅ 参数改为入参（由系统从 tuning 传入） |
-| core/socialUnit | ✅ UPGRADE_FAITH 改读 tuning.upgrade；容量/名字保留（表现数据） |
+| core/socialUnit | ✅ 升级门槛（篝火→教堂）读 `tuning.autobuild.faithThreshold`；容量/名字保留（表现数据） |
 | sim.ts | ✅ 速度/HP/门槛读 tuning（`tuning` getter 走 mods.tuning） |
 | eventSystem | ✅ interval/jitter 读 tuning.event；provider 池 = 内置脚本 + mods.events 合并 |
 
@@ -192,7 +192,7 @@ overrideTuning(patch: DeepPartial<TuningConfig>): this  // 覆盖平衡参数（
 1. ✅ **新生产玩法**：registerItem「草药」+ registerRecipe 草药田 passive + registerBuilding → 产出进全局库存
 2. ✅ **新配方**：registerRecipe「farm-plus」+ `overrideDef('building','farm',{recipe:'farm-plus'})` 换高产能
 3. ✅ **新事件**：registerEvent「陨石坠落」（condition + run）→ 事件池抽中并加矿石
-4. ✅ **改难度**：`overrideTuning({ combat: { wolfHp: 10 } })` → 袭击狼血量受控
+4. ✅ **改难度**：`overrideDef('enemy','wolf',{hp:10})` 或 `overrideTuning({ combat: { raidEnemy: 'boar' } })` → 袭击强度/种类受控
 5. ✅ **改产能**：overrideDef 覆盖 tile harvest / building recipe
 6. ✅ **新自主建造计划**：registerExpansionPlan → buildQueue 出现新建筑
 7. ✅ **新工作类型**：registerCard 产出非内置 workType + registerWork 执行器 → 小人执行全新工作
@@ -219,9 +219,9 @@ overrideTuning(patch: DeepPartial<TuningConfig>): this  // 覆盖平衡参数（
 ## 7. 迁移风险与验证
 
 - 全部数值改动需保证**默认值 = 迁移前行为**（数值原样搬进 defs/tuning，不改行为）
-- 现有 70 个测试必须全绿（它们断言了具体数值如采矿产 3、饥饿死亡等，默认值不变则通过）
+- 现有 89 个测试必须全绿（它们断言了具体数值如采矿产 3、饥饿死亡等，默认值不变则通过）
 - 每个系统改造后立即跑 `npm test` + `npm run typecheck`
-- 最后新增 mod 玩法测试（registerRecipe/overrideTuning/registerEvent）证明扩展性 —— ✅ 已完成，76/76 绿
+- 最后新增 mod 玩法测试（registerRecipe/overrideTuning/registerEvent）证明扩展性 —— ✅ 已完成，89/89 绿
 
 ## 8. 完成标准
 
