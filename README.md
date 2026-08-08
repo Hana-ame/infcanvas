@@ -18,7 +18,8 @@ npm run dev                    # 客户端 dev server
 
 - 单机模式：打开 dev server 首页
 - 联机观察模式：打开 `http://localhost:5173/?remote=ws://127.0.0.1:8080`（server 权威，本页只读观察 + 下命令）
+- **LLM 事件导演**（可选）：设 `LLM_ENDPOINT`（OpenAI 兼容）/ `LLM_API_KEY` / `LLM_MODEL` 环境变量再启动 server，世界事件改由 LLM 生成（预取+白名单效果+失败自动降级确定性）；不设则纯确定性
 
-**测试**：`npm test`（vitest 95）+ `node scripts/e2e/run-e2e.mjs scripts/e2e/remote-viewer.mjs`（P1 链路 e2e）
+**测试**：`npm test`（vitest 102）+ `node scripts/e2e/run-e2e.mjs scripts/e2e/remote-viewer.mjs`（P1 链路 e2e）
 
 **想玩/看效果**：[docs/PLAYING.md](docs/PLAYING.md)（当前版本玩法说明，面向玩家）。

@@ -4,6 +4,7 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import { Sim } from '../sim/sim';
 import type { Command } from '../sim/sim';
+import { makeLlmProvider } from './llm';
 import type { ClientMsg, ServerMsg, SnapshotMsg, WelcomeMsg, EventMsg } from '../shared/protocol';
 
 const PORT = Number(process.argv[2] ?? 8080);
@@ -11,11 +12,23 @@ const SEED = Number(process.argv[3] ?? 20260803);
 const PAWNS = Number(process.argv[4] ?? 4);
 const TICK_HZ = 20;
 
-// 权威模拟（零 DOM ✓ tsx 直跑）
-const sim = new Sim({ seed: SEED, pawnCount: PAWNS, tickHz: TICK_HZ });
+// LLM 慢决策层（P1）：设 LLM_ENDPOINT 即启用（OpenAI 兼容 chat completions），否则确定性脚本
+const llmCfg = process.env.LLM_ENDPOINT
+  ? { endpoint: process.env.LLM_ENDPOINT, apiKey: process.env.LLM_API_KEY ?? '', model: process.env.LLM_MODEL ?? 'gpt-4o-mini' }
+  : null;
+
+// 权威模拟（零 DOM ✓ tsx 直跑）。
+// 注意：llm 预热在 sim 构造前发出首个请求（worldSummary 拿不到 ctx → 用开局提示），
+// sim 就绪后后续请求才带真实世界摘要 —— 故 sim 用 let 声明
+let sim: Sim;
+const llm = llmCfg ? makeLlmProvider(llmCfg, () => sim ?? null) : null;
+sim = new Sim({
+  seed: SEED, pawnCount: PAWNS, tickHz: TICK_HZ,
+  eventProvider: llm?.provider,
+});
+console.log(`[server] seed=${SEED} pawns=${PAWNS} ws://0.0.0.0:${PORT}${llmCfg ? ` llm=${llmCfg.endpoint}` : '（无 LLM，确定性事件）'}`);
 
 const wss = new WebSocketServer({ port: PORT });
-console.log(`[server] seed=${SEED} pawns=${PAWNS} ws://0.0.0.0:${PORT}`);
 
 let nextClient = 1;
 const clients = new Map<number, WebSocket>();
@@ -130,10 +143,11 @@ function looksLikeCommand(c: unknown): c is Command {
   return typeof c === 'object' && c !== null && typeof (c as { type?: unknown }).type === 'string';
 }
 
-// 主循环：固定步进（accumulator，不随帧率漂移）+ 2Hz 快照
+// 主循环：固定步进（accumulator，不随帧率漂移）+ 2Hz 快照 + feed 增量推送
 const tickMs = 1000 / TICK_HZ;
 let acc = 0;
 let last = Date.now();
+let lastFeedCount = 0;
 setInterval(() => {
   const now = Date.now();
   const dt = Math.min(100, now - last);
@@ -143,7 +157,15 @@ setInterval(() => {
     sim.step(tickMs / 1000);
     acc -= tickMs;
   }
-  if (clients.size > 0 && now % 500 < 20) broadcast(buildSnapshot());
+  if (clients.size === 0) return;
+  // feed 增量（logEvent 文本流，含 LLM 事件叙述）
+  if (sim.events.length > lastFeedCount) {
+    const fresh = sim.events.slice(lastFeedCount);
+    lastFeedCount = sim.events.length;
+    const msg: EventMsg = { type: 'event', t: sim.time, events: fresh.map((e) => ({ kind: 'feed', text: e.text })) };
+    broadcast(msg);
+  }
+  if (now % 500 < 20) broadcast(buildSnapshot());
 }, 10);
 
 process.on('SIGINT', () => { console.log('\n[server] bye'); process.exit(0); });

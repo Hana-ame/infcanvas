@@ -49,6 +49,7 @@ export interface SimContext {
   pawnPositions: Map<number, { x: number; y: number }>;
   time: number;
   dayTime: number;
+  dayLength: number; // 一天秒数（120）
   pawnList: readonly number[];
   env: { raining: boolean; temperature: number };
   factionPriority: Record<string, number>; // 派系工作优先级（用户 Q8）

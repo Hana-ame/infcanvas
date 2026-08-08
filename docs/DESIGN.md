@@ -872,7 +872,7 @@ registerHook('beforeRoll', (prob, ctx) => ...);          // check 流程阶段�
 |---|---|
 | P0 单机 MVP（RimWorld 手动版） | ✅ 已完成（2026-08-04）：世界+小人+寻路+建造+需求+生产+即时调速 + **简化版 DNA/插槽系统（纯确定性，无 LLM）**，TS sim 完整单机。含 SAN/七宗罪/技能/环境/社交流言/历史/mod 注册表（见 §11、docs/PROGRESS.md） |
 | P0.5 | mod 注册表 + 物品 defs（纯数据可插）—— mod 注册表 ✅ 已落地（ModRegistry） |
-| P1 | Node server（复用 src/sim）+ LLM 慢决策层，WSS 通道验证，权威切到 server —— **骨架 ✅（2026-08-09）**：server 冒烟 + 协议（src/shared/protocol.ts）+ 2Hz 快照/事件推送 + `?remote=` viewer 客户端 + 命令上行权威回显（e2e 8 断言）；剩余：LLM provider 网关、tick delta/增量、断线重连 |
+| P1 | Node server（复用 src/sim）+ LLM 慢决策层，WSS 通道验证，权威切到 server —— **✅（2026-08-09）**：骨架（server 冒烟 + 协议 + 2Hz 快照/事件推送 + `?remote=` viewer + 命令上行权威回显，e2e 8 断言）+ **LLM 层**（`LLM_ENDPOINT` 启用，OpenAI 兼容 chat completions，预取队列 + 白名单效果 + 失败降级，`SimOptions.eventProvider`）；剩余：tick delta/增量、断线重连、provider 频率分级 |
 | P1.5 | 多派系 + AI 自主建镇 + 战争 + 教堂/信仰/神谕交互 |
 | P2 | 联机多客户端同步 + mod defs 下发 |
 | P3 | 兴趣管理、插值、持久化、鉴权 |

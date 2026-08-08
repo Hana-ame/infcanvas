@@ -25,8 +25,9 @@ export class EventSystem implements GameSystem {
   private lastTrigger = new Map<string, number>(); // id → 上次触发时间
   private provider: EventProvider;
 
-  constructor(private ctx: SimContext, scripts: ScriptedEvent[]) {
+  constructor(private ctx: SimContext, scripts: ScriptedEvent[], llmProvider?: EventProvider | null) {
     this.provider = this.makeProvider(scripts);
+    if (llmProvider) this.provider = llmProvider;
   }
 
   // 预留 LLM 插入：替换 provider 为 LLM 生成的事件（同一接口）

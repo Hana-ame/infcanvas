@@ -27,7 +27,7 @@ import { NeedsSystem } from './systems/needsSystem';
 import { SanSystem } from './systems/sanSystem';
 import { DesireSystem } from './systems/desireSystem';
 import { SocialSystem } from './systems/socialSystem';
-import { EventSystem } from './systems/eventSystem';
+import { EventSystem, type ScriptedEvent } from './systems/eventSystem';
 import { AutonomousBuildSystem } from './systems/autonomousBuildSystem';
 import { SocialUnitSystem } from './systems/socialUnitSystem';
 import { SCRIPTED_EVENTS } from './systems/scripts';
@@ -103,6 +103,7 @@ export interface SimOptions {
   pawnCount?: number;
   tickHz?: number;
   mods?: (m: ModRegistry) => void; // mod 挂载：构造时注册系统/卡/意图（DESIGN §7）
+  eventProvider?: () => ScriptedEvent | null; // LLM 慢决策层（P1）：替换确定性随机脚本（DESIGN §6）
 }
 
 export interface Command {
@@ -149,8 +150,7 @@ export class Sim implements SimContext {
   tickHz: number;
   time = 0;
   dayLength = 120;
-  dayTime = 0;
-  speed = 1;
+  dayTime = 0;  speed = 1;
   paused = false;
   events: { time: number; text: string }[] = [];
   env: EnvState = initEnv(); // 天气/气温（DESIGN §6）
@@ -196,6 +196,7 @@ export class Sim implements SimContext {
   }
   private behavior: BehaviorSystem;
   private _started = false;
+  private _eventProvider: (() => ScriptedEvent | null) | null = null;
   socialUnits: SocialUnitSystem; // 篝火单位/部落记忆/派系涌现
   playerUnitId: string | null = null; // 玩家所属单位（Q3 团灭附身）
 
@@ -205,6 +206,7 @@ export class Sim implements SimContext {
     this.tickHz = opts.tickHz ?? 20;
     // 应用 mod（在 world/spawn 前，可覆盖 defs/tuning/配方）——构造期回调
     opts.mods?.(this.mods);
+    this._eventProvider = opts.eventProvider ?? null;
     this.ecs = createWorld();
     registerAutoStore(this.ecs, Position);
     registerAutoStore(this.ecs, NeedsComp);
@@ -264,7 +266,7 @@ export class Sim implements SimContext {
       .register(new RepairSystem(this))
       .register(new RaidSystem(this))
       .register(new PopulationSystem(this))
-      .register(new EventSystem(this, [...SCRIPTED_EVENTS, ...this.mods.events]))
+      .register(new EventSystem(this, [...SCRIPTED_EVENTS, ...this.mods.events], this._eventProvider))
       .register(new AutonomousBuildSystem(this));
   }
 
