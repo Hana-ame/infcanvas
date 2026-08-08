@@ -173,7 +173,11 @@ export class BehaviorSystem implements GameSystem {
   private workChop(c: SimContext, eid: number, st: PawnState): void {
     const pos = c.readPosition(eid);
     if (!pos) return;
-    const tree = c.findNearest(pos, (x, y) => c.world.getTile(x, y) === 'tree', true);
+    // 数据驱动目标查找：可收获（growable）且带 harvest 定义的 tile（mod 新采集物自动可采）
+    const tree = c.findNearest(pos, (x, y) => {
+      const t = c.world.getTileDef(x, y);
+      return !!t.growable && !!t.harvest;
+    }, true);
     if (tree) { st.chopTarget = tree; c.moveAdjacent(eid, tree.x, tree.y); }
     else st.job = '闲逛';
   }
@@ -181,7 +185,11 @@ export class BehaviorSystem implements GameSystem {
   private workMine(c: SimContext, eid: number, st: PawnState): void {
     const pos = c.readPosition(eid);
     if (!pos) return;
-    const ore = c.findNearest(pos, (x, y) => c.world.getTile(x, y) === 'ore', true);
+    // 数据驱动目标查找：mineral 且带 harvest 定义的 tile
+    const ore = c.findNearest(pos, (x, y) => {
+      const t = c.world.getTileDef(x, y);
+      return !!t.mineral && !!t.harvest;
+    }, true);
     if (ore) { st.mineTarget = ore; c.moveAdjacent(eid, ore.x, ore.y); }
     else st.job = '闲逛';
   }

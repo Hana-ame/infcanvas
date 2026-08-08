@@ -1122,7 +1122,8 @@ describe('教堂 + 神谕（用户 Q2/Q3）', () => {
 
   it('autonomous build plans a church when camp faith is high', () => {
     const sim = new Sim({ seed: 101, pawnCount: 2 });
-    sim.stockpile.wood = 100;
+    // AI 建造成本 = 建筑 def 成本（与手动队列一致），备足木料覆盖施工消耗
+    sim.stockpile.wood = 400;
     // 全员高信仰
     for (const eid of sim.pawns) sim.pawnStates.get(eid)!.faith = 70;
     let planned = false;
@@ -1431,6 +1432,38 @@ describe('mod 玩法（DATA_DRIVEN §6 验收）', () => {
     expect(h!.enemyId).toBe('raider');
     expect(h!.maxHp).toBe(5); // mod 覆盖生效，而非写死的 90
     expect(h!.loot).toEqual({ item: 'wood', amount: 9 });
+  });
+
+  it('mod harvestable tile is auto-harvested (growable+harvest, not tree/ore hardcode)', () => {
+    const sim = new Sim({ seed: 221, pawnCount: 2, mods: (m) => {
+      m.registerTile({
+        id: 'berry', name: '浆果丛', passable: false, buildable: false, color: '#c23a5a',
+        emoji: '🍒', growable: true,
+        harvest: { product: 'food', time: 1, yieldSuccess: 2, yieldFail: 1, dc: 99 },
+        harvestReplaces: 'grass',
+      });
+    } });
+    // 出生点周围换成浆果丛（中心留草地通行），验证小人自动采集 mod 新 tile
+    const cx = Math.floor(sim.world.width / 2);
+    const cy = Math.floor(sim.world.height / 2);
+    for (let dy = -3; dy <= 3; dy++) {
+      for (let dx = -3; dx <= 3; dx++) {
+        // 外圈放浆果丛，中心圈留草地走位（berry 不可通行，太近会把小人围死）
+        if (Math.max(Math.abs(dx), Math.abs(dy)) === 3) sim.world.setTile(cx + dx, cy + dy, 'berry');
+      }
+    }
+    // 保证卡池有伐木卡（部分 pawn maxSlots 被 trait 卡占满，无基础卡——与本次无关的设计现象）
+    for (const eid of sim.pawns) {
+      const st = sim.pawnStates.get(eid)!;
+      if (!st.slots.some((c) => c?.id === 'chop')) st.slots.push(BASE_CARDS.find((c) => c.id === 'chop')!);
+    }
+    const before = sim.stockpile.food;
+    let gained = false;
+    for (let i = 0; i < 1500 && !gained; i++) {
+      sim.step(1 / 20);
+      gained = sim.stockpile.food > before;
+    }
+    expect(gained).toBe(true); // 采到浆果 → food 增长（修复前只有 tree/ore 被采）
   });
 });
 

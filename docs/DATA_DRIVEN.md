@@ -204,6 +204,8 @@ overrideTuning(patch: DeepPartial<TuningConfig>): this  // 覆盖平衡参数（
 13. ✅ **派系优先级数据表**：`tuning.card.priority` rules，overrideTuning 改阈值生效
 14. ✅ **敌对种类数据化**：`registerEnemy` 新增 + `overrideTuning({combat:{raidEnemy:'boar'}})` 切换袭击类型；wolf 的 hp/speed/dmg/loot 全进 `defs/enemies.ts`
 15. ✅ **派系袭击数据化**：掠夺者不再是写死的 unitHp/unitDmg/ore×4，而是 `enemies.ts` 的 `raider` def，tuning `combat.unitRaidEnemy` 切换种类；`ModRegistry.enemyDef(id?)` 查询（自然袭击/派系袭击共用），overrideDef('enemy') 即时生效
+16. ✅ **采集目标数据化**：伐木/采矿不再按 `=== 'tree'/'ore'` 特判，改按 tile def `growable`/`mineral` + `harvest` 声明——mod 注册新可采集 tile（如浆果丛）小人会自动去采；`harvestReplaces` 声明采后变什么瓦片
+17. ✅ **光环/魔法值收敛**：nearAura 扫描半径进 `tuning.needs.auraScanRadius`、生效距离由各建筑 `def.aura.radius` 决定；派系优先级评估周期/目标搜索半径/兜底建筑/出生建筑全部进 tuning；AI 建造成本读 `def.costWood/costOre`（与手动队列一致，不再写死 1 木）
 
 > 修复记录：
 > - `Sim.tuning` 由字段改为 getter → `this.mods.tuning`，否则 mods 回调对 tuning 的覆盖在构造后对 `this.tuning` 快照不可见（最初 2 个 mod 测试因此失败）。
@@ -212,6 +214,7 @@ overrideTuning(patch: DeepPartial<TuningConfig>): this  // 覆盖平衡参数（
 > - `craftSystem`/发光/升级/神谕：从按 defId/campfire/church 特判改为 BuildingDef `emitsLight`/`upgradesTo`/`capabilities` 数据声明。
 > - 干掉了 desireSystem 按 `job.includes('伐木')` 文案匹配满足欲望的脆断点。
 > - **save/load JSON-safe**：slots 原来直接存含函数的卡数组，JSON 往返后 `decide` 为 undefined 必崩 → 改存卡 id，load 按 id 从 mod→基础→天赋卡重取；load 曾边遍历 `_pawnList` 边 killPawn（splice 跳过隔一个）→ 拷贝列表；load 后补 `assignPawn` 重填成员的 bug（否则首轮 step 误判团灭附身）。
+> - **AI 建造成本曾与手动不一致**：autonomousBuildSystem 入队写死 `{wood:1}`，手动队列读 def.costWood（教堂 8 木）——统一读 def；"自主建造教堂"测试原 100 木在真实成本下不够，备料调整。
 
 ## 7. 迁移风险与验证
 

@@ -87,9 +87,11 @@ export class AutonomousBuildSystem implements GameSystem {
         spot = this.findBuildSpot(cx, cy);
       }
       if (spot) {
+        // 成本与手动队列一致（def.costWood/costOre；缺省 size²×2 木 / 0 矿）
+        const def = this.ctx.buildingDef(plan.defId);
         this.ctx.buildQueue.push({
           x: spot.x, y: spot.y, defId: plan.defId, progress: 0, faction: 'auto',
-          cost: { wood: 1, ore: 0 },
+          cost: { wood: def?.costWood ?? def ? def.size.x * def.size.y * 2 : 1, ore: def?.costOre ?? 0 },
         });
         this.ctx.logEvent(`🏗 AI 规划：${plan.onExisting ? '升级' : '建造'}【${plan.defId}】`);
         pushed++;

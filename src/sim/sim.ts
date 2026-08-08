@@ -340,7 +340,7 @@ export class Sim implements SimContext {
   }
 
   findNearest(pos: PositionData, cond: (x: number, y: number) => boolean, allowNonPassable = false): { x: number; y: number } | null {
-    const R = 15;
+    const R = this.mods.tuning.pawn.scanRadius;
     let best: { x: number; y: number } | null = null;
     let bestDist = Infinity;
     for (let r = 1; r <= R; r++) {
@@ -498,9 +498,10 @@ export class Sim implements SimContext {
   private ensureInitialCamp(): void {
     const cx = Math.floor(this.world.width / 2);
     const cy = Math.floor(this.world.height / 2);
-    if (this.world.placeBuilding(cx, cy + 2, 'campfire', 'auto')) {
-      this.socialUnits.onBuildingBuilt(this.world.buildKey(cx, cy + 2), 'campfire', this.time);
-      this.bus.emit({ type: 'building_built', x: cx, y: cy + 2, defId: 'campfire' });
+    const starter = this.mods.tuning.autobuild.starterBuilding; // 出生建筑（mod 可换基地建筑）
+    if (this.world.placeBuilding(cx, cy + 2, starter, 'auto')) {
+      this.socialUnits.onBuildingBuilt(this.world.buildKey(cx, cy + 2), starter, this.time);
+      this.bus.emit({ type: 'building_built', x: cx, y: cy + 2, defId: starter });
     }
     // 出生小人归入最近的派系单位
     for (const eid of this.pawns) this.socialUnits.assignPawn(eid);
@@ -552,7 +553,7 @@ export class Sim implements SimContext {
   // ---- 命令 ----
   issueCommand(cmd: Command): void {
     if (cmd.type === 'build') {
-      this.queueBuild(cmd.x, cmd.y, cmd.buildingId ?? 'wall');
+      this.queueBuild(cmd.x, cmd.y, cmd.buildingId ?? this.mods.tuning.autobuild.fallbackBuilding);
       return;
     }
     if (cmd.type === 'oracle') {
@@ -650,7 +651,7 @@ export class Sim implements SimContext {
   private updateFactionPriority(dt: number): void {
     this.prioTimer -= dt;
     if (this.prioTimer > 0) return;
-    this.prioTimer = 10; // 每 10 秒评估一次环境 → 派系工作优先级
+    this.prioTimer = this.mods.tuning.faction.priorityTimer; // 每 N 秒评估一次环境 → 派系工作优先级
     const s = this.stockpile;
     const pri: Record<string, number> = {};
     // 基线 1.0，短缺的资源对应工作权重升高（数据驱动：规则表 tuning.card.priority）

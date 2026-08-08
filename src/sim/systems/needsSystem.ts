@@ -83,7 +83,7 @@ export class NeedsSystem implements GameSystem {
     const pos = this.ctx.pawnPositions.get(eid);
     if (!pos) return null;
     const w = this.ctx.world;
-    const R = 6;
+    const R = this.ctx.tuning.needs.auraScanRadius; // 扫描半径（tuning；生效距离由 def.aura.radius 决定）
     let best: { moodPerSec?: number; restPerSec?: number } | null = null;
     let bestD = Infinity;
     for (let dy = -R; dy <= R; dy++) {
@@ -94,7 +94,8 @@ export class NeedsSystem implements GameSystem {
         const b = w.getBuilding(bx, by);
         if (b && b.def.aura) {
           const d = dx * dx + dy * dy;
-          if (d < bestD) { bestD = d; best = b.def.aura; }
+          const radius = b.def.aura.radius ?? R; // mod 可调各建筑光环半径
+          if (d <= radius * radius && d < bestD) { bestD = d; best = b.def.aura; }
         }
       }
     }

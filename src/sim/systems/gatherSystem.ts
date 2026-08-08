@@ -88,7 +88,8 @@ export class GatherSystem implements GameSystem {
         const time = hv?.time ?? 3;
         if (st.mining.progress >= time) {
           const { x, y } = st.mining;
-          this.ctx.world.setTile(x, y, 'dirt');
+          // 采后瓦片：harvestReplaces 声明优先，缺省 growable→grass / mineral→dirt
+          this.ctx.world.setTile(x, y, tile.harvestReplaces ?? (tile.growable ? 'grass' : 'dirt'));
           const dc = hv?.dc ?? 60;
           const skill = hv?.skill ?? 'work';
           const ev = this.ctx.rollEventSkill(eid, dc, skill);
@@ -111,7 +112,7 @@ export class GatherSystem implements GameSystem {
         const time = h?.time ?? 2.5;
         if (st.chopProgress >= time) {
           const { x, y } = st.chopXY;
-          this.ctx.world.setTile(x, y, 'grass');
+          this.ctx.world.setTile(x, y, tile.harvestReplaces ?? 'grass');
           const dc = h?.dc ?? 55;
           const skill = h?.skill ?? 'work';
           const ev = this.ctx.rollEventSkill(eid, dc, skill);

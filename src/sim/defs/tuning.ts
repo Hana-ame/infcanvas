@@ -17,6 +17,7 @@ export interface NeedsTuning {
   sanRecover: number;      // SAN 自然恢复
   sanTraumaThreshold: number; // 重伤/低满足动摇理智的阈值
   sanTraumaDrain: number;
+  auraScanRadius: number;  // nearAura 光环建筑扫描半径（生效距离由 def.aura.radius 决定）
 }
 
 export interface SanTuning {
@@ -134,6 +135,7 @@ export interface FactionTuning {
   opinionThreat: number;   // 威胁传话看法变化
   opinionDeficit: number;  // 逆差怨恨看法下滑
   trustTimer: number;      // 信任评估周期
+  priorityTimer: number;   // 派系工作优先级评估周期（秒）
 }
 
 export interface PopulationTuning {
@@ -170,6 +172,8 @@ export interface AutobuildTuning {
   churchWood: number;
   wallWood: number;        // 围墙余木阈值
   wallTarget: number;
+  starterBuilding: string; // 出生点自动建造的建筑（默认 campfire）
+  fallbackBuilding: string; // 玩家建造命令缺省建筑（默认 wall）
 }
 
 export interface EnvTuning {
@@ -186,6 +190,7 @@ export interface EnvTuning {
 export interface PawnTuning {
   baseSpeed: number;       // 小人移动速度（格/秒）
   hpBase: number;          // 血量基础值（+ (con+siz)/2）
+  scanRadius: number;      // 目标搜索半径（找树/矿/建筑等）
 }
 
 export interface CardTuning {
@@ -251,6 +256,7 @@ export const TUNING: TuningConfig = {
     sanRecover: 0.02,
     sanTraumaThreshold: 15,
     sanTraumaDrain: 0.03,
+    auraScanRadius: 6,
   },
   san: {
     crazyAt: 25,
@@ -361,6 +367,7 @@ export const TUNING: TuningConfig = {
     opinionThreat: -1.5,
     opinionDeficit: -0.8,
     trustTimer: 8,
+    priorityTimer: 10,
   },
   population: {
     maxPawns: 12,
@@ -394,6 +401,8 @@ export const TUNING: TuningConfig = {
     churchWood: 25,
     wallWood: 60,
     wallTarget: 6,
+    starterBuilding: 'campfire',
+    fallbackBuilding: 'wall',
   },
   env: {
     baseTemp: 18,
@@ -408,6 +417,7 @@ export const TUNING: TuningConfig = {
   pawn: {
     baseSpeed: 4,
     hpBase: 40,
+    scanRadius: 15,
   },
   event: {
     interval: 45,
