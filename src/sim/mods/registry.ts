@@ -70,6 +70,13 @@ export class ModRegistry {
     return this.record('recipes', this.recipesMap);
   }
 
+  // 敌人定义查询：按 id 查（缺省用 tuning.combat.raidEnemy），查不到回退第一项
+  // 供袭击系统共用（自然袭击 / 派系袭击），overrideDef('enemy') 即时生效
+  enemyDef(id?: string): EnemyDef {
+    const key = id ?? this.tuning.combat.raidEnemy;
+    return this.enemies[key] ?? Object.values(this.enemies)[0];
+  }
+
   private record<T>(key: string, map: Map<string, T>): Record<string, T> {
     let r = this.cache.get(key) as Record<string, T> | undefined;
     if (!r) {

@@ -58,10 +58,9 @@ export interface FaithTuning {
 }
 
 export interface CombatTuning {
-  raidEnemy: string;         // 袭击刷的敌人种类 id（查 enemies 表；mod 可切换/注册新敌人）
-  unitDmg: number;           // 派系掠夺者每秒伤害
+  raidEnemy: string;         // 自然袭击刷的敌人种类 id（查 enemies 表；mod 可切换/注册新敌人）
+  unitRaidEnemy: string;     // 派系袭击（掠夺者）刷的敌人种类 id
   pawnDmg: number;           // 小人近战每秒伤害
-  unitHp: number;            // 掠夺者血量
   initialRaidDelay: number;  // 开局首波前等待
   baseInterval: number;      // 基线袭击间隔
   pressureCap: number;       // 叙事压力上限
@@ -310,9 +309,8 @@ export const TUNING: TuningConfig = {
   },
   combat: {
     raidEnemy: 'wolf',
-    unitDmg: 7,
+    unitRaidEnemy: 'raider',
     pawnDmg: 8,
-    unitHp: 90,
     initialRaidDelay: 60,
     baseInterval: 75,
     pressureCap: 2,

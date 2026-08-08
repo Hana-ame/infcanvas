@@ -810,6 +810,12 @@ describe('自主建造（用户 Q1/Q8：营地自主扩张）', () => {
     for (let i = 0; i < 400; i++) sim.step(1 / 20);
     const attacked = sim.hostiles.some((h) => h.faction === 'unit');
     expect(attacked).toBe(true);
+    // 掠夺者数值来自 enemies 表（raider def），而非写死
+    const raider = sim.hostiles.find((h) => h.faction === 'unit');
+    expect(raider?.enemyId).toBe('raider');
+    expect(raider?.maxHp).toBe(90); // 初始血量来自 raider def
+    expect(raider?.dmgPerSec).toBe(7);
+    expect(raider?.loot).toEqual({ item: 'ore', amount: 4 });
   });
 
   it('friendly units trade with exchange rate and track deficit (Q9)', () => {
@@ -1400,6 +1406,31 @@ describe('mod 玩法（DATA_DRIVEN §6 验收）', () => {
     sim.stockpile.wood = 200; // 高库存，但阈值 999 恒触发
     for (let i = 0; i < 300; i++) sim.step(1 / 20);
     expect(sim.factionPriority.chop).toBe(3);
+  });
+
+  it('faction raids are data-driven: overrideDef enemy changes raider stats (not hardcoded)', () => {
+    const sim = new Sim({ seed: 220, pawnCount: 2, mods: (m) => {
+      m.overrideDef('enemy', 'raider', { hp: 5, loot: { item: 'wood', amount: 9 } });
+    } });
+    const su = sim.socialUnits;
+    const key0 = [...su.units.keys()][0];
+    su.units.set('ufr2', {
+      id: 'ufr2', key: su.units.get(key0)!.key + 7777, level: 'campfire',
+      name: '敌对部', members: [], memory: [], opinions: new Map(), createdAt: 0,
+      resources: { wood: 30, ore: 5, food: 25, tools: 0 }, tradeBalance: new Map(),
+    });
+    const [a, b] = [...su.units.keys()];
+    su.units.get(a)!.opinions.set(b, { value: -50, lastChanged: 0 });
+    su.units.get(b)!.opinions.set(a, { value: -50, lastChanged: 0 });
+    let h: typeof sim.hostiles[0] | undefined;
+    for (let i = 0; i < 2000 && !h; i++) {
+      sim.step(1 / 20);
+      h = sim.hostiles.find((x) => x.faction === 'unit');
+    }
+    expect(h).toBeDefined();
+    expect(h!.enemyId).toBe('raider');
+    expect(h!.maxHp).toBe(5); // mod 覆盖生效，而非写死的 90
+    expect(h!.loot).toEqual({ item: 'wood', amount: 9 });
   });
 });
 

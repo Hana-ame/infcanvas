@@ -112,10 +112,10 @@ interface TuningConfig {
   needs:   { foodDecay; restDecay; nightRestDrain; hungerAt; sleepyAt; starvationDmg; urgentEatAt; urgentRestAt; }
   san:     { crazyAt; witnessRadius; fireComfortRadius; deathShock; nightDrain; fireRecover; }
   gather:  { toolBonus; strBonusPerPoint; }
-  combat:  { wolfHp; wolfSpeed; wolfDmg; pawnDmg; baseInterval; initialRaidDelay; pressureCap; raidCountBase; raidCountPerPawn; }
+  combat:  { raidEnemy; unitRaidEnemy; pawnDmg; baseInterval; initialRaidDelay; pressureCap; raidCountBase; raidCountPerPawn; }  // 敌人 hp/speed/dmg/loot 进 defs/enemies.ts
   social:  { interactCdMin; interactCdMax; friendAt; hostileAt; punchChanceBase; punchChancePerHostility; punchDmg; }
   desire:  { checkInterval; decay; scarceAt; criticalAt; moodCritical; moodScarce; malintentChance; stealThreshold; stealAmount; }
-  faction: { warAt; tradeAt; deficitAt; tradeRateNormal; tradeRateShort; resourceGrowthWood/Food/Ore; opinionTradeRecipient; opinionDeficit; unitHp; unitDmg; unitRaidCountMin; unitRaidCountMax; }
+  faction: { warAt; tradeAt; deficitAt; tradeRateNormal; tradeRateShort; resourceGrowthWood/Food/Ore; opinionTradeRecipient; opinionDeficit; unitRaidCountMin; unitRaidCountMax; }
   population: { maxPawns; recruitInterval; foodThreshold; }
   repair:  { workTime; repairAmount; searchRadius; }
   autobuild: { minWood; campfireWood; foodThreshold; oreThreshold; toolsThreshold; faithThreshold; wallCap; farmWood; workbenchWood; caveWood; churchWood; }
@@ -163,6 +163,7 @@ registerTile(def: TileDef): this
 registerBuilding(def: BuildingDef): this
 registerItem(def: ItemDef): this
 registerEnemy(def: EnemyDef): this              // 新敌对种类（raidSystem 从 enemies 表查）
+// enemyDef(id?)：按 id 查敌人 def（缺省用 tuning.combat.raidEnemy），自然袭击/派系袭击共用；overrideDef('enemy') 即时生效
 registerCard(card: BehaviorCard): this
 registerRecipe(def: RecipeDef): this
 registerEvent(ev: ScriptedEvent): this          // 事件系统从 mods.events 读（不再只吃内置 SCRIPTED_EVENTS）
@@ -202,6 +203,7 @@ overrideTuning(patch: DeepPartial<TuningConfig>): this  // 覆盖平衡参数（
 12. ✅ **craft 用自己配方**：`recipe` 声明 → 每座加工建筑各产各的，不写死 workbench
 13. ✅ **派系优先级数据表**：`tuning.card.priority` rules，overrideTuning 改阈值生效
 14. ✅ **敌对种类数据化**：`registerEnemy` 新增 + `overrideTuning({combat:{raidEnemy:'boar'}})` 切换袭击类型；wolf 的 hp/speed/dmg/loot 全进 `defs/enemies.ts`
+15. ✅ **派系袭击数据化**：掠夺者不再是写死的 unitHp/unitDmg/ore×4，而是 `enemies.ts` 的 `raider` def，tuning `combat.unitRaidEnemy` 切换种类；`ModRegistry.enemyDef(id?)` 查询（自然袭击/派系袭击共用），overrideDef('enemy') 即时生效
 
 > 修复记录：
 > - `Sim.tuning` 由字段改为 getter → `this.mods.tuning`，否则 mods 回调对 tuning 的覆盖在构造后对 `this.tuning` 快照不可见（最初 2 个 mod 测试因此失败）。
@@ -209,6 +211,7 @@ overrideTuning(patch: DeepPartial<TuningConfig>): this  // 覆盖平衡参数（
 > - `registerHook` 原为死 API（零调用点），已接线 `sim.step()` 的 step:before/after。
 > - `craftSystem`/发光/升级/神谕：从按 defId/campfire/church 特判改为 BuildingDef `emitsLight`/`upgradesTo`/`capabilities` 数据声明。
 > - 干掉了 desireSystem 按 `job.includes('伐木')` 文案匹配满足欲望的脆断点。
+> - **save/load JSON-safe**：slots 原来直接存含函数的卡数组，JSON 往返后 `decide` 为 undefined 必崩 → 改存卡 id，load 按 id 从 mod→基础→天赋卡重取；load 曾边遍历 `_pawnList` 边 killPawn（splice 跳过隔一个）→ 拷贝列表；load 后补 `assignPawn` 重填成员的 bug（否则首轮 step 误判团灭附身）。
 
 ## 7. 迁移风险与验证
 

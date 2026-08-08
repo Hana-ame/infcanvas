@@ -52,7 +52,7 @@ export class RaidSystem implements GameSystem {
 
   private spawnRaid(count: number, pressure = 1): void {
     const w = this.ctx.world;
-    const enemy = this.raidEnemyDef();
+    const enemy = this.ctx.mods.enemyDef();
     const edge = Math.floor(this.ctx.rng.next() * 4);
     const cx = Math.floor(w.width / 2);
     const cy = Math.floor(w.height / 2);
@@ -69,13 +69,6 @@ export class RaidSystem implements GameSystem {
         speed: enemy.speed, dmgPerSec: enemy.dmg, loot: enemy.loot,
       });
     }
-  }
-
-  // 当前袭击敌人种类（tuning.combat.raidEnemy → enemies 表；查不到回退第一项）
-  private raidEnemyDef() {
-    const enemies = this.ctx.mods.enemies;
-    const id = this.ctx.tuning.combat.raidEnemy;
-    return enemies[id] ?? Object.values(enemies)[0];
   }
 
   private updateCombat(dt: number): void {

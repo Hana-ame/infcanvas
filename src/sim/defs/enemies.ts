@@ -12,4 +12,6 @@ export interface EnemyDef {
 
 export const ENEMIES: Record<string, EnemyDef> = {
   wolf: { id: 'wolf', name: '野狼', hp: 60, speed: 3.5, dmg: 5, loot: { item: 'ore', amount: 2 } },
+  // 派系掠夺者（派系 vs 派系袭击的兵种；faction 'unit' → 征服/UI 身份识别）
+  raider: { id: 'raider', name: '掠夺者', hp: 90, speed: 3.5, dmg: 7, faction: 'unit', loot: { item: 'ore', amount: 4 } },
 };

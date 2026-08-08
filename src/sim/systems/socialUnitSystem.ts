@@ -224,13 +224,14 @@ export class SocialUnitSystem implements GameSystem {
     const ax = ua.key % this.ctx.world.width;
     const ay = Math.floor(ua.key / this.ctx.world.width);
     const count = f.unitRaidCountMin + Math.floor(this.ctx.rng.next() * (f.unitRaidCountMax - f.unitRaidCountMin + 1));
-    const cb = this.ctx.tuning.combat;
+    // 掠夺者数值走 enemies 表（tuning.combat.unitRaidEnemy → def；mod 可 overrideDef('enemy') 调强度/掉落）
+    const enemy = this.ctx.mods.enemyDef(this.ctx.tuning.combat.unitRaidEnemy);
     for (let k = 0; k < count; k++) {
       this.ctx.hostiles.push({
-        x: ax, y: ay, hp: cb.unitHp, maxHp: cb.unitHp,
+        x: ax, y: ay, hp: enemy.hp, maxHp: enemy.hp,
         targetX: bx, targetY: by,
-        name: ua.name, faction: 'unit', dmgPerSec: cb.unitDmg,
-        loot: { item: 'ore', amount: 4 },
+        name: enemy.name, enemyId: enemy.id, faction: enemy.faction,
+        speed: enemy.speed, dmgPerSec: enemy.dmg, loot: enemy.loot,
       });
     }
     this.ctx.logEvent(`⚔ ${ua.name} 派兵攻打 ${ub.name}！`);
