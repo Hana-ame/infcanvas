@@ -33,7 +33,7 @@ export class GatherSystem implements GameSystem {
           const dna = this.ctx.dnaOf(eid);
           const appBoost = dna ? 1 + Math.max(0, (dna.app - f.appBase)) / f.appScale : 1;
           st.faith = Math.min(100, (st.faith ?? 0) + f.prayFaith * appBoost);
-          this.ctx.recordLean(eid, 'pray', 1);
+          this.ctx.recordOutcome(eid, 'pray', f.prayFaith);
           this.ctx.logEvent('🕯 向篝火祈祷，心灵安宁');
         }
         continue;
@@ -73,7 +73,7 @@ export class GatherSystem implements GameSystem {
           const ev = this.ctx.rollEventSkill(eid, dc, skill);
           const gain = Math.round((ev.success ? (recipe?.output.amount ?? 2) : (recipe?.failOutput?.amount ?? 1)) * toolBonus * strBonusOf(eid));
           this.ctx.stockpile.ore += gain;
-          this.ctx.growSkill(eid, skill); this.ctx.recordLean(eid, 'caveMine', ev.success ? 1.5 : -1);
+          this.ctx.growSkill(eid, skill); this.ctx.recordOutcome(eid, 'caveMine', ev.success ? gain : -gain);
           this.ctx.bus.emit({ type: 'resource_gained', eid, item: recipe?.output.item ?? 'ore', amount: gain });
           this.ctx.adjustMood(eid, ev.success ? 2 : -2);
           this.ctx.logEvent(ev.success ? '矿洞采到矿石' : '矿洞挖出废石');
@@ -95,7 +95,7 @@ export class GatherSystem implements GameSystem {
           const ev = this.ctx.rollEventSkill(eid, dc, skill);
           const gain = Math.round((ev.success ? (hv?.yieldSuccess ?? 3) : (hv?.yieldFail ?? 1)) * toolBonus * strBonusOf(eid));
           this.ctx.stockpile.ore += gain;
-          this.ctx.growSkill(eid, skill); this.ctx.recordLean(eid, 'mine', ev.success ? 1.5 : -1);
+          this.ctx.growSkill(eid, skill); this.ctx.recordOutcome(eid, 'mine', ev.success ? gain : -gain);
           this.ctx.bus.emit({ type: 'resource_gained', eid, item: hv?.product ?? 'ore', amount: gain });
           this.ctx.bus.emit({ type: 'work_completed', eid, work: 'mine', success: ev.success, x, y });
           this.ctx.adjustMood(eid, ev.success ? 3 : -4);
@@ -118,7 +118,7 @@ export class GatherSystem implements GameSystem {
           const ev = this.ctx.rollEventSkill(eid, dc, skill);
           const gain = Math.round((ev.success ? (h?.yieldSuccess ?? 5) : (h?.yieldFail ?? 2)) * toolBonus * strBonusOf(eid));
           this.ctx.stockpile.wood += gain;
-          this.ctx.growSkill(eid, skill); this.ctx.recordLean(eid, 'chop', ev.success ? 1.5 : -1);
+          this.ctx.growSkill(eid, skill); this.ctx.recordOutcome(eid, 'chop', ev.success ? gain : -gain);
           this.ctx.bus.emit({ type: 'resource_gained', eid, item: h?.product ?? 'wood', amount: gain });
           this.ctx.bus.emit({ type: 'work_completed', eid, work: 'chop', success: ev.success, x, y });
           this.ctx.adjustMood(eid, ev.success ? 2 : -3);

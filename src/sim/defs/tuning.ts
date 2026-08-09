@@ -204,7 +204,16 @@ export interface CardTuning {
   eatAmountUrgent: number;
   restAmount: number;
   restAmountUrgent: number;
+  lean: LeanParams;        // 行为结果学习（EWA 吸引模型）：见 core/lean.ts
   priority: PriorityRule[]; // 派系工作优先级规则（数据驱动：短缺资源 → 对应工作卡权重提高）
+}
+
+export interface LeanParams {
+  learnRate: number;   // 学习率 φ
+  temperature: number; // 温度 β
+  minMul: number;      // 权重倍率下限
+  maxMul: number;      // 权重倍率上限
+  maxA: number;        // 吸引力钳制
 }
 
 export interface PriorityRule {
@@ -430,6 +439,14 @@ export const TUNING: TuningConfig = {
     defyMoodLow: 0.3,
     defyMoodAt: 20,
     faithReducePerFaith: 0.005,
+    // 行为结果学习（EWA 吸引模型，docs/DATA_DRIVEN.md §3.4）：φ/β/钳制全数据驱动
+    lean: {
+      learnRate: 0.2,      // 学习率 φ；大=反应快（多疑善变），小=记性好（顽固守旧）
+      temperature: 1.0,    // 温度 β；大=收益差急剧放大权重，小=平滑
+      minMul: 0.2,         // 权重倍率下限（失败再多也不绝迹，总留一丝可能）
+      maxMul: 5,           // 权重倍率上限（上限封顶防单一化）
+      maxA: 3,             // 吸引力钳制（3 个单位 scale 的记忆上限）
+    },
     eatAmount: 40,
     eatAmountUrgent: 50,
     restAmount: 40,

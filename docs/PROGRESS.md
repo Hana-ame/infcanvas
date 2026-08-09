@@ -47,7 +47,8 @@
 | mod 注册表 | §7 | ✅ | **ModRegistry**（DESIGN §7 扩展性原则）：运行时注册 tile/building/item/**enemy**/card/recipe/event/expansionPlan/intent/work/system/hook + overrideDef/overrideTuning + 冲突检测；`SimOptions.mods` 构造期挂载；详见 docs/DATA_DRIVEN.md（§6 验收 17 项全 ✅，89 测试覆盖） |
 | 数据驱动化 | §7 | ✅ | **sim 层 defId 特判清零**：craft 自配方/发光/升级(upgradesTo)/神谕(capabilities)/派系优先级表/敌对种类(enemies.ts)/派系袭击(raider def)/采集目标(growable+harvest)/采后瓦片(harvestReplaces)/光环(aura.radius)/AI 建造成本(def.cost)/出生建筑(tuning) 全部走 defs/tuning/registry，mod 不改内核（DATA_DRIVEN.md §6） |
 | 存档健壮性 | §5 | ✅ | save/load JSON-safe：slots 存卡 id 还原（不再存闭包）、load 重建成员归属防假团灭、修复重建时 splice 跳杀残留 pawn |
-| P1 server 骨架 | §5/§8/§9 | ✅ | **权威在 server**：Node 复用 `src/sim`（零 DOM ✓ tsx 直跑）+ WSS 通道；协议 `src/shared/protocol.ts`（welcome 全量 tile+defs 只读表 / 2Hz snapshot / tileChanged+feed 增量 / C→S 复用 Sim.Command）；server：固定步进 accumulator + `addTileListener` 增量推送（world.setTile 相同值去重不触发）；client：`?remote=ws://…` 连入，`RemoteSim` 实现与本地 Sim 同构读取面（world/pawns/建筑/需求/属性/欲望/卡池/事件），HUD+Renderer 双端共用；命令经 WSS 上行、server 权威执行、快照回显（e2e：scripts/e2e/remote-viewer.mjs 8 断言全过） |
+| P1 server 骨架 | §5/§8/§9 | ✅ | **权威在 server**：Node 复用 `src/sim`（零 DOM ✓ tsx 直跑）+ WSS 通道；协议 `src/shared/protocol.ts`（welcome 全量 tile+defs 只读表 / 2Hz snapshot / tileChanged+feed 增量 / C→S 复用 Sim.Command）；server：固定步进 accumulator + `addTileListener` 增量推送（world.setTile 相同值去重不触发）；client：`?remote=ws://…` 连入，`RemoteSim` 实现与本地 Sim 同构读取面（world/pawns/建筑/需求/属性/欲望/卡池/事件），HUD+Renderer 双端共用；命令经 WSS 上行、server 权威执行、快照回显（e2e：scripts/e2e/remote-viewer.mjs 8 断言全过）。**断线重连（补强）**：client 指数退避自动重连（1s→2s→4s…封顶 15s）+ 首连失败明确报错（红屏提示配置错误）+ 顶部 reconnect hint（`remote-hint`）；**看门狗兜底**：connected 后 5s 无任何消息即判定 server 假死/网络黑洞 → 主动断开重连（不依赖 TCP 超时，`RemoteSim.watchdogMs` 可调）；server kill/重启 e2e 冒烟页面自动恢复（reconnect.test.ts 6 用例） |
+| tick delta 增量 | §8/§9 | ✅ | **快照增量（P2 第一块）**：`src/server/diff.ts` 纯函数对比相邻快照 → 只发变化（`DeltaMsg`）：pawn 按 eid 逐字段 diff（x/y/hp/job/needs/faith/skills/slots/desires…）、新 pawn 首现必带 attrs、死亡 removed+pawnList；建筑按 key(y*width+x) 对齐 diff hp、拆除 removed；hostiles/stockpile/buildQueue 整体覆盖；全局字段各自携带。server：500ms 一轮 diff 广播 + 5s 全量对账（防增量丢失/相消漂移）+ 新连接先收全量底（广播过的快照即 diff 基线）；client：`applyDelta` 合并进 pawnCache/世界（读取面零改动，HUD/Renderer 无需区分）。12s e2e 实测 delta 26 帧 vs snapshot 4 帧（带宽 -90%）。测试：diff.test.ts 7 用例 + reconnect.test.ts applyDelta 1 用例 + scripts/e2e/remote-delta.mjs（帧构成/时间/位置断言） |
 | LLM 慢决策层 | §6/§10 | ✅ | **`LLM_ENDPOINT` 环境变量即启用**（OpenAI 兼容 chat completions）：`src/server/llm.ts` 预取模型（后台拉取 → 事件队列 → EventSystem 同步消费，失败指数退避降级确定性）；LLM 输出 JSON schema（name/text/effects）→ 白名单执行器（resource/mood/hp/recruit，数值钳制，**不进选择链路** ✓ DESIGN §6）；世界摘要随请求携带；`SimOptions.eventProvider` 构造注入。冒烟：mock LLM → server → feed 广播 `🎁 获得 ore 10 ✨ 星陨之夜` |
 
 ## 待办 / 差距
@@ -57,14 +58,14 @@
 | 项 | 目标（DESIGN） | 差距 |
 |---|---|---|
 | client 层数据驱动 UI | §7 分层原则（服务端 mod 逻辑 + 客户端 mod 表现） | ✅ **已打通**：建造菜单遍历 `sim.mods.buildings`、tile 渲染查 `sim.mods.tiles`（未知 id 兜底色不崩）、tile/建筑图标可 `sprite` 声明复用素材、敌人按 enemyId 散列着色；`?mods=url` 运行时加载 ESM mod（demo: src/mods/demo-berry.ts，e2e: scripts/e2e）。剩余：mod 自带上传 SVG 素材管线未做（暂复用内置 sprite） |
-| 闭合类型开放 | §7 mod 扩展 | `BehaviorCard.series`/`DesireId` 已开放为 string + `BehaviorCard.desire`(欲望关联)、`satisfies` 已有；新增 `ModRegistry.registerDesire(id,label)`（新欲望维度自动进循环：初始/衰减/匮乏/恶意/满足）；HUD 欲望显示遍历 DESIRES 表。剩余：`UnitLevel`、`intent(action)` 仍未开放 |
+| 闭合类型开放 | §7 mod 扩展 | `BehaviorCard.series`/`DesireId` 已开放为 string + `BehaviorCard.desire`(欲望关联)、`satisfies` 已有；新增 `ModRegistry.registerDesire(id,label)`（新欲望维度自动进循环：初始/衰减/匮乏/恶意/满足）；**`BehaviorIntent.action`/`UnitLevel` 已开放为 string**（`registerIntent(id, executor)` 全链路：mod 卡 decide 产出任意 action → 行为系统 Map 分派；`registerUnitLevel(id, capacity)` 新派系等级 + 记忆/看法容量，未知等级回退最小容量）；HUD 欲望显示遍历 DESIRES 表。mod 通路测试：自定义 intent 卡全链路执行 + temple 等级容量 20 |
 | 插槽保底 | §6 插槽 | ✅ **已修**：initSlots 保底 3 张基础卡（eat/rest/chop），maxSlots=2+2trait 不再"永久闲逛"（曾实测）；HUD 文案改为「卡池 n 张（槽 m）」 |
 | 丢失 chew：出生点/野营 'campfire'、派系掠夺者已数据化 | §7 | 出生建筑已读 `autobuild.starterBuilding`；`scripts.spawnWildCamp` 仍写死 'campfire'（语义上"野生营地=篝火"成立，暂留） |
 | 流言/对话完整 | §6 | 微互动已做（模板）；闲聊/深聊（引用记忆的 LLM 对话）、话题沿社交网络传播待 P1 |
 | 七宗罪欲望完整 | §3 欲望系统 | 贪婪途径（工作→satisfies 数据化）已通；色欲/嫉妒满足途径待设计（`DesireId` 闭合类型开放后 mod 可自建维度） |
 | COC 属性全用途 | §3 属性卡 | SIZ 负重、社交对抗（说服/传教已做对抗检定 APP/POW）——SIZ 负重未做 |
 | LLM 层 | §6 | ✅ **已落地**：server `LLM_ENDPOINT` 即启用（OpenAI 兼容），预取+白名单效果+降级（见上表）；剩余：真实 LLM 冒烟（本机无出网 key）、provider 频率分级（付费/免费，DESIGN §10）、LLM 叙述进"历史/记忆"而非仅 feed |
-| server 增量优化 | §8 | P1 后续：snapshot 2Hz 全量（骨架够用）；tick delta / 实体事件 / chunk 按需 / 插值 / 兴趣管理 / 客户端权威提交验证待 P2 |
+| server 增量优化 | §8 | P2 继续 | ✅ **tick delta 已落地**（500ms 增量 + 5s 对账，见上表）；剩余：实体事件化推送、chunk 按需、插值、兴趣管理、客户端权威提交验证待 P2 联机 |
 | mod 打包/沙箱 | §10 待定 | 远程 JS mod 已落地（`?mods=` + ESM default 导出，见 src/mods/demo-berry.ts）；打包格式（zip/远程 URL 批量）、服务端沙箱/信任模型待定 |
 | 联机 | §8 | P2：WSS 协议、多客户端同步、兴趣管理、持久化、鉴权 |
 

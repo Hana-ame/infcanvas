@@ -12,6 +12,8 @@ import type { GameSystem } from '../systems/registry';
 import type { ScriptedEvent } from '../systems/eventSystem';
 import type { ExpansionPlan } from '../systems/autonomousBuildSystem';
 import { DESIRES } from '../core/desires';
+import { LEANS as BUILTIN_LEANS, type LeanDef, type LeanKey } from '../core/lean';
+import { registerUnitLevel as _registerUnitLevel } from '../core/socialUnit';
 
 // 生命周期钩子上下文（step:before / step:after，见 sim.step）
 export interface HookContext {
@@ -32,6 +34,8 @@ export class ModRegistry {
   intents = new Map<string, IntentExecutor>();
   works = new Map<string, WorkExecutor>();
   recipesMap = new Map<string, RecipeDef>();
+  // 行为结果学习表（EWA）：per-key scale 归一化。跨 Sim 实例共享（与 DESIRES 同策略）
+  private static leanStore: Map<LeanKey, LeanDef> = new Map(Object.entries(BUILTIN_LEANS));
   events: ScriptedEvent[] = [];
   expansionPlans: ExpansionPlan[] = [];
   tuning: TuningConfig;
@@ -76,6 +80,11 @@ export class ModRegistry {
   }
   get recipes(): Record<string, RecipeDef> {
     return this.record('recipes', this.recipesMap);
+  }
+
+  // 行为结果学习表（EWA）：只读 Record 视图，供 Sim.leanDefOf 查询
+  get leans(): Record<string, LeanDef> {
+    return Object.fromEntries(ModRegistry.leanStore);
   }
 
   // 敌人定义查询：按 id 查（缺省用 tuning.combat.raidEnemy），查不到回退第一项
@@ -159,6 +168,29 @@ export class ModRegistry {
       throw new Error(`mod: desire "${id}" 冲突（已定义为「${DESIRES[id].label}」）`);
     }
     DESIRES[id] = { label };
+    return this;
+  }
+
+  // 新单位等级（DESIGN §7）：mod 建"神庙"等新派系建筑时，注册等级 + 记忆/看法容量
+  registerUnitLevel(id: string, capacity: number): this {
+    _registerUnitLevel(id, capacity);
+    return this;
+  }
+
+  // 新行为学习轨道：mod 新工作卡配一个 lean key（scale = 该工作一次成功的典型结果量）。
+  // 同 key 幂等覆盖（不同定义尺寸保留旧值同字段），与 DESIRES 一致跨实例共享。
+  registerLean(def: LeanDef): this {
+    const old = ModRegistry.leanStore.get(def.key);
+    if (old && old.scale !== def.scale) throw new Error(`mod: lean "${def.key}" 冲突（已定义 scale=${old.scale}）`);
+    ModRegistry.leanStore.set(def.key, { ...old, ...def });
+    return this;
+  }
+
+  // 覆盖行为学习参数（mod 可调 scale 归一化尺度）
+  overrideLean(key: string, patch: Partial<LeanDef>): this {
+    const old = ModRegistry.leanStore.get(key);
+    if (!old) throw new Error(`mod: 覆盖目标 lean "${key}" 不存在，请先 registerLean`);
+    ModRegistry.leanStore.set(key, { ...old, ...patch });
     return this;
   }
 

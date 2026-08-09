@@ -228,7 +228,7 @@ export class BehaviorSystem implements GameSystem {
       n.food = Math.min(100, n.food + c.tuning.card.eatAmount);
       c.setNeeds(eid, n);
       if (st.desires) fulfill(st.desires, 'gluttony', 12);
-      c.recordLean(eid, 'eat', 1);
+      c.recordOutcome(eid, 'eat', c.tuning.card.eatAmount);
       c.bus.emit({ type: 'eat', eid });
     }
   }
@@ -239,7 +239,7 @@ export class BehaviorSystem implements GameSystem {
       n.rest = Math.min(100, n.rest + c.tuning.card.restAmount);
       c.setNeeds(eid, n);
       if (st.desires) fulfill(st.desires, 'sloth', 10);
-      c.recordLean(eid, 'rest', 1);
+      c.recordOutcome(eid, 'rest', c.tuning.card.restAmount);
       c.bus.emit({ type: 'rest', eid });
     }
   }
@@ -279,14 +279,14 @@ export class BehaviorSystem implements GameSystem {
       n.food = Math.min(100, n.food + this.ctx.tuning.card.eatAmountUrgent);
       this.ctx.setNeeds(eid, n);
       if (st.desires) fulfill(st.desires, 'gluttony', 12);
-      this.ctx.recordLean(eid, 'eat', 1);
+      this.ctx.recordOutcome(eid, 'eat', this.ctx.tuning.card.eatAmountUrgent);
       this.ctx.bus.emit({ type: 'eat', eid });
       st.urgent = undefined;
     } else if (st.urgent === 'rest') {
       n.rest = Math.min(100, n.rest + this.ctx.tuning.card.restAmountUrgent);
       this.ctx.setNeeds(eid, n);
       if (st.desires) fulfill(st.desires, 'sloth', 10);
-      this.ctx.recordLean(eid, 'rest', 1);
+      this.ctx.recordOutcome(eid, 'rest', this.ctx.tuning.card.restAmountUrgent);
       this.ctx.bus.emit({ type: 'rest', eid });
       st.urgent = undefined;
     }

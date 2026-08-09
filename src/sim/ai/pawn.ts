@@ -41,7 +41,7 @@ export interface CardView {
   factionPriority?: Record<string, number>;
   // 指派职业（Q10 生产线）：当前小人固定从事的工作
   assignedJob?: string;
-  // 行为倾向（勒沙特列反馈）：该小人各行为的持久倾向
+  // 行为结果学习（EWA 吸引模型）：经验记忆（期望收益）→ 权重倍率（1=中性，>1 偏做，<1 回避）
   leanOf?(eid: number, key: string): number;
 }
 
@@ -50,8 +50,10 @@ export interface CardContext {
   eid: number;
 }
 
-// 行为意图：卡决策产出，由 BehaviorSystem 执行
-export type IntentAction = 'walkAndWork' | 'eat' | 'rest' | 'pray' | 'heal' | 'idle';
+// 行为意图：卡决策产出，由 BehaviorSystem 执行。
+// action 开放为 string：内置 walkAndWork/eat/rest/pray/heal/idle；
+// mod 卡 decide 可产出自定义 action，配套 registerIntent(id, executor) 注册执行器即生效（见 cardSystem）
+export type IntentAction = string;
 
 export interface BehaviorIntent {
   action: IntentAction;
@@ -339,9 +341,9 @@ function effectiveWeight(card: BehaviorCard, pawn: PawnLike, ctx?: CardContext):
       w *= card.id === jobCard ? 6 : 0.1;
     }
   }
-  // 行为倾向（勒沙特列反馈）：按该行为倾向调制权重（自平衡）
+  // 行为结果学习（EWA）：经验吸引 A → exp(βA) 权重倍率（1=无经验中性，>1 偏做，<1 回避）
   const lean = ctx?.view.leanOf?.(ctx.eid, card.id);
-  if (lean !== undefined) w *= lean / 50;
+  if (lean !== undefined) w *= lean;
   return w;
 }
 

@@ -118,6 +118,8 @@ export class RaidSystem implements GameSystem {
           const loot = h.loot ?? { item: 'ore', amount: 2 };
           this.ctx.stockpile[loot.item] = (this.ctx.stockpile[loot.item] ?? 0) + loot.amount;
           this.ctx.bus.emit({ type: 'resource_gained', eid: nearest, item: loot.item, amount: loot.amount });
+          // 战斗结果反馈（EWA）：击杀战利品量 → fight 吸引力（被杀的小人已死，不需记录）
+          this.ctx.recordOutcome(nearest, 'fight', loot.amount);
           continue;
         }
         const hk = this.ctx.readHealth(nearest);

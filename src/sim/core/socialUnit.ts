@@ -3,7 +3,8 @@
 // 容量分级：篝火维护 2-3 个连接，教堂/神庙（篝火升级）5-10 个。
 // 派系 = 看法网络的涌现，不是数据定义。
 
-export type UnitLevel = 'campfire' | 'church';
+// level 开放为 string：内置 campfire/church；mod 可 registerUnitLevel 注册新等级 + 容量
+export type UnitLevel = string;
 
 export interface UnitOpinion {
   value: number;        // 看法 -100..100（负=敌对，正=友好）
@@ -28,11 +29,21 @@ export interface SocialUnit {
   tradeBalance: Map<string, number>; // 与其他单位的贸易逆差（正=顺差，负=逆差）
 }
 
-// 记忆/看法容量：篝火 2-3，教堂 5-10（用户指定）
-export const UNIT_CAPACITY: Record<UnitLevel, number> = {
+// 记忆/看法容量：篝火 2-3，教堂 5-10（用户指定）；未知等级回退最小容量
+export const UNIT_CAPACITY: Record<string, number> = {
   campfire: 3,
   church: 10,
 };
+
+// 注册新单位等级 + 容量（DESIGN §7 mod 扩展）。同 id 同容量幂等，不同容量抛冲突
+export function registerUnitLevel(id: string, capacity: number): void {
+  const cap = UNIT_CAPACITY[id];
+  if (cap !== undefined) {
+    if (cap === capacity) return;
+    throw new Error(`unit level "${id}" 冲突（已注册容量 ${cap}）`);
+  }
+  UNIT_CAPACITY[id] = capacity;
+}
 
 let unitSeq = 0;
 export function nextUnitId(): string {
@@ -58,7 +69,7 @@ export function addMemory(unit: SocialUnit, time: number, text: string): void {
 
 // 调整对某单位的看法（容量超限时遗忘最弱连接）
 export function adjustOpinion(unit: SocialUnit, targetId: string, delta: number, now: number): void {
-  const cap = UNIT_CAPACITY[unit.level];
+  const cap = UNIT_CAPACITY[unit.level] ?? UNIT_CAPACITY.campfire;
   if (!unit.opinions.has(targetId)) {
     // 新连接：容量满则遗忘信任最弱的
     if (unit.opinions.size >= cap) {

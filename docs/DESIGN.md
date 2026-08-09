@@ -872,7 +872,7 @@ registerHook('beforeRoll', (prob, ctx) => ...);          // check 流程阶段�
 |---|---|
 | P0 单机 MVP（RimWorld 手动版） | ✅ 已完成（2026-08-04）：世界+小人+寻路+建造+需求+生产+即时调速 + **简化版 DNA/插槽系统（纯确定性，无 LLM）**，TS sim 完整单机。含 SAN/七宗罪/技能/环境/社交流言/历史/mod 注册表（见 §11、docs/PROGRESS.md） |
 | P0.5 | mod 注册表 + 物品 defs（纯数据可插）—— mod 注册表 ✅ 已落地（ModRegistry） |
-| P1 | Node server（复用 src/sim）+ LLM 慢决策层，WSS 通道验证，权威切到 server —— **✅（2026-08-09）**：骨架（server 冒烟 + 协议 + 2Hz 快照/事件推送 + `?remote=` viewer + 命令上行权威回显，e2e 8 断言）+ **LLM 层**（`LLM_ENDPOINT` 启用，OpenAI 兼容 chat completions，预取队列 + 白名单效果 + 失败降级，`SimOptions.eventProvider`）；剩余：tick delta/增量、断线重连、provider 频率分级 |
+| P1 | Node server（复用 src/sim）+ LLM 慢决策层，WSS 通道验证，权威切到 server —— **✅（2026-08-09）**：骨架（server 冒烟 + 协议 + `?remote=` viewer + 命令上行权威回显，e2e 8 断言）+ **LLM 层**（`LLM_ENDPOINT` 启用，OpenAI 兼容 chat completions，预取队列 + 白名单效果 + 失败降级，`SimOptions.eventProvider`）+ **断线重连**（指数退避自动重连 1s→2s→4s…封顶 15s、首连失败明确报错、**看门狗**：connected 后 5s 无消息判定 server 假死主动重连，不依赖 TCP 超时；reconnect.test.ts 6 用例 + kill/重启 server 冒烟）+ **tick delta 增量**（500ms 一轮 diff 只发变化：pawn 按 eid 逐字段 / 建筑按 key 对齐 hp / hostiles 整体覆盖；新 pawn 首现必带 attrs、死亡 removed + pawnList；新连接发全量底 + 5s 全量对账防漂移；remote-viewer 12s 观察 delta 26 帧 vs snapshot 4 帧，diff 7 用例 + applyDelta 1 用例）；剩余：provider 频率分级 |
 | P1.5 | 多派系 + AI 自主建镇 + 战争 + 教堂/信仰/神谕交互 |
 | P2 | 联机多客户端同步 + mod defs 下发 |
 | P3 | 兴趣管理、插值、持久化、鉴权 |

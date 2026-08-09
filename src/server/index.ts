@@ -1,16 +1,20 @@
 // P1 server 骨架（DESIGN §5/§8）：Node 复用 src/sim 跑权威模拟，WSS 广播快照/事件
+// P2 增量：500ms 一轮 diff 只发变化（tick delta）；5s 一次全量兜底对账；新连接先收全量
 // 启动：npx tsx src/server/index.ts [port] [seed] [pawns]
 // 客户端：?remote=ws://127.0.0.1:8080
 import { WebSocketServer, WebSocket } from 'ws';
 import { Sim } from '../sim/sim';
 import type { Command } from '../sim/sim';
 import { makeLlmProvider } from './llm';
+import { buildDelta } from './diff';
 import type { ClientMsg, ServerMsg, SnapshotMsg, WelcomeMsg, EventMsg } from '../shared/protocol';
 
 const PORT = Number(process.argv[2] ?? 8080);
 const SEED = Number(process.argv[3] ?? 20260803);
 const PAWNS = Number(process.argv[4] ?? 4);
 const TICK_HZ = 20;
+const DELTA_MS = 500;        // 增量轮询
+const RECONCILE_MS = 5000;   // 全量对账间隔
 
 // LLM 慢决策层（P1）：设 LLM_ENDPOINT 即启用（OpenAI 兼容 chat completions），否则确定性脚本
 const llmCfg = process.env.LLM_ENDPOINT
@@ -39,6 +43,13 @@ function sendTo(ws: WebSocket, msg: ServerMsg): void {
 
 function broadcast(msg: ServerMsg): void {
   for (const ws of clients.values()) sendTo(ws, msg);
+}
+
+// 全量广播：同时把它作为 diff 基线（广播出去的快照 = 所有 client 的共同真实状态）
+function broadcastSnapshot(): SnapshotMsg {
+  lastSnap = buildSnapshot();
+  broadcast(lastSnap);
+  return lastSnap;
 }
 
 // tile 增量：采集/事件改地形 → 立即推送（不占快照带宽）
@@ -122,6 +133,10 @@ wss.on('connection', (ws, req) => {
   clients.set(clientId, ws);
   console.log(`[server] +client #${clientId} (${req.socket.remoteAddress})`);
   sendTo(ws, buildWelcome(clientId));
+  // 新连接：先收全量底（welcome 只含 defs/tile，动态世界靠这份快照）
+  const snap = lastSnap ?? buildSnapshot();
+  lastSnap = snap;
+  sendTo(ws, snap);
 
   ws.on('message', (data) => {
     let msg: ClientMsg;
@@ -143,11 +158,14 @@ function looksLikeCommand(c: unknown): c is Command {
   return typeof c === 'object' && c !== null && typeof (c as { type?: unknown }).type === 'string';
 }
 
-// 主循环：固定步进（accumulator，不随帧率漂移）+ 2Hz 快照 + feed 增量推送
+// 主循环：固定步进（accumulator，不随帧率漂移）+ tick delta 增量 + 定期全量对账 + feed 增量推送
 const tickMs = 1000 / TICK_HZ;
 let acc = 0;
 let last = Date.now();
 let lastFeedCount = 0;
+let lastSnap: SnapshotMsg | null = null;
+let lastDeltaAt = Date.now();
+let lastReconcile = Date.now();
 setInterval(() => {
   const now = Date.now();
   const dt = Math.min(100, now - last);
@@ -165,7 +183,19 @@ setInterval(() => {
     const msg: EventMsg = { type: 'event', t: sim.time, events: fresh.map((e) => ({ kind: 'feed', text: e.text })) };
     broadcast(msg);
   }
-  if (now % 500 < 20) broadcast(buildSnapshot());
+  // 增量：500ms 一轮，只发变化
+  if (now - lastDeltaAt >= DELTA_MS) {
+    const cur = buildSnapshot();
+    const delta = buildDelta(lastSnap, cur);
+    lastSnap = cur;
+    lastDeltaAt = now;
+    if (delta) broadcast(delta);
+  }
+  // 全量对账：5s 一次，防增量丢失/相消累积偏差
+  if (now - lastReconcile >= RECONCILE_MS) {
+    lastReconcile = now;
+    broadcastSnapshot();
+  }
 }, 10);
 
 process.on('SIGINT', () => { console.log('\n[server] bye'); process.exit(0); });

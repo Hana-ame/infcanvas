@@ -95,7 +95,9 @@ export interface SimContext {
   skillOf(eid: number, skill: SkillId): number;
   growSkill(eid: number, skill: SkillId): void;
   // 行为倾向（勒沙特列反馈）：按 profit 调整 / 读取
-  recordLean(eid: number, key: string, profit: number): void;
+  // 行为结果学习（EWA 吸引模型）：执行某行为后按实际結果量（如采集产出量）更新吸引力
+  recordOutcome(eid: number, key: string, outcome: number): void;
+  // 权重倍率读取（1=中性，>1 偏做该行为，<1 回避）
   leanOf(eid: number, key: string): number;
   // 历史（仿真日志）：结构化查询（社交话题等素材）
   historyQuery(opts?: { type?: string; eid?: number; limit?: number }): { type: string; data?: Record<string, unknown> | undefined }[];

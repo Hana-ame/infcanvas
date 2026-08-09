@@ -317,6 +317,7 @@ async function main(): Promise<void> {
     await assets.loadAll();
     const renderer = new Renderer(sim, assets);
     await renderer.init(container);
+    (window as unknown as { __renderer: unknown }).__renderer = renderer; // 调试/测试后门
     attachScene(sim, renderer, isTouch);
     return;
   }
@@ -358,6 +359,7 @@ async function main(): Promise<void> {
   await assets.loadAll();
   const renderer = new Renderer(sim, assets);
   await renderer.init(container);
+  (window as unknown as { __renderer: unknown }).__renderer = renderer; // 调试/测试后门
 
   // 自动存档（每 30 秒，IndexedDB）
   setInterval(async () => {

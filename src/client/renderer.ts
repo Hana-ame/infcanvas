@@ -29,6 +29,9 @@ export class Renderer {
   private buildingSprites: { g: Graphics; x: number; y: number }[] = [];
   private pawnSprites = new Map<number, Graphics>();
   private hostileSprites = new Map<number, Graphics>();
+  // 位置插值（远程模式 delta 500ms 一跳，渲染平滑）：记录上一段起终点 + sim 时间，按 k 线性插值
+  private pawnAnim = new Map<number, { x0: number; y0: number; x1: number; y1: number; t0: number; t1: number }>();
+  private hostileAnim = new Map<number, { x0: number; y0: number; x1: number; y1: number; t0: number; t1: number }>();
   private camera = { x: 0, y: 0, zoom: 1 };
   private selected = new Set<number>();
   private lastBuildingVersion = -1;
@@ -327,7 +330,9 @@ export class Renderer {
           this.selectPawn(eid);
         });
       }
-      const pos = this.sim.pawnPositions.get(eid);
+      const p = this.sim.pawnPositions.get(eid);
+      if (!p) continue;
+      const pos = this.interpPos(eid, { x: p.x, y: p.y }, this.pawnAnim);
       if (pos) {
         this.placeEntity(g, pos.x, pos.y);
         // 2.5D：按世界 y 排序（前后遮挡）
@@ -342,6 +347,34 @@ export class Renderer {
         }
       }
     }
+    // 清理死亡/消失小人的残留渲染（delta 下死亡经 removed 广播）
+    const alive = new Set(this.sim.pawns);
+    for (const [eid, g] of this.pawnSprites) {
+      if (!alive.has(eid)) {
+        this.entityLayer.removeChild(g);
+        this.pawnSprites.delete(eid);
+        this.pawnAnim.delete(eid);
+      }
+    }
+    this.selected.forEach((eid) => { if (!alive.has(eid)) this.selected.delete(eid); });
+  }
+
+  // 渲染位置插值：位置更新（快照/delta）时建立动画段，帧间线性插值到目标
+  // 本地模式同样生效（每 tick 都有位置变化，段很短 ≈ 贴合真实）；站定后 k 收敛到 1
+  private interpPos(
+    eid: number, cur: { x: number; y: number }, anim: Map<number, { x0: number; y0: number; x1: number; y1: number; t0: number; t1: number }>,
+  ): { x: number; y: number } {
+    const a = anim.get(eid);
+    // 播放时钟：RemoteSim 用墙钟 extrapolate 的连续时间（消息 500ms 一跳，time 本身不逐帧前进）
+    const t = this.sim.renderNow ? this.sim.renderNow() : this.sim.time;
+    if (!a || a.x1 !== cur.x || a.y1 !== cur.y) {
+      anim.set(eid, { x0: a?.x1 ?? cur.x, y0: a?.y1 ?? cur.y, x1: cur.x, y1: cur.y, t0: a?.t1 ?? t, t1: t });
+      return cur;
+    }
+    const span = a.t1 - a.t0;
+    if (span <= 0) return cur;
+    const k = Math.min(1, Math.max(0, (t - a.t0) / span));
+    return { x: a.x0 + (a.x1 - a.x0) * k, y: a.y0 + (a.y1 - a.y0) * k };
   }
 
   // 渲染入侵者（红色敌对）—— 用狼 SVG
@@ -360,14 +393,16 @@ export class Renderer {
       // 按敌人种类稳定着色（enemyId 散列；未带 id 时按阵营兜底），mod 新敌人自动可辨
       g.tint = hostileTint(h.enemyId ?? (h.faction === 'unit' ? 'raider' : 'wolf'));
       g.visible = true;
-      this.placeEntity(g, h.x, h.y);
-      if (this.viewMode === 'iso') g.zIndex = Math.round(h.y) * 10 + 9;
+      const pos = this.interpPos(idx, { x: h.x, y: h.y }, this.hostileAnim);
+      this.placeEntity(g, pos.x, pos.y);
+      if (this.viewMode === 'iso') g.zIndex = Math.round(pos.y) * 10 + 9;
       g.alpha = Math.max(0.4, h.hp / h.maxHp);
       idx++;
     }
     for (let i = idx; i < this.hostileSprites.size; i++) {
       const g = this.hostileSprites.get(i);
       if (g) g.visible = false;
+      this.hostileAnim.delete(i);
     }
   }
 

@@ -6,7 +6,7 @@ import type { BehaviorCard } from '../sim/ai/pawn';
 import type { TileDef, BuildingDef, ItemDef } from '../sim/defs';
 import type { EnvTuning } from '../sim/defs/tuning';
 import type { Command } from '../sim/sim';
-import type { ServerMsg, WelcomeMsg, SnapshotMsg } from '../shared/protocol';
+import type { ServerMsg, WelcomeMsg, SnapshotMsg, DeltaMsg } from '../shared/protocol';
 
 // 协议快照里建筑形状
 interface SnapBuilding {
@@ -33,7 +33,7 @@ export interface SimViewPawn {
 }
 
 export interface SimViewUnit {
-  id: string; name: string; level: 'campfire' | 'church'; members: number[];
+  id: string; name: string; level: string; members: number[];
   resources: Record<string, number>; memory: { text: string }[];
   opinions: Map<string, { value: number }>; createdAt: number;
 }
@@ -47,6 +47,11 @@ export interface SimView {
   env: { raining: boolean; temperature: number; rainLeft: number };
   tuning: { env?: EnvTuning };
   isNight(): boolean;
+  /**
+   * 渲染播放时钟：消息驱动的视图（RemoteSim）用它给出帧间连续时间做插值；
+   * 本地 Sim（逐帧步进 time）不实现 → 渲染层回退用 time。
+   */
+  renderNow?(): number;
   pawns: readonly number[];
   pawnPositions: Map<number, { x: number; y: number }>;
   pawnProfile(eid: number): SimViewPawn | null;
@@ -164,6 +169,14 @@ export class RemoteSim {
   day = 1;
   env = { raining: false, temperature: 18, rainLeft: 0 };
   tuning = { env: undefined } as { env?: EnvTuning };
+  // 渲染用播放时钟：权威消息把 t 锚定到墙钟，帧间 extrapolate（t + 墙钟流逝 × speed），
+  // 让插值渲染有连续的 sim 时间（消息 500ms 一跳，直接读 time 则每帧恒等）
+  private anchorT = 0;
+  private anchorWall = 0;
+  renderNow(): number {
+    if (this.paused) return this.anchorT;
+    return this.anchorT + (performance.now() - this.anchorWall) * this.speed;
+  }
   stockpile: Record<string, number> = {};
   hostiles: SnapshotMsg['hostiles'] = [];
   pawns: number[] = [];
@@ -185,6 +198,19 @@ export class RemoteSim {
   private snap: SnapshotMsg | null = null;
   private pawnCache = new Map<number, SnapshotMsg['pawns'][number]>();
   private resolveConnected: (() => void) | null = null;
+  private rejectConnected: ((e: Error) => void) | null = null;
+  private connectedOnce = false;
+  private reconnectAttempt = 0;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private destroyed = false;
+  private lastMessageAt = 0;
+  private watchdogTimer: ReturnType<typeof setInterval> | null = null;
+  // 心跳阈值：超过此时长没收到任何 server 消息 → 判定断线（server 假死/网络黑洞），主动重连
+  watchdogMs = 5000;
+
+  // 连接状态（HUD 可显示）：connecting 初次 / connected / reconnecting 断线重连 / offline 已销毁
+  status: 'connecting' | 'connected' | 'reconnecting' | 'offline' = 'connecting';
+  onStatus?: (s: RemoteSim['status']) => void;
 
   constructor(private url: string) {
     this.bus = new EventBus();
@@ -196,22 +222,98 @@ export class RemoteSim {
     };
   }
 
-  // 连接并等 welcome（世界底 + defs 只读表）。失败 reject（超时/断开）
+  // 连接并等 welcome（世界底 + defs 只读表）。首次连接失败 reject；连上后的断开自动重连
   connect(): Promise<RemoteSim> {
+    this.openSocket();
     return new Promise((resolve, reject) => {
-      const ws = new WebSocket(this.url);
-      this.ws = ws;
-      ws.onopen = () => console.log(`[remote] 已连接 ${this.url}`);
-      ws.onerror = () => reject(new Error(`remote: 连接失败 ${this.url}`));
-      ws.onclose = () => { this.hint('⚠ 与服务器断开'); };
-      ws.onmessage = (e) => {
-        try { this.onMessage(String(e.data)); } catch (err) { console.error('[remote] 消息解析失败', err); }
-      };
-      this.resolveConnected = () => { resolve(this); this.resolveConnected = null; };
-      setTimeout(() => {
-        if (!this.snap && !this.world.buildingVersion) reject(new Error(`remote: welcome 超时 ${this.url}`));
-      }, 6000);
+      this.resolveConnected = () => { resolve(this); this.resolveConnected = null; this.rejectConnected = null; };
+      this.rejectConnected = reject;
     });
+  }
+
+  // 主动关闭（页面卸载），停止重连
+  destroy(): void {
+    this.destroyed = true;
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
+    this.stopWatchdog();
+    this.ws?.close();
+    this.status = 'offline';
+    this.onStatus?.(this.status);
+  }
+
+  private openSocket(): void {
+    if (this.destroyed) return;
+    if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
+    const ws = new WebSocket(this.url);
+    this.ws = ws;
+    this.setStatus(this.connectedOnce ? 'reconnecting' : 'connecting');
+    ws.onopen = () => {
+      if (this.ws !== ws) return;
+      this.reconnectAttempt = 0;
+      this.setStatus('connected');
+      this.hideHint();
+      this.startWatchdog();
+    };
+    ws.onmessage = (e) => {
+      if (this.ws !== ws) return;
+      this.lastMessageAt = Date.now();
+      try { this.onMessage(String(e.data)); } catch (err) { console.error('[remote] 消息解析失败', err); }
+    };
+    ws.onclose = () => {
+      if (this.ws !== ws) return;
+      this.stopWatchdog();
+      if (!this.connectedOnce) {
+        // 首次连接失败：让调用方知道（红屏提示配置错误）
+        this.rejectConnected?.(new Error(`remote: 连接失败 ${this.url}`));
+        this.rejectConnected = null;
+        return;
+      }
+      this.scheduleReconnect();
+    };
+    // 首次连接 welcome 超时兜底（server 活着但没响应）
+    setTimeout(() => {
+      if (!this.connectedOnce && !this.snap && this.rejectConnected) {
+        this.rejectConnected(new Error(`remote: welcome 超时 ${this.url}`));
+        this.rejectConnected = null;
+      }
+    }, 6000);
+  }
+
+  private scheduleReconnect(): void {
+    if (this.destroyed) return;
+    this.reconnectAttempt++;
+    this.setStatus('reconnecting');
+    const delay = Math.min(15000, 1000 * 2 ** (this.reconnectAttempt - 1));
+    this.hint(`⚠ 与服务器断开，${Math.round(delay / 1000)} 秒后自动重连（第 ${this.reconnectAttempt} 次）`);
+    this.reconnectTimer = setTimeout(() => this.openSocket(), delay);
+  }
+
+  private setStatus(s: RemoteSim['status']): void {
+    this.status = s;
+    this.onStatus?.(s);
+  }
+
+  // 看门狗：connected 期间定时检查消息新鲜度；静默超时 → 主动断开触发重连
+  private startWatchdog(): void {
+    this.stopWatchdog();
+    this.lastMessageAt = Date.now();
+    this.watchdogTimer = setInterval(() => {
+      if (this.status !== 'connected') return;
+      if (Date.now() - this.lastMessageAt > this.watchdogMs) {
+        console.warn(`[remote] 心跳超时（${this.watchdogMs}ms 无消息），主动重连`);
+        this.ws?.close();
+      }
+    }, 1000);
+  }
+
+  private stopWatchdog(): void {
+    if (this.watchdogTimer) { clearInterval(this.watchdogTimer); this.watchdogTimer = null; }
+  }
+
+  private hideHint(): void {
+    const el = document.getElementById('remote-hint');
+    if (el) el.remove();
   }
 
   private hint(text: string): void {
@@ -227,7 +329,13 @@ export class RemoteSim {
 
   private onMessage(raw: string): void {
     const m = JSON.parse(raw) as ServerMsg;
+    // 权威时间锚定（welcome 无 t；快照/增量/事件都有）
+    if ('t' in m && typeof (m as { t?: unknown }).t === 'number') {
+      this.anchorT = (m as { t: number }).t;
+      this.anchorWall = performance.now();
+    }
     if (m.type === 'welcome') {
+      this.connectedOnce = true;
       this.tickHz = m.tickHz;
       this.world.setWorld(m.world, m.tileGrid);
       for (const [id, d] of Object.entries(m.tiles)) {
@@ -245,6 +353,8 @@ export class RemoteSim {
       this.resolveConnected?.();
     } else if (m.type === 'snapshot') {
       this.applySnapshot(m);
+    } else if (m.type === 'delta') {
+      this.applyDelta(m);
     } else if (m.type === 'event') {
       for (const ev of m.events) {
         if (ev.kind === 'tileChanged' && ev.x !== undefined && ev.y !== undefined && ev.tileId) {
@@ -281,6 +391,69 @@ export class RemoteSim {
     }
     for (const eid of old) if (!now.has(eid)) this.pawnPositions.delete(eid);
     this.pawns = m.pawns.map((p) => p.eid);
+  }
+
+  // tick delta：把变化量合并进本地缓存（身份对齐：pawn eid / 建筑 key）
+  private applyDelta(m: DeltaMsg): void {
+    this.snap = { ...this.snap ?? { type: 'snapshot', t: 0, paused: false, speed: 1, isNight: false, day: 1, weather: { raining: false, temperature: 18 }, stockpile: {}, pawns: [], hostiles: [], buildings: [], buildQueue: [], buildingVersion: 0 }, ...m as unknown as SnapshotMsg };
+    this.time = m.t;
+    if (m.paused !== undefined) this.paused = m.paused;
+    if (m.speed !== undefined) this.speed = m.speed;
+    if (m.day !== undefined) this.day = m.day;
+    if (m.weather) this.env = { ...this.env, ...m.weather, rainLeft: this.env.rainLeft };
+    if (m.stockpile) this.stockpile = m.stockpile;
+
+    let pawnListChanged = false;
+    if (m.pawns) {
+      for (const pd of m.pawns) {
+        if (pd.removed) {
+          this.pawnCache.delete(pd.eid);
+          this.pawnPositions.delete(pd.eid);
+          pawnListChanged = true;
+          continue;
+        }
+        const old = this.pawnCache.get(pd.eid);
+        const merged = { ...old } as SnapshotMsg['pawns'][number];
+        if (pd.x !== undefined) merged.x = pd.x;
+        if (pd.y !== undefined) merged.y = pd.y;
+        if (pd.hp !== undefined) merged.hp = pd.hp;
+        if (pd.maxHp !== undefined) merged.maxHp = pd.maxHp;
+        if (pd.job !== undefined) merged.job = pd.job;
+        if (pd.assignedJob !== undefined) merged.assignedJob = pd.assignedJob;
+        if (pd.needs) merged.needs = pd.needs;
+        if (pd.faith !== undefined) merged.faith = pd.faith;
+        if (pd.attrs) merged.attrs = pd.attrs;
+        if (pd.skills) merged.skills = pd.skills;
+        if (pd.traits) merged.traits = pd.traits;
+        if (pd.maxSlots !== undefined) merged.maxSlots = pd.maxSlots;
+        if (pd.slots) merged.slots = pd.slots;
+        if (pd.desires) merged.desires = pd.desires;
+        if (pd.lastDecision) merged.lastDecision = pd.lastDecision;
+        this.pawnCache.set(pd.eid, merged);
+        if (pd.x !== undefined && pd.y !== undefined) this.pawnPositions.set(pd.eid, { x: pd.x, y: pd.y });
+        if (!old) pawnListChanged = true;
+      }
+    }
+    if (m.pawnList) {
+      this.pawns = m.pawnList;
+    } else if (pawnListChanged) {
+      this.pawns = [...this.pawnCache.keys()];
+    }
+    if (m.hostiles) this.hostiles = m.hostiles;
+    if (m.buildings) {
+      for (const b of m.buildings) {
+        if (b.removed) {
+          this.world.buildings.delete(b.key);
+        } else {
+          this.world.buildings.set(b.key, {
+            defId: b.defId, x: b.key % this.world.width, y: Math.floor(b.key / this.world.width),
+            hp: b.hp, maxHp: b.maxHp, faction: b.faction, footprint: b.footprint,
+            def: this.mods.buildings[b.defId] ?? fallbackDef(b.defId),
+          });
+        }
+      }
+    }
+    if (m.buildingVersion !== undefined) this.world.buildingVersion = m.buildingVersion;
   }
 
   isNight(): boolean { return this.snap?.isNight ?? false; }

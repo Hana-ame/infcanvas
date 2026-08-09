@@ -14,7 +14,7 @@ import { generateDna, initSlots, type Dna, type SkillId, BASE_CARDS, TRAIT_CARDS
 import { initDesires, type DesireId } from './core/desires';
 import { initEnv, tickEnv, type EnvState } from './core/env';
 import { addMemory, setUnitSeq, type SocialUnit } from './core/socialUnit';
-import { initLean, adjustLean, type LeanKey } from './core/lean';
+import { initLean, recordOutcome, weightMulOf, type LeanKey, type LeanDef } from './core/lean';
 import { BUILDINGS, TILES, ITEMS, type BuildingDef } from './defs';
 import { ENEMIES } from './defs/enemies';
 import { RECIPES } from './defs/recipes';
@@ -132,7 +132,7 @@ export interface SaveData {
     assignedJob?: string;
   }[];
   units?: {
-    id: string; key: number; level: 'campfire' | 'church'; name: string;
+    id: string; key: number; level: string; name: string;
     members: number[]; memory: { time: number; text: string }[];
     opinions: [string, { value: number; lastChanged: number }][];
     resources: Record<string, number>;
@@ -440,17 +440,24 @@ export class Sim implements SimContext {
     return this.pawnStates.get(eid)?.skills?.[skill] ?? 10;
   }
 
-  // 行为倾向反馈（勒沙特列原理）：执行某行为后按实际收益调整倾向
-  recordLean(eid: number, key: LeanKey, profit: number): void {
+  // 行为结果学习（EWA 吸引模型）：执行某行为后按实际結果量调整吸引力 → 权重
+  recordOutcome(eid: number, key: LeanKey, outcome: number): void {
     const st = this.pawnStates.get(eid);
     if (!st) return;
     st.lean = st.lean ?? initLean(this.rng);
-    adjustLean(st.lean, key, profit);
+    recordOutcome(st.lean, key, outcome, this.leanDefOf(key), this.tuning.card.lean);
   }
 
-  // 倾向读取（抽卡权重调制用）
+  // 倾向读取（抽卡权重倍率：1=中性，>1 偏做，<1 回避）
   leanOf(eid: number, key: LeanKey): number {
-    return this.pawnStates.get(eid)?.lean?.[key] ?? 50;
+    const st = this.pawnStates.get(eid);
+    if (!st) return 1;
+    st.lean = st.lean ?? initLean(this.rng);
+    return weightMulOf(st.lean, key, this.leanDefOf(key), this.tuning.card.lean);
+  }
+
+  private leanDefOf(key: LeanKey): LeanDef | undefined {
+    return this.mods.leans[key];
   }
 
   // 技能成长（COC 规则）：掷 d100 > 当前值 → +1d10，越用越强、边际递减

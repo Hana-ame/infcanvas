@@ -7,6 +7,7 @@ import { World } from '../core/world';
 import { BUILDINGS } from '../defs';
 import type { GameSystem } from '../systems/registry';
 import { spawnWildCamp } from '../systems/scripts';
+import { adjustOpinion, UNIT_CAPACITY, type SocialUnit } from '../core/socialUnit';
 
 describe('SimRng', () => {
   it('is deterministic for same seed', () => {
@@ -377,6 +378,44 @@ describe('mod 注册表（DESIGN §7 扩展性原则）', () => {
     // 触发意图执行（模拟行为系统调用）
     sim.mods.intents.get('dance')!(sim, sim.pawns[0], sim.pawnStates.get(sim.pawns[0])!, { action: 'idle', label: 'dance' });
     expect(executed).toBe(true);
+  });
+
+  it('mod card can produce a brand-new intent action (IntentAction open) → registerIntent dispatch', () => {
+    let danced = false;
+    const sim = new Sim({
+      seed: 40, pawnCount: 1,
+      mods: (m) => {
+        m.registerIntent('dance', (_c, _eid, st) => { danced = true; st.job = '跳舞'; });
+        m.registerCard({
+          id: 'mod:dance', name: '跳舞', series: 'leisure', weight: 100,
+          condition: () => true,
+          utility: () => 999,
+          decide: () => ({ action: 'dance', label: '跳舞' }),
+        });
+      },
+    });
+    for (let i = 0; i < 600 && !danced; i++) sim.step(1 / 20);
+    expect(danced).toBe(true);
+    expect(sim.pawnStates.get(sim.pawns[0])!.job).toBe('跳舞');
+  });
+
+  it('registerUnitLevel adds a brand-new unit level with capacity (UnitLevel open)', () => {
+    const sim = new Sim({ seed: 40, pawnCount: 1, mods: (m) => m.registerUnitLevel('temple', 20) });
+    const u: SocialUnit = {
+      id: 'uT', key: 1, level: 'temple', name: '庙', members: [], memory: [], opinions: new Map(),
+      createdAt: 0, resources: {}, tradeBalance: new Map(),
+    };
+    adjustOpinion(u, 'a', 10, 1); adjustOpinion(u, 'b', 10, 2); adjustOpinion(u, 'c', 10, 3);
+    expect(u.opinions.size).toBe(3); // 未超容量，正常增长
+    adjustOpinion(u, 'd', 10, 4); adjustOpinion(u, 'e', 10, 5); adjustOpinion(u, 'f', 10, 6);
+    adjustOpinion(u, 'g', 10, 7); adjustOpinion(u, 'h', 10, 8); adjustOpinion(u, 'i', 10, 9);
+    adjustOpinion(u, 'j', 10, 10); adjustOpinion(u, 'k', 10, 11); adjustOpinion(u, 'l', 10, 12);
+    adjustOpinion(u, 'm', 10, 13); adjustOpinion(u, 'n', 10, 14); adjustOpinion(u, 'o', 10, 15);
+    adjustOpinion(u, 'p', 10, 16); adjustOpinion(u, 'q', 10, 17); adjustOpinion(u, 'r', 10, 18);
+    adjustOpinion(u, 's', 10, 19); adjustOpinion(u, 't', 10, 20); adjustOpinion(u, 'u', 10, 21);
+    adjustOpinion(u, 'v', 10, 22); adjustOpinion(u, 'w', 10, 23); adjustOpinion(u, 'x', 10, 24);
+    expect(u.opinions.size).toBe(20); // 容量 20，超出部分遗忘最弱连接
+    expect(UNIT_CAPACITY.temple).toBe(20);
   });
 
   it('registering a custom system runs in the tick loop', () => {
@@ -786,7 +825,7 @@ describe('自主建造（用户 Q1/Q8：营地自主扩张）', () => {
     const upgraded = sim.socialUnits.units.get(unit.id)!;
     expect(upgraded.level).toBe('church');
     // 升级后记忆容量扩大（5-10 vs 2-3）
-    const capacities = { campfire: 3, church: 10 };
+    const capacities: Record<string, number> = { campfire: 3, church: 10 };
     expect(capacities[upgraded.level]).toBe(10);
   });
 

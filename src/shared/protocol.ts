@@ -21,7 +21,7 @@ export interface WelcomeMsg {
   tileGrid: string[];        // width*height 的 tile id（世界全量，一次性）
 }
 
-// 周期快照（骨架期 2Hz 全量；P2 兴趣管理/插值再做增量）
+// 周期快照（骨架期 2Hz 全量；P2 增量后：仅新连接与定期对账时发全量）
 export interface SnapshotMsg {
   type: 'snapshot';
   t: number;                 // sim 时间（秒）
@@ -52,6 +52,42 @@ export interface SnapshotMsg {
   buildingVersion: number;
 }
 
+// 增量快照（tick delta，P2）：快照之间的变化量，只有变化的字段才带。
+// 身份规则：pawn 按 eid、建筑按 key(x+y*width) 对齐；hostiles/全局字段整体覆盖。
+// 兜底：server 每 SNAPSHOT_RECONCILE_MS 发一次全量对账，防止丢失/相消累积偏差。
+export interface DeltaMsg {
+  type: 'delta';
+  t: number;
+  paused?: boolean;
+  speed?: number;
+  isNight?: boolean;
+  day?: number;
+  weather?: { raining: boolean; temperature: number };
+  stockpile?: Record<string, number>;
+  pawns?: {
+    eid: number;
+    x?: number; y?: number;
+    hp?: number; maxHp?: number;
+    job?: string; assignedJob?: string;
+    needs?: { food: number; rest: number; mood: number; san: number };
+    faith?: number;
+    attrs?: { str: number; con: number; siz: number; dex: number; int: number; pow: number; app: number; edu: number }; // 新 pawn 首现必带
+    skills?: Record<string, number>;
+    traits?: string[];
+    maxSlots?: number;
+    slots?: { id: string; name: string }[];
+    desires?: Record<string, number>;
+    lastDecision?: { drawn: string[]; picked: string; time: number };
+    removed?: boolean;      // pawn 消失（死亡/重生）
+  }[];
+  // pawn 集合整体变化（增/删）时带全量列表，client 据此重建 pawns 顺序
+  pawnList?: number[];
+  hostiles?: { i: number; enemyId?: string; x: number; y: number; hp: number; maxHp: number; faction?: string }[];
+  buildings?: { key: number; defId: string; hp: number; maxHp: number; faction: string; footprint: { x: number; y: number }[]; removed?: boolean }[];
+  buildingVersion?: number;
+  buildQueue?: { x: number; y: number; defId: string }[];
+}
+
 // 增量（快照之间的小事件：采集换 tile、资源获得飘字、社交/袭击等文本）
 export interface EventMsg {
   type: 'event';
@@ -64,4 +100,4 @@ export interface EventMsg {
   }[];
 }
 
-export type ServerMsg = WelcomeMsg | SnapshotMsg | EventMsg;
+export type ServerMsg = WelcomeMsg | SnapshotMsg | DeltaMsg | EventMsg;
