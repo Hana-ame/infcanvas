@@ -6,6 +6,8 @@
 // level 开放为 string：内置 campfire/church；mod 可 registerUnitLevel 注册新等级 + 容量
 export type UnitLevel = string;
 
+import { FACTION_NAMES } from '../defs/factionNames';
+
 export interface UnitOpinion {
   value: number;        // 看法 -100..100（负=敌对，正=友好）
   lastChanged: number;  // 最后变化时间
@@ -54,11 +56,15 @@ export function setUnitSeq(n: number): void {
   unitSeq = n;
 }
 
-// 生成派系名（确定性种子）
-export function generateUnitName(rng: { next(): number }): string {
-  const prefix = ['晨', '暮', '月', '岩', '风', '火', '松', '沙', '霜', '湖'];
-  const suffix = ['部落', '氏族', '营地', '聚落', '之盟'];
-  return prefix[Math.floor(rng.next() * prefix.length)] + suffix[Math.floor(rng.next() * suffix.length)];
+// 生成派系名（确定性种子）：名字元素查生成表（defs/factionNames.ts 内置，
+// 调用方可传 tuning.faction.namePrefixes/nameSuffixes 覆盖）
+export function generateUnitName(
+  rng: { next(): number },
+  names?: { prefixes: readonly string[]; suffixes: readonly string[] },
+): string {
+  const prefixes = names?.prefixes.length ? names.prefixes : FACTION_NAMES.prefixes;
+  const suffixes = names?.suffixes.length ? names.suffixes : FACTION_NAMES.suffixes;
+  return prefixes[Math.floor(rng.next() * prefixes.length)] + suffixes[Math.floor(rng.next() * suffixes.length)];
 }
 
 // 记录一条部落记忆（容量上限 30 条，超出丢最旧）

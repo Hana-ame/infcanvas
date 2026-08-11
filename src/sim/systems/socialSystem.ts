@@ -5,10 +5,7 @@ import type { GameSystem } from './registry';
 import type { SimContext } from './context';
 import type { EventBus } from '../core/events';
 import { fulfill } from '../core/desires';
-
-const GREET = ['打个招呼', '点头致意', '打了个哈欠', '抱怨天气', '交换了个眼神', '小声嘀咕'];
-const POSITIVE = ['夸了你', '分享了口粮', '拍了拍你的肩', '讲了个笑话'];
-const NEGATIVE = ['瞪了你一眼', '说了句风凉话', '背着你偷笑', '嫌弃地走开'];
+import { socialLinesOf } from '../mods/registry';
 
 export class SocialSystem implements GameSystem {
   id = 'social';
@@ -189,7 +186,9 @@ export class SocialSystem implements GameSystem {
   }
 
   private line(tone: 'positive' | 'negative' | 'neutral'): string {
-    const pool = tone === 'positive' ? POSITIVE : tone === 'negative' ? NEGATIVE : GREET;
+    // 微互动文案查模板表（defs/socialLines.ts，mod 可 registerLine 扩展）
+    const table = socialLinesOf();
+    const pool = tone === 'positive' ? table.positive : tone === 'negative' ? table.negative : table.greet;
     return pool[Math.floor(this.ctx.rng.next() * pool.length)];
   }
 
@@ -205,11 +204,9 @@ export class SocialSystem implements GameSystem {
     const rec = this.ctx.historyQuery?.({ limit: 8 }) ?? null;
     if (!rec || rec.length === 0) return null;
     const h = rec[Math.floor(this.ctx.rng.next() * rec.length)];
-    if (h.type === 'work_completed') return `说他昨天${h.data?.success ? '干成了' : '没干成'}一单活`;
-    if (h.type === 'pawn_died') return `议论昨天死的那个`;
-    if (h.type === 'raid_started') return '聊起野狼袭击的事';
-    if (h.type === 'building_built') return `说新盖了个${h.data?.defId}`;
-    if (h.type === 'resource_gained') return `说他攒了点${h.data?.item}`;
-    return null;
+    // 话题文案查模板表（defs/socialLines.ts，mod 可 registerTopicTemplate 扩展）
+    const pool = socialLinesOf().topics.filter((t) => t.event === h.type);
+    if (pool.length === 0) return null;
+    return pool[Math.floor(this.ctx.rng.next() * pool.length)].text(h.data ?? {});
   }
 }

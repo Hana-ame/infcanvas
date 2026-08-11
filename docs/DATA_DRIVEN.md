@@ -330,3 +330,29 @@ overrideTuning(patch: DeepPartial<TuningConfig>): this  // 覆盖平衡参数（
 - `registerWeightRule(rule, before?)` 插入（锚点语义同系统装配表）；`overrideWeightRule(id, apply)` 原地替换
 - 规则函数是"机制"，参数全读表/tuning；跨 Sim 实例共享（同谓词策略）；`weightRulesOf()` 供工厂遍历
 - 验证：夜晚恐惧规则插入生效 + 同锚点注册序执行（147/147 绿）
+
+## 11. 文本层（数据驱动第三阶段，2026-08-12）
+
+### 11.1 社交对话模板表（defs/socialLines.ts）
+
+- 微互动文案（greet/positive/negative）从系统常量迁入表；`registerLine(category, line)` 追加（mod 定制对话风味）
+- 流言话题模板：历史事件 type → 文案函数（`text: (data) => string | null`，返回 null = 不产话题）；`registerTopicTemplate(tpl)` 扩展
+- 话题/文案函数是"机制"，跨 Sim 实例共享（同谓词/权重规则策略）；`socialLinesOf()` 查询
+- 系统内不再有对话文案常量（socialSystem 全走表）
+
+### 11.2 部落名生成表（defs/factionNames.ts）
+
+- 前缀/后缀元素表，`generateUnitName(rng, names?)` 生成（确定性种子）
+- `tuning.faction.namePrefixes/nameSuffixes` 提供则覆盖（mod 定制部族风味），缺省用内置表
+- 验证：内置表正则匹配 + tuning 覆盖生效（157/157 绿）
+
+## 12. 数据驱动现状（本轮后）
+
+| 层 | 载体 | mod 扩展点 |
+|---|---|---|
+| 内容 | defs/（tiles/buildings/items/recipes/enemies/events） | register*/overrideDef |
+| 平衡 | tuning（needs/combat/.../faction） | overrideTuning（深合并） |
+| 逻辑组件 | 系统装配表 + 谓词表 + 寻路策略 + 执行器表 + 权重规则 | registerSystem/registerPredicate/overrideTuning.path/registerIntent/registerWeightRule |
+| 文本 | socialLines + factionNames | registerLine/registerTopicTemplate/tuning.faction 名 |
+| 欲望 | DESIRES 表（七宗罪 + 注册制） | registerDesire |
+| 行为 | 卡表（声明式：weight/when/satisfies/action） | registerCard/overrideDef('card') |

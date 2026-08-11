@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { Sim } from '../sim';
+import { socialLinesOf } from '../mods/registry';
 import { SimRng } from '../core/rng';
 import { generateDna, initSlots, drawCards, pickBest, effectiveWeight, BASE_CARDS, type BehaviorCard } from '../ai/pawn';
 import type { Dna } from '../ai/pawn';
@@ -1926,5 +1927,41 @@ describe('流言沿社交网络传播（gossip spread）', () => {
     for (let i = 0; i < 600; i++) sim.step(0.1);
     off();
     expect(oldSpread).toBe(false); // 过期八卦不被转述（新话题传播属正常，不在此断言范围）
+  });
+});
+
+describe('社交文案表（defs/socialLines.ts 文本层）', () => {
+  it('mod 可 registerLine 扩展微互动文案', () => {
+    const sim = new Sim({ seed: 71, pawnCount: 3, mods: (m) => m.registerLine('greet', '用俚语打招呼') });
+    // 直接验证表被注册：store 里含 mod 行（注册表级断言，比事件断言稳定）
+    expect(socialLinesOf().greet).toContain('用俚语打招呼');
+  });
+
+  it('mod 可 registerTopicTemplate 扩展话题模板（新历史事件 → 话题）', () => {
+    const sim = new Sim({ seed: 72, pawnCount: 3, mods: (m) => m.registerTopicTemplate({ event: 'building_built', text: (d) => `说新造了${d.defId}` }) });
+    const pool = socialLinesOf().topics.filter((t) => t.event === 'building_built');
+    expect(pool.length).toBeGreaterThanOrEqual(2); // 内置 + mod 扩展
+    expect(pool.some((t) => t.event === 'building_built' && t.text({ defId: 'X' }) === '说新造了X')).toBe(true);
+  });
+});
+
+describe('部落名生成表（defs/factionNames.ts + tuning.faction 覆盖）', () => {
+  it('内置表生成确定性部落名', () => {
+    const sim = new Sim({ seed: 73, pawnCount: 1, mods: () => {} });
+    for (let i = 0; i < 200; i++) sim.step(0.1);
+    const units = [...sim.socialUnits.units.values()];
+    expect(units.length).toBeGreaterThan(0);
+    for (const u of units) expect(u.name).toMatch(/[晨暮月岩风火松沙霜湖][部落氏族营地聚落之盟]/);
+  });
+
+  it('tuning.faction 覆盖部落名前缀/后缀（mod 定制部族风味）', () => {
+    const sim = new Sim({
+      seed: 74, pawnCount: 1,
+      mods: (m) => m.overrideTuning({ faction: { namePrefixes: ['幽', '幻'], nameSuffixes: ['王国'] } }),
+    });
+    for (let i = 0; i < 200; i++) sim.step(0.1);
+    const units = [...sim.socialUnits.units.values()];
+    expect(units.length).toBeGreaterThan(0);
+    for (const u of units) expect(u.name).toMatch(/[幽幻]王国/);
   });
 });

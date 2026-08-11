@@ -78,7 +78,10 @@ export class SocialUnitSystem implements GameSystem {
       id: nextUnitId(),
       key,
       level,
-      name: generateUnitName(this.ctx.rng),
+      name: generateUnitName(this.ctx.rng, {
+        prefixes: this.ctx.tuning?.faction?.namePrefixes ?? [],
+        suffixes: this.ctx.tuning?.faction?.nameSuffixes ?? [],
+      }),
       members: [],
       memory: [],
       opinions: new Map(),

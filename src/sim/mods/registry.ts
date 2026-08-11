@@ -21,6 +21,7 @@ import { JOBS as BUILTIN_JOBS } from '../defs/jobs';
 import { LEANS as BUILTIN_LEANS, type LeanDef, type LeanKey } from '../defs/leans';
 import { CARD_PREDICATES as BUILTIN_PREDICATES } from '../defs/cards';
 import { BUILTIN_WEIGHT_RULES, type WeightRule } from '../defs/weightRules';
+import { SOCIAL_LINES, type SocialLineTable, type TopicTemplate } from '../defs/socialLines';
 import type { CardContext } from '../ai/pawn';
 import { registerUnitLevel as _registerUnitLevel } from '../core/socialUnit';
 
@@ -50,6 +51,13 @@ export class ModRegistry {
   static predicateStore: Map<string, (c: CardContext) => boolean> = new Map(Object.entries(BUILTIN_PREDICATES));
   // 抽卡权重调制规则表（权重合成流水线）：规则顺序 = 执行顺序。跨 Sim 实例共享
   static weightRuleStore: Map<string, WeightRule> = new Map(BUILTIN_WEIGHT_RULES.map((r) => [r.id, r]));
+  // 社交对话模板表（文本层）：微互动 + 话题。跨 Sim 实例共享
+  static socialLinesStore: SocialLineTable = {
+    greet: [...SOCIAL_LINES.greet],
+    positive: [...SOCIAL_LINES.positive],
+    negative: [...SOCIAL_LINES.negative],
+    topics: [...SOCIAL_LINES.topics], // 模板含函数，浅拷贝即可
+  };
   events: ScriptedEvent[] = [];
   expansionPlans: ExpansionPlan[] = [];
   tuning: TuningConfig;
@@ -356,6 +364,18 @@ export class ModRegistry {
     return this;
   }
 
+  // 社交对话模板：追加一条微互动文案（greet/positive/negative）
+  registerLine(category: keyof Pick<SocialLineTable, 'greet' | 'positive' | 'negative'>, line: string): this {
+    ModRegistry.socialLinesStore[category].push(line);
+    return this;
+  }
+
+  // 社交对话模板：追加一条话题模板（历史事件 type → 文案）；同事件多条按注册序取用
+  registerTopicTemplate(tpl: TopicTemplate): this {
+    ModRegistry.socialLinesStore.topics.push(tpl);
+    return this;
+  }
+
   // 权重规则替换（保持位置）：mod 调整内置规则的行为（如改天赋倍率的合成方式）
   overrideWeightRule(id: string, apply: WeightRule['apply']): this {
     const old = ModRegistry.weightRuleStore.get(id);
@@ -415,4 +435,9 @@ export function cardPredicateOf(id: string): (c: CardContext) => boolean {
 // 权重规则流水线查询（effectiveWeight 合成用；规则顺序 = 表序，跨 Sim 实例共享）
 export function weightRulesOf(): WeightRule[] {
   return [...ModRegistry.weightRuleStore.values()];
+}
+
+// 社交对话模板查询（社交系统取文案用；跨 Sim 实例共享）
+export function socialLinesOf(): SocialLineTable {
+  return ModRegistry.socialLinesStore;
 }

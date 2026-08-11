@@ -209,6 +209,8 @@ export interface FactionTuning {
   opinionMsgFriendly: number; // 友善传话看法增量
   opinionRaid: number;     // 袭击看法损失
   opinionTrade: number;    // 贸易看法变化（顺差方）
+  namePrefixes?: string[]; // 部落/派系名前缀覆盖（缺省用 defs/factionNames.ts 内置表）
+  nameSuffixes?: string[];
   opinionTradeRecipient: number; // 贸易看法变化（逆差方）
   opinionThreat: number;   // 威胁传话看法变化
   opinionDeficit: number;  // 逆差怨恨看法下滑
