@@ -4,6 +4,7 @@
 import type { GameSystem } from './registry';
 import type { SimContext } from './context';
 import type { EventBus } from '../core/events';
+import { fulfill } from '../core/desires';
 
 const GREET = ['打个招呼', '点头致意', '打了个哈欠', '抱怨天气', '交换了个眼神', '小声嘀咕'];
 const POSITIVE = ['夸了你', '分享了口粮', '拍了拍你的肩', '讲了个笑话'];
@@ -136,6 +137,9 @@ export class SocialSystem implements GameSystem {
 
     // 文本（日志用）
     const line = this.line(tone);
+    // 色欲满足（七宗罪全途径）：亲密社交互动 → 满足（参数 tuning.social.lustFulfillPerInteract）
+    const dA = stA.desires;
+    if (dA && tone === 'positive') fulfill(dA, 'lust', s.lustFulfillPerInteract);
     this.ctx.bus.emit({ type: 'social', eid: a, target: b, tone, topic: topic ?? undefined });
     if (this.ctx.rng.next() < s.logChance || tone !== 'neutral') {
       this.ctx.logEvent(`💬 #${a} ${line} #${b}${topic ? `（${topic}）` : ''}`);

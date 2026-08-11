@@ -1838,3 +1838,43 @@ describe('SIZ 负重（COC §3 属性全用途）', () => {
     expect(gain).toBeLessThanOrEqual(4); // 小 SIZ 搬不动大产量
   });
 });
+
+describe('七宗罪全途径（色欲/嫉妒满足）', () => {
+  it('色欲：正向社交互动满足 lust', () => {
+    const sim = new Sim({ seed: 41, pawnCount: 3 });
+    const a = sim.pawns[0];
+    const st = sim.pawnStates.get(a)!;
+    st.desires = { gluttony: 50, sloth: 50, greed: 50, envy: 50, pride: 50, wrath: 50, lust: 50 };
+    // 把 a 与 b 摆一起，mood 调高（正向基调），强制触发互动
+    const b = sim.pawns[1];
+    const pB = sim.pawnPositions.get(b)!;
+    sim.pawnPositions.set(a, { x: pB.x + 1, y: pB.y });
+    sim.setPosition(a, { x: pB.x + 1, y: pB.y });
+    sim.setNeeds(a, { food: 100, rest: 100, mood: 90, san: 100 });
+    sim.setNeeds(b, { food: 100, rest: 100, mood: 90, san: 100 });
+    const before = st.desires.lust;
+    // 足够多的步数：冷却(15s)过后会互动（tickInterval 2s，相遇距离内）
+    for (let i = 0; i < 200; i++) sim.step(0.1);
+    expect(st.desires.lust).toBeGreaterThan(before); // 色欲被社交满足
+  });
+
+  it('嫉妒：存在更强同伴时完成劳动满足 envy', () => {
+    const sim = new Sim({ seed: 42, pawnCount: 2 });
+    const a = sim.pawns[0];
+    const st = sim.pawnStates.get(a)!;
+    st.desires = { gluttony: 50, sloth: 50, greed: 50, envy: 50, pride: 50, wrath: 50, lust: 50 };
+    // 同伴 b 更强（总技能更高）
+    const b = sim.pawns[1];
+    sim.pawnStates.get(b)!.skills = { work: 100, fight: 100, craft: 100, social: 100, faith: 100 };
+    const before = st.desires.envy;
+    // 完成一次劳动（work_completed 事件直接触发）
+    sim.bus.emit({ type: 'work_completed', eid: a, work: 'chop', success: true, x: 0, y: 0 });
+    expect(st.desires.envy).toBeGreaterThan(before); // 嫉妒被劳动满足
+    // 若自己是最强的：无嫉妒对象，不满足
+    const c = sim.pawnStates.get(a)!;
+    c.desires!.envy = 50;
+    sim.pawnStates.get(b)!.skills = {};
+    sim.bus.emit({ type: 'work_completed', eid: a, work: 'chop', success: true, x: 0, y: 0 });
+    expect(c.desires!.envy).toBe(50);
+  });
+});

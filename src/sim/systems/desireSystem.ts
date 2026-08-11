@@ -13,7 +13,29 @@ export class DesireSystem implements GameSystem {
 
   constructor(private ctx: SimContext) {}
 
-  init(_bus: EventBus): void {}
+  init(bus: EventBus): void {
+    // 嫉妒满足（七宗罪全途径）：劳动完成时，若存在比自己更强的同伴 → 满足嫉妒（攀比驱动）
+    // 更强 = 总技能点更高（同伴是标杆；无人更强则无嫉妒对象）
+    bus.on('work_completed' as never, ((ev: { type: string; eid: number }) => {
+      if (ev.type !== 'work_completed') return;
+      const st = this.ctx.pawnStates.get(ev.eid);
+      if (!st?.desires) return;
+      const mine = this.skillTotal(ev.eid);
+      for (const other of this.ctx.pawnList) {
+        if (other === ev.eid) continue;
+        if (this.skillTotal(other) > mine) {
+          fulfill(st.desires, 'envy', this.ctx.tuning.desire.envyFulfillPerWork);
+          return;
+        }
+      }
+    }) as never);
+  }
+
+  // 总技能点（嫉妒标杆：同伴实力）
+  private skillTotal(eid: number): number {
+    const skills = this.ctx.pawnStates.get(eid)?.skills ?? {};
+    return Object.values(skills).reduce((sum, v) => sum + (v ?? 0), 0);
+  }
 
   update(dt: number): void {
     const d = this.ctx.tuning.desire;

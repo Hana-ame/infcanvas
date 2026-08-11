@@ -111,7 +111,8 @@ export interface CombatTuning {
 }
 
 export interface SocialTuning {
-  tickInterval: number;    // 全系统社交节流（秒）
+  tickInterval: number;
+  lustFulfillPerInteract: number; // 色欲满足：一次成功社交互动 +此值（七宗罪全途径）    // 全系统社交节流（秒）
   meetDist: number;        // 相遇距离（相邻才算）
   interactCdMin: number;   // 社交冷却下限
   interactCdMax: number;
@@ -156,7 +157,8 @@ export interface SocialTuning {
 }
 
 export interface DesireTuning {
-  initMin: number;         // 欲望初始满足度下限
+  initMin: number;
+  envyFulfillPerWork: number;   // 嫉妒满足：完成一次劳动 +此值（存在更强同伴时）         // 欲望初始满足度下限
   initRange: number;       // 欲望初始满足度随机区间
   sinInitMin: number;      // 罪孽先天倾向初始下限
   sinInitRange: number;    // 罪孽先天倾向初始随机区间
@@ -519,6 +521,7 @@ export const TUNING: TuningConfig = {
   },
   social: {
     tickInterval: 2,         // 全系统社交节流
+    lustFulfillPerInteract: 1, // 色欲满足：一次成功社交互动 +1
     meetDist: 1.6,           // 相遇距离
     interactCdMin: 15,
     interactCdMax: 25,
@@ -588,6 +591,7 @@ export const TUNING: TuningConfig = {
     wrathSmashDmg: 10,       // 砸建筑伤害
     wrathSpinMood: 5,        // 原地转圈心情
     lustMood: -2,            // 色欲/嫉妒/傲慢匮乏心情
+    envyFulfillPerWork: 2,   // 嫉妒满足：完成一次劳动 +2（存在更强同伴时）
   },
   faction: {
     warAt: -40,
