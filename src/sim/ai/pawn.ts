@@ -10,7 +10,7 @@ import { TRAITS, allTraits, type AttrKey, type TraitDef } from '../defs/traits';
 import { MARKOV_BIAS, SERIES_TO_DESIRE } from '../defs/behavior';
 import { TUNING, type PawnTuning, type DesireTuning, type TuningConfig } from '../defs/tuning';
 import { BASE_CARD_DEFS } from '../defs/cards';
-import { cardPredicateOf } from '../mods/registry';
+import { cardPredicateOf, weightRulesOf } from '../mods/registry';
 import { JOBS } from '../defs/jobs';
 
 export type SkillId = 'work' | 'fight' | 'social' | 'faith' | 'craft';
@@ -284,58 +284,9 @@ export function drawCards(pawn: PawnLike, rng: SimRng, n: number, ctx: CardConte
 }
 
 export function effectiveWeight(card: BehaviorCard, pawn: PawnLike, ctx?: CardContext): number {
+  // 权重合成流水线（数据驱动）：规则表（defs/weightRules.ts）按序调制，mod 可插入/替换
   let w = card.weight;
-  // 天赋权重倍率（表驱动：TraitDef.weightMuls[series]；mod 天赋也可声明自己的调制）
-  for (const id of pawn.dna.traits) {
-    const mul = TRAITS[id]?.weightMuls?.[card.series];
-    if (mul !== undefined) w *= mul;
-  }
-  // 欲望驱动：未满足的欲望 → 对应系列卡权重升高（DESIGN §3）
-  // 关联 = 卡声明 desire ?? 系列默认映射（可扩展不破坏）
-  const cardT = ctx?.view.tuning?.card;
-  if (ctx?.view.desiresOf && cardT) {
-    const desire = card.desire ?? ctx.view.desireOfSeries?.(card.series) ?? null;
-    if (desire) {
-      const d = ctx.view.desiresOf(ctx.eid);
-      if (d && d[desire] !== undefined) {
-        const hunger = 100 - d[desire];
-        if (hunger > cardT.desireHungerAt) w *= 1 + (hunger - cardT.desireHungerAt) / cardT.desireDriveDiv; // 匮乏 → 权重升
-      }
-    }
-  }
-  // 环境调制（DESIGN §6）：下雨/酷暑/严寒 → 户外工作低，娱乐高（倍率全读 tuning.card）
-  const env = ctx?.view.env;
-  if (env && cardT && ctx) {
-    const extreme = () => env.temperature > ctx.view.tuning!.env.hotAt || env.temperature < ctx.view.tuning!.env.coldAt;
-    if (card.series === 'work') {
-      if (env.raining) w *= cardT.envWorkRainMul;
-      if (extreme()) w *= cardT.envWorkExtremeMul;
-    } else if (card.series === 'leisure') {
-      if (env.raining) w *= cardT.envLeisureRainMul;
-    } else if (card.series === 'physio') {
-      if (extreme()) w *= cardT.envPhysioExtremeMul; // 极端天气更想进食/休息
-    }
-  }
-  // 马尔可夫偏置（DESIGN §6）：上一轮干了什么 → 本轮倾向（mods 注入可覆盖，未注入用内建表）
-  const bias = ctx?.view.markovBias ?? MARKOV_BIAS;
-  const last = ctx?.view.lastSeries;
-  if (last && bias?.[last]?.[card.series] !== undefined) {
-    w *= bias[last][card.series];
-  }
-  // 派系优先级（用户 Q8）：环境评估下达的工作优先指令，调制对应工作卡权重
-  const pri = ctx?.view.factionPriority?.[card.id];
-  if (pri !== undefined) w *= pri;
-  // 指派职业（Q10）：强制主导对应工作卡，其他工作卡权重压到极低（倍率读 tuning）
-  const job = ctx?.view.assignedJob;
-  if (job && cardT) {
-    const jobCard = ctx!.view.jobCards?.[job];
-    if (jobCard) {
-      w *= card.id === jobCard ? cardT.jobCardMul : cardT.jobOthersMul;
-    }
-  }
-  // 行为结果学习（EWA）：经验吸引 A → exp(βA) 权重倍率（1=无经验中性，>1 偏做，<1 回避）
-  const lean = ctx?.view.leanOf?.(ctx.eid, card.id);
-  if (lean !== undefined) w *= lean;
+  for (const rule of weightRulesOf()) w = rule.apply(w, card, pawn, ctx);
   return w;
 }
 

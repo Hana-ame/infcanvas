@@ -323,3 +323,10 @@ overrideTuning(patch: DeepPartial<TuningConfig>): this  // 覆盖平衡参数（
 - BehaviorSystem 从表装配（handler 指向类方法，bind 后注册）；mod 仍可 registerIntent/registerWork 扩展或**覆盖内置**（同 id 即替换）
 - `kind: 'instant' | 'ongoing'` 执行时机语义元数据（eat/rest/idle 即时，walkAndWork/heal/pray 持续）
 - 验证：表装配后进食行为不变 + 覆盖 idle 执行器生效（145/145 绿）
+
+### 10.7 权重调制规则流水线（defs/weightRules.ts）
+
+- effectiveWeight 拆成 7 条调制规则（天赋/欲望/环境/马尔可夫/派系/职业/EWA），`BUILTIN_WEIGHT_RULES` 表序 = 执行序
+- `registerWeightRule(rule, before?)` 插入（锚点语义同系统装配表）；`overrideWeightRule(id, apply)` 原地替换
+- 规则函数是"机制"，参数全读表/tuning；跨 Sim 实例共享（同谓词策略）；`weightRulesOf()` 供工厂遍历
+- 验证：夜晚恐惧规则插入生效 + 同锚点注册序执行（147/147 绿）

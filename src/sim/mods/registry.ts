@@ -20,6 +20,7 @@ import { MARKOV_BIAS as BUILTIN_MARKOV, SERIES_TO_DESIRE as BUILTIN_SERIES } fro
 import { JOBS as BUILTIN_JOBS } from '../defs/jobs';
 import { LEANS as BUILTIN_LEANS, type LeanDef, type LeanKey } from '../defs/leans';
 import { CARD_PREDICATES as BUILTIN_PREDICATES } from '../defs/cards';
+import { BUILTIN_WEIGHT_RULES, type WeightRule } from '../defs/weightRules';
 import type { CardContext } from '../ai/pawn';
 import { registerUnitLevel as _registerUnitLevel } from '../core/socialUnit';
 
@@ -47,6 +48,8 @@ export class ModRegistry {
   // 卡条件谓词表（行为树条件节点）：内置谓词 + mod 扩展。跨 Sim 实例共享
   // 公开 static：模块级查询函数 cardPredicateOf 与实例 registerPredicate 共用（跨 Sim 实例共享）
   static predicateStore: Map<string, (c: CardContext) => boolean> = new Map(Object.entries(BUILTIN_PREDICATES));
+  // 抽卡权重调制规则表（权重合成流水线）：规则顺序 = 执行顺序。跨 Sim 实例共享
+  static weightRuleStore: Map<string, WeightRule> = new Map(BUILTIN_WEIGHT_RULES.map((r) => [r.id, r]));
   events: ScriptedEvent[] = [];
   expansionPlans: ExpansionPlan[] = [];
   tuning: TuningConfig;
@@ -342,6 +345,25 @@ export class ModRegistry {
     return fn;
   }
 
+  // 权重调制规则注册（权重合成流水线）：插入内置规则之前（before 锚点）；缺省追加表尾
+  registerWeightRule(rule: WeightRule, before?: string): this {
+    if (ModRegistry.weightRuleStore.has(rule.id)) throw new Error(`mod: 权重规则 "${rule.id}" 已存在，请用不同 id`);
+    const rules = [...ModRegistry.weightRuleStore.values()];
+    const idx = before ? rules.findIndex((r) => r.id === before) : -1;
+    if (before && idx >= 0) rules.splice(idx, 0, rule);
+    else rules.push(rule);
+    ModRegistry.weightRuleStore = new Map(rules.map((r) => [r.id, r]));
+    return this;
+  }
+
+  // 权重规则替换（保持位置）：mod 调整内置规则的行为（如改天赋倍率的合成方式）
+  overrideWeightRule(id: string, apply: WeightRule['apply']): this {
+    const old = ModRegistry.weightRuleStore.get(id);
+    if (!old) throw new Error(`mod: 覆盖目标权重规则 "${id}" 不存在，请先 registerWeightRule`);
+    ModRegistry.weightRuleStore.set(id, { ...old, apply });
+    return this;
+  }
+
   // 阶段钩子：check 流程 beforeRoll 等（mod 可插入）
   registerHook(stage: string, fn: (ctx: HookContext) => void): this {
     if (!this.hooks.has(stage)) this.hooks.set(stage, []);
@@ -388,4 +410,9 @@ export function cardPredicateOf(id: string): (c: CardContext) => boolean {
   const fn = ModRegistry.predicateStore.get(id);
   if (!fn) throw new Error(`mod: 条件谓词 "${id}" 未注册，请先用 registerPredicate 注册`);
   return fn;
+}
+
+// 权重规则流水线查询（effectiveWeight 合成用；规则顺序 = 表序，跨 Sim 实例共享）
+export function weightRulesOf(): WeightRule[] {
+  return [...ModRegistry.weightRuleStore.values()];
 }

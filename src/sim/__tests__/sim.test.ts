@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { Sim } from '../sim';
 import { SimRng } from '../core/rng';
-import { generateDna, initSlots, drawCards, pickBest, BASE_CARDS, type BehaviorCard } from '../ai/pawn';
+import { generateDna, initSlots, drawCards, pickBest, effectiveWeight, BASE_CARDS, type BehaviorCard } from '../ai/pawn';
 import type { Dna } from '../ai/pawn';
 import { World } from '../core/world';
 import { findPath } from '../core/pathfinding';
@@ -1757,5 +1757,47 @@ describe('意图执行器表（defs/executors.ts）', () => {
     for (let i = 0; i < 400 && hits === 0; i++) sim.step(1);
     expect(hits).toBeGreaterThan(0);
     expect(sim.pawnStates.get(sim.pawns[0])!.job).toBe('发呆中');
+  });
+});
+
+describe('权重调制规则流水线（defs/weightRules.ts）', () => {
+  it('mod 插入规则：夜晚工作卡权重×0.5（before 锚点）', () => {
+    const sim = new Sim({ seed: 21, pawnCount: 1, mods: (m) => {
+      m.registerWeightRule({
+        id: 'nightFear', label: '夜晚恐惧',
+        apply(w, _card, _pawn, ctx) {
+          if (ctx?.view.isNight()) return w * 0.5;
+          return w;
+        },
+      }, 'markov'); // 插在马尔可夫偏置之前
+    } });
+    const chop = BASE_CARDS.find((c) => c.id === 'chop')!;
+    const st = sim.pawnStates.get(sim.pawns[0])!;
+    const ctx = { eid: sim.pawns[0], view: sim } as never;
+    // 正午（dayTime 0.5）：白天权重；nightStart+0.1：夜晚权重
+    sim.dayTime = 0.5;
+    const wDay = effectiveWeight(chop, st, ctx);
+    sim.dayTime = sim.tuning.env.nightStart + 0.1;
+    const wNight = effectiveWeight(chop, st, ctx);
+    expect(wNight).toBeCloseTo(wDay * 0.5, 5); // 夜晚恐惧规则生效（其余规则两侧一致）
+  });
+
+  it('mod 插入规则跑在指定锚点之前（相对顺序生效）', () => {
+    const order: string[] = [];
+    const sim = new Sim({ seed: 22, pawnCount: 1, mods: (m) => {
+      m.registerWeightRule({
+        id: 'probeA', label: '探针A',
+        apply(w, _card, _pawn, _ctx) { order.push('probeA'); return w; },
+      }, 'markov');
+      m.registerWeightRule({
+        id: 'probeB', label: '探针B',
+        apply(w, _card, _pawn, _ctx) { order.push('probeB'); return w; },
+      }, 'markov');
+    } });
+    const chop = BASE_CARDS.find((c) => c.id === 'chop')!;
+    const st = sim.pawnStates.get(sim.pawns[0])!;
+    effectiveWeight(chop, st, { eid: sim.pawns[0], view: sim } as never);
+    // 表序 = 执行序：同锚点按注册序先后执行
+    expect(order).toEqual(['probeA', 'probeB']);
   });
 });
