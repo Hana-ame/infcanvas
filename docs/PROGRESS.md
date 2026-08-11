@@ -49,11 +49,13 @@
 | 存档健壮性 | §5 | ✅ | save/load JSON-safe：slots 存卡 id 还原（不再存闭包）、load 重建成员归属防假团灭、修复重建时 splice 跳杀残留 pawn |
 | P1 server 骨架 | §5/§8/§9 | ✅ | **权威在 server**：Node 复用 `src/sim`（零 DOM ✓ tsx 直跑）+ WSS 通道；协议 `src/shared/protocol.ts`（welcome 全量 tile+defs 只读表 / 2Hz snapshot / tileChanged+feed 增量 / C→S 复用 Sim.Command）；server：固定步进 accumulator + `addTileListener` 增量推送（world.setTile 相同值去重不触发）；client：`?remote=ws://…` 连入，`RemoteSim` 实现与本地 Sim 同构读取面（world/pawns/建筑/需求/属性/欲望/卡池/事件），HUD+Renderer 双端共用；命令经 WSS 上行、server 权威执行、快照回显（e2e：scripts/e2e/remote-viewer.mjs 8 断言全过）。**断线重连（补强）**：client 指数退避自动重连（1s→2s→4s…封顶 15s）+ 首连失败明确报错（红屏提示配置错误）+ 顶部 reconnect hint（`remote-hint`）；**看门狗兜底**：connected 后 5s 无任何消息即判定 server 假死/网络黑洞 → 主动断开重连（不依赖 TCP 超时，`RemoteSim.watchdogMs` 可调）；server kill/重启 e2e 冒烟页面自动恢复（reconnect.test.ts 6 用例） |
 | tick delta 增量 | §8/§9 | ✅ | **快照增量（P2 第一块）**：`src/server/diff.ts` 纯函数对比相邻快照 → 只发变化（`DeltaMsg`）：pawn 按 eid 逐字段 diff（x/y/hp/job/needs/faith/skills/slots/desires…）、新 pawn 首现必带 attrs、死亡 removed+pawnList；建筑按 key(y*width+x) 对齐 diff hp、拆除 removed；hostiles/stockpile/buildQueue 整体覆盖；全局字段各自携带。server：500ms 一轮 diff 广播 + 5s 全量对账（防增量丢失/相消漂移）+ 新连接先收全量底（广播过的快照即 diff 基线）；client：`applyDelta` 合并进 pawnCache/世界（读取面零改动，HUD/Renderer 无需区分）。12s e2e 实测 delta 26 帧 vs snapshot 4 帧（带宽 -90%）。测试：diff.test.ts 7 用例 + reconnect.test.ts applyDelta 1 用例 + scripts/e2e/remote-delta.mjs（帧构成/时间/位置断言） |
+| 渲染插值 | §1/§8 | ✅ | **位置插值（渲染平滑）**：delta 500ms 一跳 → 渲染层 `interpPos`（pawn + 敌对）按 sim 时间线性插值（段起终点 + t0/t1，k 线性收敛）；`RemoteSim.renderNow()`：**播放时钟**——权威 t 锚定墙钟 + 帧间 extrapolate（speed 加权，paused 冻结），否则 time 只在消息到达时跳变、插值恒 k=1 失效；本地模式同样走插值（每 tick 段极短 ≈ 贴合真实）。顺带修复：死亡/重生 pawn 的渲染残留清理（delta 下 removed 广播后 sprite 及时移除，本地模式同受益）。e2e：scripts/e2e/remote-interp.mjs 采样 60 帧 sprite 位置出现 6-13 个渐进中间值（非 48px 跳变） |
 | LLM 慢决策层 | §6/§10 | ✅ | **`LLM_ENDPOINT` 环境变量即启用**（OpenAI 兼容 chat completions）：`src/server/llm.ts` 预取模型（后台拉取 → 事件队列 → EventSystem 同步消费，失败指数退避降级确定性）；LLM 输出 JSON schema（name/text/effects）→ 白名单执行器（resource/mood/hp/recruit，数值钳制，**不进选择链路** ✓ DESIGN §6）；世界摘要随请求携带；`SimOptions.eventProvider` 构造注入。冒烟：mock LLM → server → feed 广播 `🎁 获得 ore 10 ✨ 星陨之夜` |
+| 命令权威校验 | §8/§9 | ✅ | **联机安全（P2 前置）**：server `src/server/cmdValidate.ts` 把关上行命令——类型白名单/形状/坐标越界/建筑与职业存在性/`pawnId` 存在性/令牌桶频率（30 条/s，per-client 连接级）；非法命令丢弃并记录（不踢连接）；client 的 build/oracle/assign/move 显式带 pawnId（观察模式 server 无 selected 镜像）+ sim.issueCommand 的 assign 分支支持 pawnId。测试：cmdValidate.test.ts 5 用例 + viewer e2e 9 断言（build 回显 / move 指挥位移） |
 
 ## 待办 / 差距
 
-> 旧条目若已在上表 ✅ 则移除；以下为当前真实差距（按优先级排序，2026-08-09 核）。
+> 旧条目若已在上表 ✅ 则移除；以下为当前真实差距（按优先级排序，2026-08-10 核）。
 
 | 项 | 目标（DESIGN） | 差距 |
 |---|---|---|
@@ -67,7 +69,7 @@
 | LLM 层 | §6 | ✅ **已落地**：server `LLM_ENDPOINT` 即启用（OpenAI 兼容），预取+白名单效果+降级（见上表）；剩余：真实 LLM 冒烟（本机无出网 key）、provider 频率分级（付费/免费，DESIGN §10）、LLM 叙述进"历史/记忆"而非仅 feed |
 | server 增量优化 | §8 | P2 继续 | ✅ **tick delta 已落地**（500ms 增量 + 5s 对账，见上表）；剩余：实体事件化推送、chunk 按需、插值、兴趣管理、客户端权威提交验证待 P2 联机 |
 | mod 打包/沙箱 | §10 待定 | 远程 JS mod 已落地（`?mods=` + ESM default 导出，见 src/mods/demo-berry.ts）；打包格式（zip/远程 URL 批量）、服务端沙箱/信任模型待定 |
-| 联机 | §8 | P2：WSS 协议、多客户端同步、兴趣管理、持久化、鉴权 |
+| 联机 | §8 | P2：WSS 协议、多客户端同步、兴趣管理、持久化、鉴权 | ✅ 命令权威校验已提前（见上表）：形状/范围/pawnId/频率把关 + e2e 断言；剩余：多客户端、兴趣管理、持久化、鉴权 |
 
 ## 技术栈
 

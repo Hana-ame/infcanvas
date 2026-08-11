@@ -52,4 +52,41 @@ export const tests = [
       ok('server 时间推进（快照流速）', t2 > t1, `t ${t1.toFixed(1)} → ${t2.toFixed(1)}`);
     },
   },
+  {
+    name: 'move 命令上行（显式 pawnId）→ pawn 趋近目标（快照回显）',
+    fn: async ({ page, ok }) => {
+      await page.goto('http://localhost:5177/?remote=ws://127.0.0.1:8080', { waitUntil: 'domcontentloaded', timeout: 20000 });
+      await page.waitForTimeout(2000);
+      // 取 server 快照里的 pawn id（必须来自快照，不能用本地猜测）
+      const target = await page.evaluate(() => {
+        const s = window.__sim;
+        const eid = s.pawns[0];
+        const p = s.pawnProfile(eid);
+        const passable = (x, y) => s.mods.tiles[s.world.getTile(x, y)]?.passable === true
+          && ![...s.world.buildings.values()].some((b) => b.defId && ['wall', 'cave'].includes(b.defId) && b.x === x && b.y === y);
+        // 在 pawn 周围 6 格内选第一个可通行格（保证可达）
+        let goal = null;
+        for (let dx = -6; dx <= 6 && !goal; dx++) {
+          for (let dy = -6; dy <= 6; dy++) {
+            const x = Math.round(p.pos.x) + dx, y = Math.round(p.pos.y) + dy;
+            if (passable(x, y)) { goal = { x, y }; break; }
+          }
+        }
+        return { pawnId: eid, x: goal.x, y: goal.y, sx: p.pos.x, sy: p.pos.y };
+      });
+      // 连发 3 次（间隔 1s）：紧急需求（饥饿/疲惫）会吞掉个别命令，重发保证命中执行窗口
+      for (let k = 0; k < 3; k++) {
+        await page.evaluate(({ pawnId, x, y }) => {
+          window.__sim.issueCommand({ type: 'move', x, y, pawnId });
+        }, target);
+        await page.waitForTimeout(1000);
+      }
+      await page.waitForTimeout(2000);
+      const res = await page.evaluate(({ pawnId, sx, sy }) => {
+        const pos = window.__sim.pawnPositions.get(pawnId);
+        return { moved: Math.hypot(pos.x - sx, pos.y - sy), d: Math.hypot(pos.x - sx, pos.y - sy) };
+      }, target);
+      ok('server 执行 move（显式 pawnId 指挥）', res.moved > 0.8, `位移 ${res.d.toFixed(1)} 格`);
+    },
+  },
 ];

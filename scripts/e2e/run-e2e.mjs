@@ -43,8 +43,20 @@ for (const test of mod.tests) {
   try {
     await test.fn({ page, ok });
   } catch (e) {
-    failed++;
-    console.log('  [FAIL] 异常:', String(e).slice(0, 400));
+    // 环境噪音：dev 阶段外部文件变化会触发 vite full-reload 销毁页面上下文 —— 重试一次
+    if (String(e).includes('Execution context was destroyed') || String(e).includes('navigation')) {
+      await page.close();
+      const retryPage = await ctx.newPage();
+      try {
+        await test.fn({ page: retryPage, ok });
+      } catch (e2) {
+        failed++;
+        console.log('  [FAIL] 异常:', String(e2).slice(0, 400));
+      }
+    } else {
+      failed++;
+      console.log('  [FAIL] 异常:', String(e).slice(0, 400));
+    }
   }
   await ctx.close();
 }

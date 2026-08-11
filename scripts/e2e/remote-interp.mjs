@@ -26,12 +26,21 @@ export const tests = [
     fn: async ({ page, ok }) => {
       await startVite();
       await page.goto(`http://localhost:${VITE_PORT}/?remote=ws://127.0.0.1:${PORT}`, { waitUntil: 'domcontentloaded', timeout: 20000 });
-      await sleep(6000); // 等开局动作展开（伐木/走动）
+      // 等就绪；vite HMR 偶发整页 reload → 导航后重新等待（最多 40s）
+      const t0 = Date.now();
+      while (Date.now() - t0 < 40000) {
+        try {
+          await page.waitForFunction(() => window.__sim && window.__renderer && window.__sim.status === 'connected', { timeout: 10000 });
+          break;
+        } catch {
+          await sleep(1500);
+        }
+      } // 等开局动作展开（伐木/走动）
       // 找一个正在移动的 pawn（真实位置跨帧变化），采样其 sprite canvas 坐标
       // 轮询等待「有 pawn 在移动」（开局动作多样化，最长等 25s）
-      const t0 = Date.now();
+      const tDead = Date.now();
       let moving = [];
-      while (Date.now() - t0 < 25000 && moving.length === 0) {
+      while (Date.now() - tDead < 25000 && moving.length === 0) {
         moving = await page.evaluate(async () => {
           const rs = window.__sim;
           await new Promise((r) => setTimeout(r, 700));
