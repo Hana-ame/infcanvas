@@ -8,6 +8,7 @@ import { findPath } from '../core/pathfinding';
 import { BUILDINGS } from '../defs';
 import type { GameSystem } from '../systems/registry';
 import { spawnWildCamp } from '../defs/events';
+import { carryCapOf, capGainTo } from '../systems/gatherSystem';
 import berryMod from '../../mods/demo-berry';
 import { adjustOpinion, UNIT_CAPACITY, type SocialUnit } from '../core/socialUnit';
 
@@ -1799,5 +1800,41 @@ describe('权重调制规则流水线（defs/weightRules.ts）', () => {
     effectiveWeight(chop, st, { eid: sim.pawns[0], view: sim } as never);
     // 表序 = 执行序：同锚点按注册序先后执行
     expect(order).toEqual(['probeA', 'probeB']);
+  });
+});
+
+describe('SIZ 负重（COC §3 属性全用途）', () => {
+  it('负重上限：SIZ 决定一次搬回量', () => {
+    const g = { carryBase: 4, carryPerSiz: 0.5, strBase: 40 };
+    expect(carryCapOf(g, 20)).toBe(4);   // 小个子：基数
+    expect(carryCapOf(g, 40)).toBe(4);   // 临界
+    expect(carryCapOf(g, 60)).toBe(14);  // 大个子：4 + 20×0.5
+    expect(carryCapOf(g, 90)).toBe(29);
+    // 钳制：产出不超上限，保底 1
+    expect(capGainTo(15, 4)).toBe(4);
+    expect(capGainTo(15, 24)).toBe(15);
+    expect(capGainTo(0, 4)).toBe(0);
+    expect(capGainTo(15, 0)).toBe(1);
+  });
+
+  it('集成：小 SIZ 采矿一轮产出被负重钳制（≤4）', () => {
+    const sim = new Sim({ seed: 33, pawnCount: 1 });
+    const eid = sim.pawns[0];
+    const st = sim.pawnStates.get(eid)!;
+    st.dna.siz = 20; // 负重 4
+    // 找一块矿脉 tile
+    let ox = -1, oy = -1;
+    outer: for (let y = 0; y < sim.world.height; y++) {
+      for (let x = 0; x < sim.world.width; x++) {
+        if (sim.world.getTileDef(x, y).mineral) { ox = x; oy = y; break outer; }
+      }
+    }
+    expect(ox).toBeGreaterThan(-1);
+    const before = sim.stockpile.ore;
+    st.mining = { x: ox, y: oy, progress: 9999 }; // 立即完成一轮
+    sim.step(0.1);
+    const gain = sim.stockpile.ore - before;
+    expect(gain).toBeGreaterThanOrEqual(1);
+    expect(gain).toBeLessThanOrEqual(4); // 小 SIZ 搬不动大产量
   });
 });

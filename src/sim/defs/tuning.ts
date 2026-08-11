@@ -48,6 +48,8 @@ export interface GatherTuning {
   toolBonus: number;
   strBonusPerPoint: number;
   strBase: number;
+  carryBase: number;      // 负重基数：一次采集搬回量下限（SIZ ≤ carryBase 时）
+  carryPerSiz: number;    // 负重增量：每点 SIZ 提高的搬回量（SIZ 全属性用途，COC §3）
   caveMoodWin: number;     // 矿洞开采成功心情
   caveMoodLose: number;
   mineMoodWin: number;
@@ -457,6 +459,8 @@ export const TUNING: TuningConfig = {
     toolBonus: 1.3,
     strBonusPerPoint: 0.01,
     strBase: 40,
+    carryBase: 4,
+    carryPerSiz: 0.5,
     caveMoodWin: 2,
     caveMoodLose: -2,
     mineMoodWin: 3,

@@ -2,6 +2,17 @@
 import type { GameSystem } from './registry';
 import type { SimContext } from './context';
 import type { EventBus } from '../core/events';
+import type { GatherTuning } from '../defs/tuning';
+
+// SIZ 负重上限（COC §3 体型 → 负重）：一次采集搬回量
+export function carryCapOf(g: Pick<GatherTuning, 'carryBase' | 'carryPerSiz' | 'strBase'>, siz: number): number {
+  return g.carryBase + Math.max(0, siz - g.strBase) * g.carryPerSiz;
+}
+
+// 产出钳制：不低于 1（保底一次搬回一点），不高于负重上限
+export function capGainTo(raw: number, cap: number): number {
+  return Math.min(Math.max(0, raw), Math.max(1, Math.floor(cap)));
+}
 
 export class GatherSystem implements GameSystem {
   id = 'gather';
@@ -19,6 +30,13 @@ export class GatherSystem implements GameSystem {
       const dna = this.ctx.dnaOf(eid);
       return dna ? 1 + Math.max(0, dna.str - g.strBase) * g.strBonusPerPoint : 1;
     };
+    // SIZ 负重上限：一次搬回量（COC §3 体型 → 负重；与 STR 产出加成互补）
+    const carryOf = (eid: number): number => {
+      const dna = this.ctx.dnaOf(eid);
+      return dna ? carryCapOf(g, dna.siz) : g.carryBase;
+    };
+    // 产出钳制：gain = min(计算值, 负重上限)，向下取整
+    const capGain = (raw: number, eid: number): number => capGainTo(raw, carryOf(eid));
     for (const eid of this.ctx.pawnList) {
       const st = this.ctx.pawnStates.get(eid);
       if (!st) continue;
@@ -71,7 +89,7 @@ export class GatherSystem implements GameSystem {
           const dc = recipe?.dc ?? this.ctx.tuning.gather.harvestDc;
           const skill = recipe?.skill ?? this.ctx.tuning.gather.harvestSkill;
           const ev = this.ctx.rollEventSkill(eid, dc, skill);
-          const gain = Math.round((ev.success ? (recipe?.output.amount ?? this.ctx.tuning.gather.harvestYield) : (recipe?.failOutput?.amount ?? this.ctx.tuning.gather.harvestFailYield)) * toolBonus * strBonusOf(eid));
+          const gain = capGain(Math.round((ev.success ? (recipe?.output.amount ?? this.ctx.tuning.gather.harvestYield) : (recipe?.failOutput?.amount ?? this.ctx.tuning.gather.harvestFailYield)) * toolBonus * strBonusOf(eid)), eid);
           this.ctx.stockpile.ore += gain;
           this.ctx.growSkill(eid, skill); this.ctx.recordOutcome(eid, 'caveMine', ev.success ? gain : -gain);
           this.ctx.bus.emit({ type: 'resource_gained', eid, item: recipe?.output.item ?? this.ctx.tuning.gather.harvestItem, amount: gain });
@@ -93,7 +111,7 @@ export class GatherSystem implements GameSystem {
           const dc = hv?.dc ?? this.ctx.tuning.gather.harvestDc;
           const skill = hv?.skill ?? this.ctx.tuning.gather.harvestSkill;
           const ev = this.ctx.rollEventSkill(eid, dc, skill);
-          const gain = Math.round((ev.success ? (hv?.yieldSuccess ?? this.ctx.tuning.gather.harvestYield) : (hv?.yieldFail ?? this.ctx.tuning.gather.harvestFailYield)) * toolBonus * strBonusOf(eid));
+          const gain = capGain(Math.round((ev.success ? (hv?.yieldSuccess ?? this.ctx.tuning.gather.harvestYield) : (hv?.yieldFail ?? this.ctx.tuning.gather.harvestFailYield)) * toolBonus * strBonusOf(eid)), eid);
           this.ctx.stockpile.ore += gain;
           this.ctx.growSkill(eid, skill); this.ctx.recordOutcome(eid, 'mine', ev.success ? gain : -gain);
           this.ctx.bus.emit({ type: 'resource_gained', eid, item: hv?.product ?? this.ctx.tuning.gather.harvestItem, amount: gain });
@@ -116,7 +134,7 @@ export class GatherSystem implements GameSystem {
           const dc = h?.dc ?? this.ctx.tuning.gather.chopDc;
           const skill = h?.skill ?? this.ctx.tuning.gather.chopSkill;
           const ev = this.ctx.rollEventSkill(eid, dc, skill);
-          const gain = Math.round((ev.success ? (h?.yieldSuccess ?? this.ctx.tuning.gather.chopYield) : (h?.yieldFail ?? this.ctx.tuning.gather.chopFailYield)) * toolBonus * strBonusOf(eid));
+          const gain = capGain(Math.round((ev.success ? (h?.yieldSuccess ?? this.ctx.tuning.gather.chopYield) : (h?.yieldFail ?? this.ctx.tuning.gather.chopFailYield)) * toolBonus * strBonusOf(eid)), eid);
           this.ctx.stockpile.wood += gain;
           this.ctx.growSkill(eid, skill); this.ctx.recordOutcome(eid, 'chop', ev.success ? gain : -gain);
           this.ctx.bus.emit({ type: 'resource_gained', eid, item: h?.product ?? this.ctx.tuning.gather.chopItem, amount: gain });

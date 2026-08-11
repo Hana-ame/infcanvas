@@ -65,7 +65,7 @@
 | 丢失 chew：出生点/野营 'campfire'、派系掠夺者已数据化 | §7 | 出生建筑已读 `autobuild.starterBuilding`；`scripts.spawnWildCamp` 仍写死 'campfire'（语义上"野生营地=篝火"成立，暂留） |
 | 流言/对话完整 | §6 | 微互动已做（模板）；闲聊/深聊（引用记忆的 LLM 对话）、话题沿社交网络传播待 P1 |
 | 七宗罪欲望完整 | §3 欲望系统 | 贪婪途径（工作→satisfies 数据化）已通；色欲/嫉妒满足途径待设计（`DesireId` 闭合类型开放后 mod 可自建维度） |
-| COC 属性全用途 | §3 属性卡 | SIZ 负重、社交对抗（说服/传教已做对抗检定 APP/POW）——SIZ 负重未做 |
+| COC 属性全用途 | §3 属性卡 | ✅ **SIZ 负重已落地**（2026-08-12）：采集一次搬回量 = `carryBase + max(0, SIZ-strBase)×carryPerSiz`（tuning.gather，默认 4/0.5），矿洞/采矿/伐木产出统一钳制（保底 1），与 STR 产出加成互补；单测 + 集成测试（`carryCapOf`/`capGainTo`） |
 | LLM 层 | §6 | ✅ **已落地**：server `LLM_ENDPOINT` 即启用（OpenAI 兼容），预取+白名单效果+降级（见上表）；剩余：真实 LLM 冒烟（本机无出网 key）、provider 频率分级（付费/免费，DESIGN §10）、LLM 叙述进"历史/记忆"而非仅 feed |
 | server 增量优化 | §8 | P2 继续 | ✅ **tick delta 已落地**（500ms 增量 + 5s 对账，见上表）；剩余：实体事件化推送、chunk 按需、插值、兴趣管理、客户端权威提交验证待 P2 联机 |
 | mod 打包/沙箱 | §10 待定 | 远程 JS mod 已落地（`?mods=` + ESM default 导出，见 src/mods/demo-berry.ts）；打包格式（zip/远程 URL 批量）、服务端沙箱/信任模型待定 |
