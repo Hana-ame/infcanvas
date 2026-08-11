@@ -1922,7 +1922,7 @@ describe('流言沿社交网络传播（gossip spread）', () => {
     sim.setPosition(a, { x: pb.x + 1, y: pb.y });
     for (const eid of sim.pawns) sim.setNeeds(eid, { food: 100, rest: 100, mood: 95, san: 100 });
     let oldSpread = false;
-    const off = sim.bus.on('gossip_spread' as never, (ev: { topic: string }) => { if (ev.topic === '旧闻') oldSpread = true; });
+    const off = sim.bus.on('gossip_spread' as never, ((ev: { topic: string }) => { if (ev.topic === '旧闻') oldSpread = true; }) as never);
     for (let i = 0; i < 600; i++) sim.step(0.1);
     off();
     expect(oldSpread).toBe(false); // 过期八卦不被转述（新话题传播属正常，不在此断言范围）
