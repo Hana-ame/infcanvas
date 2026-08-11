@@ -4,6 +4,7 @@ import { SimRng } from '../core/rng';
 import { generateDna, initSlots, drawCards, pickBest, BASE_CARDS, type BehaviorCard } from '../ai/pawn';
 import type { Dna } from '../ai/pawn';
 import { World } from '../core/world';
+import { findPath } from '../core/pathfinding';
 import { BUILDINGS } from '../defs';
 import type { GameSystem } from '../systems/registry';
 import { spawnWildCamp } from '../defs/events';
@@ -1587,5 +1588,123 @@ describe('存档 JSON 往返（save/load 修复）', () => {
     expect(sim2.playerUnitId).toBe(pid);
     const unit = sim2.socialUnits.units.get(pid!)!;
     expect(unit.members.length).toBeGreaterThan(0);
+  });
+});
+
+describe('卡条件谓词表（行为树条件节点，CARD_PREDICATES）', () => {
+  const makeView = (sim: Sim, hasCampfire = true) => ({
+    hasCampfire: () => hasCampfire,
+    hasCave: () => false,
+    buildQueueCount: 0,
+    stockpile: sim.stockpile,
+    isNight: () => false,
+    needsOf: () => null,
+    healthOf: () => null,
+  });
+
+  it('内置谓词声明式组合：pray 仅在 campfire 存在时可抽', () => {
+    const sim = new Sim({ seed: 41, pawnCount: 2 });
+    const pray = sim.mods.cards.get('pray')!; // 基础卡表（声明式谓词已由工厂组合进 condition）
+    const ctx = { eid: sim.pawns[0], view: makeView(sim, false) } as never;
+    expect(pray.condition!(ctx)).toBe(false); // 无 campfire → 谓词 false
+    expect(pray.condition!({ eid: sim.pawns[0], view: makeView(sim, true) } as never)).toBe(true);
+  });
+
+  it('mod 可 registerPredicate 扩展谓词并用于新卡（行为树条件节点可扩展）', () => {
+    const sim = new Sim({ seed: 42, pawnCount: 2, mods: (m) => {
+      m.registerPredicate('stockpileHasOre', (c) => c.view.stockpile.ore > 0);
+      m.registerCardDef({
+        id: 'oreCelebrate', name: '庆贺', series: 'leisure', weight: 10,
+        when: ['stockpileHasOre'],
+        utilityFixed: 50,
+        action: 'idle', label: '庆贺',
+      });
+    } });
+    const card = sim.mods.cards.get('oreCelebrate')!;
+    const ctx = { eid: sim.pawns[0], view: makeView(sim) } as never;
+    expect(card.condition!(ctx)).toBe(false); // 初始库存 0 矿：谓词 false
+    sim.stockpile.ore = 3;
+    expect(card.condition!(ctx)).toBe(true);
+    // 未注册谓词：工厂构建时报错（拼错 id 立即暴露）
+    expect(() => sim.mods.registerCardDef({
+      id: 'bad', name: '坏卡', series: 'leisure', weight: 1,
+      when: ['noSuchPredicate'],
+      utilityFixed: 1, action: 'idle', label: '坏卡',
+    })).toThrow(/未注册/);
+  });
+});
+
+describe('数据驱动系统装配表（defs/systems.ts 逻辑组件层）', () => {
+  it('mod 声明系统按 before 锚点插入执行顺序', () => {
+    const sim = new Sim({ seed: 1, pawnCount: 2, mods: (m) => {
+      m.registerSystemDef({
+        id: 'probe', label: '探针', category: 'ai', before: 'social',
+        ctor: () => ({ id: 'probe', update() { /* 无副作用：只验证装配 */ } }),
+      });
+    } });
+    const ids = [...sim.systemIds];
+    // 基线表顺序（表序 = 执行序），probe 插在 social 前
+    const baseline = ['needs', 'san', 'desire', 'behavior', 'socialUnit', 'social', 'gather', 'build', 'farm', 'craft', 'repair', 'raid', 'population', 'events', 'autobuild'];
+    const inserted = ids.findIndex((id) => id === 'probe');
+    expect(inserted).toBeGreaterThan(-1);
+    expect(ids.filter((id) => baseline.includes(id))).toEqual(baseline); // 基线相对顺序不变
+    expect(ids[inserted + 1]).toBe('social'); // 锚点生效
+    sim.step(1); // 装配后正常跑不崩
+  });
+
+  it('无锚点时追加到表尾', () => {
+    const sim = new Sim({ seed: 2, pawnCount: 2, mods: (m) => {
+      m.registerSystemDef({
+        id: 'tail-probe', label: '尾探针', category: 'world',
+        ctor: () => ({ id: 'tail-probe', update() { } }),
+      });
+    } });
+    expect(sim.systemIds[sim.systemIds.length - 1]).toBe('tail-probe');
+  });
+
+  it('mod 可替换核心行为/单位系统（单例回填）', () => {
+    const sim = new Sim({ seed: 3, pawnCount: 2, mods: (m) => {
+      m.registerSystemDef({
+        id: 'behavior', label: '替换行为', category: 'ai',
+        // 替换行为系统的契约：需实现 intent/work 注册（Sim 单例回填后调用）
+        ctor: (s) => ({ id: 'behavior', update() { }, registerIntent() { }, registerWork() { } }),
+      });
+      // mod 意图仍应挂到新实例（回填单例）
+      m.registerIntent('dance', () => ({ done: true } as never));
+    } });
+    expect(sim.systemIds[3]).toBe('behavior');
+    sim.step(1); // 不崩，且 intent 注册不抛（实例回填成功）
+  });
+});
+
+describe('寻路策略表（tuning.path 参数数据化）', () => {
+  it('默认 chebyshev 下可达路径；maxIter 过小返回空（策略钳制生效）', () => {
+    const sim = new Sim({ seed: 7, pawnCount: 1 });
+    const eid = sim.pawns[0];
+    const pos = sim.pawnPositions.get(eid)!;
+    // 找可达目标点（避开树/矿/建筑）
+    let target = { x: 0, y: 0 };
+    outer: for (let r = 1; r <= 6; r++) {
+      for (let dx = -r; dx <= r; dx++) {
+        for (let dy = -r; dy <= r; dy++) {
+          const x = pos.x + dx, y = pos.y + dy;
+          if (sim.world.inBounds(x, y) && sim.world.isPassable(x, y)) { target = { x, y }; break outer; }
+        }
+      }
+    }
+    const p0 = findPath(sim.world, pos.x, pos.y, target.x, target.y, sim.tuning.path);
+    expect(p0.length).toBeGreaterThan(1); // 默认 chebyshev 走通
+    // maxIter 钳制：迭代上限不足 → 返回空（策略生效）
+    const p1 = findPath(sim.world, pos.x, pos.y, target.x, target.y, { maxIter: 5 });
+    expect(p1.length).toBe(0);
+    // 换 manhattan/euclidean 启发式：仍可达（策略表切换不崩）
+    for (const heuristic of ['manhattan', 'euclidean'] as const) {
+      const p = findPath(sim.world, pos.x, pos.y, target.x, target.y, { heuristic });
+      expect(p.length).toBeGreaterThan(1);
+    }
+    // sim.moveTo 装配读 tuning.path（mod 覆盖即时生效）
+    sim.mods.overrideTuning({ path: { heuristic: 'euclidean' } });
+    sim.moveTo(eid, target.x, target.y);
+    expect(sim.pawnStates.get(eid)!.path.length).toBeGreaterThan(1);
   });
 });

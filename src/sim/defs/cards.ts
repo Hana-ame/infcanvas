@@ -1,8 +1,16 @@
 // 基础卡数据表（行为卡，数据驱动）—— 卡 = 权重/阈值/收益/意图全声明，
-// condition/utility 由共享工厂生成（needAt/utilityBase/utilityFixed/utilityPerQueue），
-// 仅剩的代码是 decide 无法数据化的机制函数（hasCave/hasCampfire 等条件）
+// condition/utility 由共享工厂生成（needAt/utilityBase/utilityFixed/utilityPerQueue/when），
+// when 声明式条件谓词（见 CARD_PREDICATES 表），mod 可 registerPredicate 扩展新谓词
 // mod 经 ModRegistry.registerCard / overrideDef('card') 增改
-import type { BehaviorCardDef } from '../ai/pawn';
+import type { BehaviorCardDef, CardContext } from '../ai/pawn';
+
+// 条件谓词表（行为树条件节点）：卡用 when: ['hasCave'] 声明，工厂查表组合 AND
+// 机制钩子集中于此：代码只写一次，卡表纯声明 → 卡片 JSON-safe（load 还原不再依赖函数序列化）
+export const CARD_PREDICATES: Record<string, (c: CardContext) => boolean> = {
+  hasCave: (c) => c.view.hasCave(),
+  hasCampfire: (c) => c.view.hasCampfire(),
+  buildQueue: (c) => c.view.buildQueueCount > 0,
+};
 
 export const BASE_CARD_DEFS: BehaviorCardDef[] = [
   {
@@ -34,21 +42,21 @@ export const BASE_CARD_DEFS: BehaviorCardDef[] = [
   {
     id: 'caveMine', name: '矿洞采掘', series: 'work', weight: 6,
     utilityFixed: 28,
-    condition: (c) => c.view.hasCave(),
+    when: ['hasCave'],
     action: 'walkAndWork', workType: 'caveMine', label: '矿洞采掘',
     satisfies: [{ desire: 'greed', amount: 2 }],
   },
   {
     id: 'build', name: '建造', series: 'work', weight: 5,
     utilityPerQueue: 20,
-    condition: (c) => c.view.buildQueueCount > 0,
+    when: ['buildQueue'],
     action: 'walkAndWork', workType: 'build', label: '建造',
     satisfies: [{ desire: 'greed', amount: 1.5 }],
   },
   {
     id: 'pray', name: '祈祷', series: 'religion', weight: 1,
     utilityFixed: 6,
-    condition: (c) => c.view.hasCampfire(),
+    when: ['hasCampfire'],
     action: 'pray', label: '祈祷',
     satisfies: [{ desire: 'pride', amount: 2 }],
   },

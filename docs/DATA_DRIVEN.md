@@ -277,3 +277,34 @@ overrideTuning(patch: DeepPartial<TuningConfig>): this  // 覆盖平衡参数（
 
 - `npm run typecheck` 0 错；`npm test` 136/136 绿
 - 测试稳定性修正：markov 偏置测试原卡池饱和（idle 必中，偏置被吞）→ 拷贝 base 卡压权至同阶；preaching 测试 seed 52 恰踩随机序列死角 → seed 55（同场景语义不变）
+
+## 10. 逻辑组件层（数据驱动第二阶段，2026-08-11）
+
+数据表（§9）之上，把「逻辑装配」也数据化：表 = TS 模块（函数合法），mod 启动时插入。
+
+### 10.1 系统装配表（defs/systems.ts）
+
+- `SYSTEM_DEFS`：15 个系统按表序装配（执行顺序 = 表序），系统 id 即锚点
+- `SystemDef`：id/label/category/ctor（依赖注入 sim）+ `before?`（mod 插入锚点）
+- ModRegistry：`registerSystemDef(def)`（缺省追加表尾，`before` 指定插在某系统前）、旧式 `registerSystem(实例)` 兼容
+- 单例回填：替换 `behavior`/`socialUnit` 系统后，intent/work 注册与 bus 回调仍指向新实例
+- Sim 暴露 `systemIds` 只读视图（调试/工具/测试）
+
+### 10.2 卡条件谓词表（行为树条件节点）
+
+- `CARD_PREDICATES`（defs/cards.ts）：机制钩子集中一处（hasCave/hasCampfire/buildQueue），代码只写一次
+- 卡表纯声明：`when: ['hasCave', ...]`（AND 组合），与 needAt 阈值/自定义 condition 合并
+- 谓词跨实例共享（与 LEANS/DESIRES 同策略）：`registerPredicate(id, fn)` 扩展，新谓词可被任意卡引用
+- 未注册谓词 → 工厂报错（拼错 id 立即暴露）
+- `registerCardDef(def)`：纯数据 def（needAt/when/utility*）→ 工厂生成，mod 写卡无需函数
+
+### 10.3 寻路策略表（tuning.path）
+
+- 算法本体保留 A* 代码，策略参数数据化：`maxIter`/`darkCost`/`heuristic`
+- 启发式策略表（chebyshev 对角默认 / manhattan / euclidean）：换启发式 = 改表
+- sim.getPath 装配读 tuning.path；mod overrideTuning 即时生效
+
+### 10.4 验证
+
+- `npm run typecheck` 0 错；`npm test` 142/142 绿
+- 新测试：系统装配表（锚点插入/尾插/替换回填）、谓词表（内置组合/mod 扩展/未注册报错）、寻路策略（默认可达/maxIter 钳制/启发式切换）

@@ -10,6 +10,7 @@ import { TRAITS, allTraits, type AttrKey, type TraitDef } from '../defs/traits';
 import { MARKOV_BIAS, SERIES_TO_DESIRE } from '../defs/behavior';
 import { TUNING, type PawnTuning, type DesireTuning, type TuningConfig } from '../defs/tuning';
 import { BASE_CARD_DEFS } from '../defs/cards';
+import { cardPredicateOf } from '../mods/registry';
 import { JOBS } from '../defs/jobs';
 
 export type SkillId = 'work' | 'fight' | 'social' | 'faith' | 'craft';
@@ -107,13 +108,19 @@ export interface BehaviorCardDef {
   label: string;           // 显示的工作名
   satisfies?: { desire: DesireId; amount: number }[];
   desire?: DesireId;
-  condition?: (c: CardContext) => boolean; // needAt 之外的自定义条件
+  when?: string[]; // 声明式条件谓词（CARD_PREDICATES 表查，AND 组合；mod 可 registerPredicate 扩展）
+  condition?: (c: CardContext) => boolean; // needAt/when 之外的自定义条件
   extraUtility?: (c: CardContext) => number; // 叠加收益（与 need/queue 合并）
 }
 
 // 卡工厂：声明式数据 → 行为卡（condition/utility/decide 统一生成）
+// condition = when 谓词 AND 需求阈值 AND 自定义条件（全声明组合，谓词表集中机制钩子）
 export function cardFromDef(def: BehaviorCardDef): BehaviorCard {
-  let condition = def.condition;
+  const conds: ((c: CardContext) => boolean)[] = [];
+  if (def.when?.length) {
+    const preds = def.when.map((pid) => cardPredicateOf(pid));
+    conds.push((c) => preds.every((p) => p(c)));
+  }
   let utility: ((c: CardContext) => number) | undefined = def.utilityFixed !== undefined ? () => def.utilityFixed! : undefined;
   // 需求阈值：condition = 需求 < 阈值；utility = utilityBase - 需求值
   const needKey = def.needAt ? (Object.keys(def.needAt)[0] as 'food' | 'rest' | 'mood' | 'hp') : null;
@@ -123,17 +130,18 @@ export function cardFromDef(def: BehaviorCardDef): BehaviorCard {
       if (needKey === 'hp') return c.view.healthOf?.(c.eid)?.hp ?? 100;
       return c.view.needsOf(c.eid)?.[needKey] ?? 100;
     };
-    condition = condition ?? ((c) => readNeed(c) < at);
+    conds.push((c) => readNeed(c) < at);
     if (def.utilityBase !== undefined) {
       utility = (c) => def.utilityBase! - readNeed(c);
     }
   }
-  // 建造队列收益
+  // 建造队列收益（未声明条件时自带队列非空条件，向后兼容旧式卡）
   if (def.utilityPerQueue !== undefined) {
-    condition = condition ?? ((c) => c.view.buildQueueCount > 0);
+    if (!def.when && !def.condition) conds.push((c) => c.view.buildQueueCount > 0);
     utility = (c) => c.view.buildQueueCount * def.utilityPerQueue!;
   }
   if (!utility && def.extraUtility) utility = def.extraUtility;
+  const condition = conds.length > 0 ? (c: CardContext) => conds.every((f) => f(c)) : undefined;
   return {
     id: def.id, name: def.name, series: def.series, weight: def.weight,
     condition, utility,

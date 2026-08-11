@@ -6,9 +6,11 @@ import type { TileDef, BuildingDef, ItemDef } from '../defs';
 import type { EnemyDef } from '../defs/enemies';
 import type { RecipeDef } from '../defs/recipes';
 import type { TuningConfig } from '../defs/tuning';
-import type { BehaviorCard } from '../ai/pawn';
+import type { BehaviorCard, BehaviorCardDef } from '../ai/pawn';
+import { cardFromDef } from '../ai/pawn';
 import type { IntentExecutor, WorkExecutor } from '../systems/cardSystem';
 import type { GameSystem } from '../systems/registry';
+import type { SystemDef } from '../defs/systems';
 import type { ScriptedEvent } from '../systems/eventSystem';
 import type { ExpansionPlan } from '../systems/autonomousBuildSystem';
 import { DESIRES } from '../core/desires';
@@ -17,6 +19,8 @@ import { TRAITS as BUILTIN_TRAITS, type TraitDef } from '../defs/traits';
 import { MARKOV_BIAS as BUILTIN_MARKOV, SERIES_TO_DESIRE as BUILTIN_SERIES } from '../defs/behavior';
 import { JOBS as BUILTIN_JOBS } from '../defs/jobs';
 import { LEANS as BUILTIN_LEANS, type LeanDef, type LeanKey } from '../defs/leans';
+import { CARD_PREDICATES as BUILTIN_PREDICATES } from '../defs/cards';
+import type { CardContext } from '../ai/pawn';
 import { registerUnitLevel as _registerUnitLevel } from '../core/socialUnit';
 
 // 生命周期钩子上下文（step:before / step:after，见 sim.step）
@@ -40,10 +44,15 @@ export class ModRegistry {
   recipesMap = new Map<string, RecipeDef>();
   // 行为结果学习表（EWA）：per-key scale 归一化。跨 Sim 实例共享（与 DESIRES 同策略）
   private static leanStore: Map<LeanKey, LeanDef> = new Map(Object.entries(BUILTIN_LEANS));
+  // 卡条件谓词表（行为树条件节点）：内置谓词 + mod 扩展。跨 Sim 实例共享
+  // 公开 static：模块级查询函数 cardPredicateOf 与实例 registerPredicate 共用（跨 Sim 实例共享）
+  static predicateStore: Map<string, (c: CardContext) => boolean> = new Map(Object.entries(BUILTIN_PREDICATES));
   events: ScriptedEvent[] = [];
   expansionPlans: ExpansionPlan[] = [];
   tuning: TuningConfig;
   private systems: GameSystem[] = [];
+  // 数据驱动系统装配（逻辑组件层）：mod 声明系统表项，按 before 锚点插入执行顺序
+  private _systemDefs: SystemDef[] = [];
   private hooks = new Map<string, Array<(ctx: HookContext) => void>>();
   private cache = new Map<string, Record<string, unknown>>();
 
@@ -140,6 +149,11 @@ export class ModRegistry {
     this.assertNew('card', card.id, this.cards);
     this.cards.set(card.id, card);
     return this;
+  }
+
+  // 声明式卡注册（逻辑组件层）：纯数据 def（needAt/when/utility*）→ 工厂生成，mod 无需写函数
+  registerCardDef(def: BehaviorCardDef): this {
+    return this.registerCard(cardFromDef(def));
   }
 
   registerRecipe(def: RecipeDef): this {
@@ -262,6 +276,17 @@ export class ModRegistry {
     return this;
   }
 
+  // 数据驱动系统装配（逻辑组件层）：mod 声明系统表项，按 before 锚点插入执行顺序
+  registerSystemDef(def: SystemDef): this {
+    if (this._systemDefs.some((d) => d.id === def.id)) throw new Error(`mod: system "${def.id}" 已存在`);
+    this._systemDefs.push(def);
+    return this;
+  }
+
+  get systemDefs(): readonly SystemDef[] {
+    return this._systemDefs;
+  }
+
   // 新剧本事件（mod 玩法）：与内置事件同池，condition/cooldown/weight 生效
   registerEvent(ev: ScriptedEvent): this {
     if (this.events.some((e) => e.id === ev.id)) throw new Error(`mod: event "${ev.id}" 已存在`);
@@ -303,6 +328,20 @@ export class ModRegistry {
     return this;
   }
 
+  // 卡条件谓词注册（行为树条件节点）：卡 when: ['hasChurch'] → registerPredicate('hasChurch', ...)
+  registerPredicate(id: string, fn: (c: CardContext) => boolean): this {
+    if (ModRegistry.predicateStore.has(id)) throw new Error(`mod: 谓词 "${id}" 已存在，请用不同 id`);
+    ModRegistry.predicateStore.set(id, fn);
+    return this;
+  }
+
+  // 谓词查询（卡工厂组合条件用）；缺省抛错（拼错 id 立即暴露，提示注册）
+  cardPredicate(id: string): (c: CardContext) => boolean {
+    const fn = ModRegistry.predicateStore.get(id);
+    if (!fn) throw new Error(`mod: 条件谓词 "${id}" 未注册，请先用 registerPredicate 注册`);
+    return fn;
+  }
+
   // 阶段钩子：check 流程 beforeRoll 等（mod 可插入）
   registerHook(stage: string, fn: (ctx: HookContext) => void): this {
     if (!this.hooks.has(stage)) this.hooks.set(stage, []);
@@ -341,4 +380,12 @@ function deepMerge<T>(target: T, patch: DeepPartial<T>): T {
     return out as T;
   }
   return (patch === undefined ? target : patch) as T;
+}
+
+// 谓词查询（卡工厂组合条件用）；缺省抛错（拼错 id 立即暴露，提示注册）
+// 跨 Sim 实例共享：任何实例 registerPredicate 后全项目卡表生效
+export function cardPredicateOf(id: string): (c: CardContext) => boolean {
+  const fn = ModRegistry.predicateStore.get(id);
+  if (!fn) throw new Error(`mod: 条件谓词 "${id}" 未注册，请先用 registerPredicate 注册`);
+  return fn;
 }

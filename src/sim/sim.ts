@@ -23,22 +23,12 @@ import type { RecipeDef } from './defs/recipes';
 import { ModRegistry } from './mods/registry';
 import type { SimContext } from './systems/context';
 import { SystemRegistry } from './systems/registry';
-import { NeedsSystem } from './systems/needsSystem';
-import { SanSystem } from './systems/sanSystem';
-import { DesireSystem } from './systems/desireSystem';
-import { SocialSystem } from './systems/socialSystem';
-import { EventSystem, type ScriptedEvent } from './systems/eventSystem';
-import { AutonomousBuildSystem } from './systems/autonomousBuildSystem';
-import { SocialUnitSystem } from './systems/socialUnitSystem';
-import { SCRIPTED_EVENTS } from './defs/events';
+import type { ScriptedEvent } from './systems/eventSystem';
+
+import { jobLabelOf } from './defs/jobs';
+import { SYSTEM_DEFS } from './defs/systems';
 import { BehaviorSystem } from './systems/cardSystem';
-import { GatherSystem } from './systems/gatherSystem';
-import { BuildSystem } from './systems/buildSystem';
-import { FarmSystem } from './systems/farmSystem';
-import { CraftSystem } from './systems/craftSystem';
-import { RepairSystem } from './systems/repairSystem';
-import { RaidSystem } from './systems/raidSystem';
-import { PopulationSystem } from './systems/populationSystem';
+import { SocialUnitSystem } from './systems/socialUnitSystem';
 
 // ---- ECS 组件定义 ----
 export interface PositionData { x: number; y: number }
@@ -197,6 +187,9 @@ export class Sim implements SimContext {
   private behavior: BehaviorSystem;
   private _started = false;
   private _eventProvider: (() => ScriptedEvent | null) | null = null;
+  // LLM 慢决策层注入（构造后由 server 挂接；数据驱动系统装配表经此读取）
+  get llmEventProvider(): (() => ScriptedEvent | null) | null { return this._eventProvider; }
+  set llmEventProvider(p: (() => ScriptedEvent | null) | null) { this._eventProvider = p; }
   socialUnits: SocialUnitSystem; // 篝火单位/部落记忆/派系涌现
   playerUnitId: string | null = null; // 玩家所属单位（Q3 团灭附身）
 
@@ -243,38 +236,33 @@ export class Sim implements SimContext {
   }
 
   private applyMods(): void {
-    // mod 注册的系统挂到系统注册表
+    // mod 注册的系统（实例 API，旧式）挂到系统注册表
     for (const s of this.mods.allSystems) this.registry.register(s);
-    // mod 注册的意图执行器交给行为系统
-    for (const [id, fn] of this.mods.intents) {
-      this.behavior.registerIntent(id, fn);
-    }
-    // mod 注册的工作类型执行器交给行为系统
-    for (const [type, fn] of this.mods.works) {
-      this.behavior.registerWork(type, fn);
-    }
   }
 
   private registerSystems(): void {
-    this.registry
-      .register(new NeedsSystem(this))
-      .register(new SanSystem(this))
-      .register(new DesireSystem(this))
-      .register(this.behavior)
-      .register(this.socialUnits)
-      .register(new SocialSystem(this))
-      .register(new GatherSystem(this))
-      .register(new BuildSystem(this))
-      .register(new FarmSystem(this))
-      .register(new CraftSystem(this))
-      .register(new RepairSystem(this))
-      .register(new RaidSystem(this))
-      .register(new PopulationSystem(this))
-      .register(new EventSystem(this, [...SCRIPTED_EVENTS, ...this.mods.events], this._eventProvider))
-      .register(new AutonomousBuildSystem(this));
+    // 数据驱动：系统装配表（defs/systems.ts）定义执行顺序，mod 声明项按 before 锚点插入
+    const defs = [...SYSTEM_DEFS];
+    for (const m of this.mods.systemDefs) {
+      const idx = defs.findIndex((d) => d.id === m.before);
+      if (m.before && idx >= 0) defs.splice(idx, 0, m);
+      else defs.push(m);
+    }
+    for (const def of defs) {
+      const sys = def.ctor(this);
+      this.registry.register(sys);
+      // 回填核心实例：mod 行为/单位系统替换后，intent/work 注册与 bus 回调仍指向单例
+      if (def.id === 'behavior') this.behavior = sys as BehaviorSystem;
+      else if (def.id === 'socialUnit') this.socialUnits = sys as SocialUnitSystem;
+    }
+    // mod 注册的意图/工作执行器交给行为系统（系统实例确定后挂接）
+    for (const [id, fn] of this.mods.intents) this.behavior.registerIntent(id, fn);
+    for (const [type, fn] of this.mods.works) this.behavior.registerWork(type, fn);
   }
 
   // ---- 系统可通过 SimContext 访问 ----
+  // 数据驱动装配后的执行顺序（调试/工具/测试用）
+  get systemIds(): readonly string[] { return this.registry.all.map((s) => s.id); }
   get pawnList(): readonly number[] { return this._pawnList; }
 
   readPosition(eid: number): PositionData | null {
@@ -492,7 +480,8 @@ export class Sim implements SimContext {
     const key = `${sx},${sy}->${ex},${ey}`;
     const cached = this.trailCache.get(key);
     if (cached) return cached;
-    const path = findPath(this.world, sx, sy, ex, ey);
+    // 寻路策略表（tuning.path）：迭代上限/暗区代价/启发式，mod 可覆盖
+    const path = findPath(this.world, sx, sy, ex, ey, this.tuning.path);
     if (path.length > 0) {
       if (this.trailCache.size > 2048) this.trailCache.clear();
       this.trailCache.set(key, path);
@@ -594,8 +583,7 @@ export class Sim implements SimContext {
   }
 
   private jobLabel(job: string): string {
-    const map: Record<string, string> = { lumberjack: '伐木工', miner: '矿工', farmer: '农民', crafter: '工匠' };
-    return map[job] ?? job;
+    return jobLabelOf(job);
   }
 
   // 产出归集（Q9）：建筑附近单位获得产出（玩家单位=全局）
@@ -643,8 +631,8 @@ export class Sim implements SimContext {
     if (!def) return;
     if (!this.world.canBuildFootprint(x, y, def)) return;
     const cost = {
-      wood: def.costWood ?? def.size.x * def.size.y * 2,
-      ore: def.costOre ?? 0,
+      wood: def.costWood ?? def.size.x * def.size.y * this.mods.tuning.autobuild.costWoodPerCell,
+      ore: def.costOre ?? this.mods.tuning.autobuild.costOreFallback,
     };
     if (this.stockpile.wood < cost.wood) return;
     if (cost.ore > 0 && this.stockpile.ore < cost.ore) return;

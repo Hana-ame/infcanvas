@@ -315,6 +315,14 @@ export interface WorldTuning {
   spawnCounts: Record<string, number>; // 出生点资源构成：tileId → 数量
 }
 
+export type HeuristicId = 'chebyshev' | 'manhattan' | 'euclidean';
+
+export interface PathTuning {
+  maxIter: number;   // A* 迭代上限（防爆）
+  darkCost: number;  // 未照亮格代价倍率（倾向走篝火照明路）
+  heuristic: HeuristicId; // 启发式策略（chebyshev 对角/ manhattan / euclidean）
+}
+
 export interface CardTuning {
   commandCooldown: number; // 玩家命令后不自动决策秒数
   defyCd: number;          // 违抗冷却
@@ -402,6 +410,7 @@ export interface TuningConfig {
   world: WorldTuning;
   event: EventTuning;
   card: CardTuning;
+  path: PathTuning; // 寻路策略表（参数数据化，算法本体保留 A* 代码）
 }
 
 export const TUNING: TuningConfig = {
@@ -700,6 +709,11 @@ export const TUNING: TuningConfig = {
     spawnDistMin: 3,         // 撒布距离环
     spawnDistRand: 5,
     spawnCounts: { tree: 4, ore: 3, stone: 3 },
+  },
+  path: {
+    maxIter: 20000,        // A* 迭代上限（防爆）
+    darkCost: 3,           // 未照亮格代价倍率（倾向走篝火照明路）
+    heuristic: 'chebyshev', // 启发式策略（chebyshev 对角/ manhattan / euclidean）
   },
   event: {
     interval: 45,
