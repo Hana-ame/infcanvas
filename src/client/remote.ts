@@ -5,6 +5,7 @@ import { EventBus, type GameEvent } from '../sim/core/events';
 import type { BehaviorCard } from '../sim/ai/pawn';
 import type { TileDef, BuildingDef, ItemDef } from '../sim/defs';
 import type { EnvTuning } from '../sim/defs/tuning';
+import type { WelcomeTuning } from '../shared/protocol';
 import type { Command } from '../sim/sim';
 import type { ServerMsg, WelcomeMsg, SnapshotMsg, DeltaMsg } from '../shared/protocol';
 
@@ -45,7 +46,7 @@ export interface SimView {
   hostiles: SimViewHostile[];
   paused: boolean; speed: number; time: number; dayLength: number; tickHz: number;
   env: { raining: boolean; temperature: number; rainLeft: number };
-  tuning: { env?: EnvTuning };
+  tuning: { env?: EnvTuning; needs?: WelcomeTuning['needs']; faction?: WelcomeTuning['faction'] };
   isNight(): boolean;
   /**
    * 渲染播放时钟：消息驱动的视图（RemoteSim）用它给出帧间连续时间做插值；
@@ -160,7 +161,7 @@ export class RemoteSim {
   ws!: WebSocket;
   bus: EventBus;
   selected: number[] = [];
-  dayLength = 120;
+  dayLength = 120; // welcome 消息覆盖为 server 真实值（与 tuning 同源）
   tickHz = 20;
 
   time = 0;
@@ -168,7 +169,7 @@ export class RemoteSim {
   speed = 1;
   day = 1;
   env = { raining: false, temperature: 18, rainLeft: 0 };
-  tuning = { env: undefined } as { env?: EnvTuning };
+  tuning = { env: undefined } as { env?: EnvTuning; needs?: WelcomeTuning['needs']; faction?: WelcomeTuning['faction'] };
   // 渲染用播放时钟：权威消息把 t 锚定到墙钟，帧间 extrapolate（t + 墙钟流逝 × speed），
   // 让插值渲染有连续的 sim 时间（消息 500ms 一跳，直接读 time 则每帧恒等）
   private anchorT = 0;
@@ -337,6 +338,8 @@ export class RemoteSim {
     if (m.type === 'welcome') {
       this.connectedOnce = true;
       this.tickHz = m.tickHz;
+      this.dayLength = m.dayLength;
+      this.tuning = { needs: m.tuning.needs, faction: m.tuning.faction, env: { dayLength: m.tuning.env.dayLength, baseTemp: m.tuning.env.baseTemp } as EnvTuning };
       this.world.setWorld(m.world, m.tileGrid);
       for (const [id, d] of Object.entries(m.tiles)) {
         this.mods.tiles[id] = { id, name: id, passable: d.passable, buildable: d.buildable, color: d.color, emoji: d.emoji, sprite: d.sprite, mineral: false, growable: false };

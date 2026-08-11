@@ -231,3 +231,49 @@ overrideTuning(patch: DeepPartial<TuningConfig>): this  // 覆盖平衡参数（
 - [x] 生产/战斗/社交/需求全部查表
 - [x] ModRegistry 支持 5 类玩法注册
 - [x] 新增 mod 玩法测试绿
+
+## 9. 深度数据驱动（2026-08-11 全量审查后）
+
+对照 `grep` 全目录审查（`/tmp/opencode/non-data-driven.md`），清除剩余硬编码与双真值源：
+
+### 9.1 新增数据表（defs/）
+
+| 表 | 内容 | mod 入口 |
+|---|---|---|
+| `defs/traits.ts` | 7 天赋：属性微调/罪孽倾向/技能加成/抽卡权重倍率/天赋卡（声明式） | `registerTrait`/`overrideTrait` |
+| `defs/jobs.ts` | 职业 → 主导工作卡 + 中文标签（Q10 生产线） | `registerJob` |
+| `defs/cards.ts` | 9 基础卡全声明式（`needAt`/`utilityBase`/`utilityFixed`/`utilityPerQueue` 由工厂生成 condition/utility） | `registerCard` |
+| `defs/leans.ts` | 行为学习 10 轨道（迁自 core/lean.ts；`LeanParams` 权威定义在 tuning） | `registerLean` |
+| `defs/behavior.ts` | `MARKOV_BIAS` 马尔可夫偏置 + `SERIES_TO_DESIRE` 系列→欲望默认映射 | `registerMarkovBias`/`registerSeriesDesire` |
+| `defs/events.ts` | 7 预制剧本事件（迁自 systems/scripts.ts，数值全读 tuning.event） | `registerEvent` |
+
+### 9.2 tuning 新增组/字段
+
+- **Needs**：出生需求 80/90/60/100；**San**：POW 抗压公式（中点 40/分母 100/下限 0.4）+ 狂乱乱跑范围/尝试
+- **Gather**：配方/地表表缺字段兜底（收获/伐木时间、DC、技能、产量、产出物）
+- **Craft**（新组）：配方缺字段兜底（成本/产出/间隔）
+- **Social**：节流间隔、相遇距离、动手（损失/钳制/心情）、魅力公式、基调阈值/概率、布道全参数
+- **Desire**：出生满足度、罪孽初始、恶意槽（POW 抗恶意、砸建筑 10、转圈、lust 心情）
+- **Faction**：单位初始库存、升级距离、传话看法、缺粮汇率阈值、跨单位协作距离、成员上限（church 10/campfire 3）
+- **Population**：开局库存、招募生成环；**Repair**：原地修理距离；**Autobuild**：教堂目标、找位环/尝试、缺省建造成本
+- **Env**：`dayLength` 120/`nightStart` 0.72/`nightEnd` 0.22
+- **Pawn**：属性区间、天赋数量、卡槽、移动速度心情系数、技能初始公式（INT/EDU）、`skillInit` 五技能基础
+- **World**（新组）：出生空地半径/撒资源尝试/距离/数量（树 4 矿 3 石 3）
+- **Event**：流浪者/丰收/矿脉/瘟疫/游商/庆典全部数值 + 事件资源钳制 500 + LLM 幅度上界（resource 20/mood 10）
+
+### 9.3 系统改造清单
+
+- `pawn.ts` 重写：`BASE_CARDS`/`TRAIT_CARDS` 由表工厂生成；`generateDna(seed, t?)`/`initSlots(dna, extra?, t?)` 可选参数缺省 TUNING（旧调用不变）；`effectiveWeight` 全读表（天赋倍率/欲望映射/环境倍率/马尔可夫/职业倍率）；`CardView` 新字段全部可选
+- `cardSystem.ts`：view 注入 tuning/markovBias/jobCards/desireOfSeries；抽卡张数 `card.drawCount`；进食耗粮 `card.eatCost`；欲望满足量读 tuning.desire
+- `gatherSystem`/`craftSystem`/`raidSystem`：删 13+ 处 `??` 兜底 → 读 tuning（表优先、兜底收敛）
+- `socialSystem`/`desireSystem`/`sanSystem`：POW 公式 `(pow-40)/100` 三处统一读 tuning；tone/魅力/动手/布道数值查表
+- `socialUnitSystem`：单位初始库存/升级距离/协作距离/汇率阈值读 tuning.faction
+- `sim.ts`：初始库存/`dayLength`/`isNight` 昼夜阈值/技能初始值/COC 技能公式装配自 tuning；`initNeeds`/`initDesires`/`initEnv` 带参
+- `core/world.ts`：出生空地/撒资源参数读 tuning.world
+- `mods/registry.ts`：`registerTrait`/`overrideTrait`/`registerMarkovBias`/`registerSeriesDesire`/`registerJob`（跨实例共享表，与 DESIRES 同策略）
+- **双真值源消除**：`dayLength`（客户端 welcome 下发）；客户端食物告急阈值/派系容量（welcome.tuning 快照）；职业标签/按钮遍历 `JOBS` 表；`llm.ts` 白名单钳制读 tuning.event（prompt 数字取 TUNING 静态默认）
+
+### 9.4 验证
+
+- `npm run typecheck` 0 错；`npm test` 136/136 绿
+- 测试稳定性修正：markov 偏置测试原卡池饱和（idle 必中，偏置被吞）→ 拷贝 base 卡压权至同阶；preaching 测试 seed 52 恰踩随机序列死角 → seed 55（同场景语义不变）

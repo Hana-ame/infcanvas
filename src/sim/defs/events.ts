@@ -1,8 +1,8 @@
-// 预制剧本（P0 随机事件，用户 Q5）—— def 驱动，可被 LLM provider 替换
-// 每个事件 = condition（符合状况才进候选池）+ 效果（印卡/调权重/改世界）
-// 事件不写死：触发逻辑全在 eventSystem 里按「状况匹配列表」执行
-import type { SimContext } from './context';
-import type { ScriptedEvent } from './eventSystem';
+// 预制剧本事件表（数据驱动，用户 Q5）—— 迁自 systems/scripts.ts
+// 每个事件 = condition（符合状况才进候选池）+ run（效果），效果数值全读 tuning.event
+// 函数合法（表 = TS 模块）；mod 可 registerEvent 追加、overrideEvent 覆盖
+import type { SimContext } from '../systems/context';
+import type { ScriptedEvent } from '../systems/eventSystem';
 
 // 是否已存在带某标签的建筑（condition 用的查询）
 function hasBuildingTag(ctx: SimContext, tag: string): boolean {
@@ -20,7 +20,7 @@ function avgMood(ctx: SimContext): number {
     const needs = ctx.readNeeds(eid);
     if (needs) { sum += needs.mood; n++; }
   }
-  return n === 0 ? 60 : sum / n;
+  return n === 0 ? ctx.tuning.needs.initMood : sum / n;
 }
 
 // 在远处随机刷一个野生篝火营地（Q9：地图随机刷新野生势力 → 独立派系）
@@ -28,9 +28,10 @@ export function spawnWildCamp(ctx: SimContext): boolean {
   const w = ctx.world;
   const cx = Math.floor(w.width / 2);
   const cy = Math.floor(w.height / 2);
-  for (let attempt = 0; attempt < 40; attempt++) {
-    // 离主营地较远（半径 20-40），避免太近
-    const r = 20 + ctx.rng.int(0, 20);
+  const t = ctx.tuning.event;
+  for (let attempt = 0; attempt < t.wildCampAttempts; attempt++) {
+    // 离主营地较远（环带 min~min+rand），避免太近
+    const r = t.wildCampRingMin + ctx.rng.int(0, t.wildCampRingRand);
     const a = ctx.rng.next() * Math.PI * 2;
     const x = cx + Math.round(Math.cos(a) * r);
     const y = cy + Math.round(Math.sin(a) * r);
@@ -58,20 +59,21 @@ export const SCRIPTED_EVENTS: ScriptedEvent[] = [
   },
   {
     id: 'wanderer', name: '流浪者加入', weight: 5, cooldown: 180, minTime: 120,
-    // 状况：有余粮养得起新人
-    condition: (ctx) => (ctx.stockpile.food ?? 0) > 10,
+    // 状况：有余粮养得起新人（阈值读 tuning.event）
+    condition: (ctx) => (ctx.stockpile.food ?? 0) > ctx.tuning.event.wandererFoodAt,
     run(ctx) {
       // 在营地边缘生成一个新小人（无家可归者投奔）
+      const t = ctx.tuning.event;
       const cx = Math.floor(ctx.world.width / 2);
       const cy = Math.floor(ctx.world.height / 2);
-      for (let r = 4; r <= 8; r++) {
+      for (let r = t.wandererRingMin; r <= t.wandererRingMax; r++) {
         const x = cx + ctx.rng.int(-r, r);
         const y = cy + ctx.rng.int(-r, r);
         if (ctx.world.inBounds(x, y) && ctx.world.isPassable(x, y)) {
           const eid = ctx.spawnPawn(x, y);
           if (eid !== -1) {
             ctx.logEvent('🚶 一名流浪者加入营地');
-            ctx.adjustMood(eid, 10);
+            ctx.adjustMood(eid, t.wandererMood);
             ctx.bus.emit({ type: 'pawn_recruited', eid });
           }
           return;
@@ -84,8 +86,9 @@ export const SCRIPTED_EVENTS: ScriptedEvent[] = [
     // 状况：真的有农田才会丰收
     condition: (ctx) => hasBuildingTag(ctx, 'farm'),
     run(ctx) {
-      ctx.stockpile.food = Math.min(500, (ctx.stockpile.food ?? 0) + 20);
-      ctx.logEvent('🌾 农田大丰收，食物 +20');
+      const t = ctx.tuning.event;
+      ctx.stockpile.food = Math.min(t.eventCap, (ctx.stockpile.food ?? 0) + t.bountyFood);
+      ctx.logEvent(`🌾 农田大丰收，食物 +${t.bountyFood}`);
     },
   },
   {
@@ -93,42 +96,46 @@ export const SCRIPTED_EVENTS: ScriptedEvent[] = [
     // 状况：已经开过矿洞才可能发现新矿脉
     condition: (ctx) => hasBuildingTag(ctx, 'mine'),
     run(ctx) {
-      ctx.stockpile.ore = Math.min(500, (ctx.stockpile.ore ?? 0) + 15);
-      ctx.logEvent('⛏ 勘探发现富矿，矿石 +15');
+      const t = ctx.tuning.event;
+      ctx.stockpile.ore = Math.min(t.eventCap, (ctx.stockpile.ore ?? 0) + t.oreFind);
+      ctx.logEvent(`⛏ 勘探发现富矿，矿石 +${t.oreFind}`);
     },
   },
   {
     id: 'plague', name: '小瘟疫', weight: 3, cooldown: 300, minTime: 300,
     // 状况：人多了疾病才有传播空间
-    condition: (ctx) => ctx.pawnList.length >= 3,
+    condition: (ctx) => ctx.pawnList.length >= ctx.tuning.event.plagueMinPawns,
     run(ctx) {
+      const t = ctx.tuning.event;
       for (const eid of ctx.pawnList) {
         const hk = ctx.readHealth(eid);
         if (hk) {
-          hk.hp = Math.max(10, hk.hp - 15);
+          hk.hp = Math.max(t.plagueHpFloor, hk.hp - t.plagueHpDmg);
           ctx.setHealth(eid, hk);
         }
-        ctx.adjustMood(eid, -5);
+        ctx.adjustMood(eid, t.plagueMood);
       }
       ctx.logEvent('🤒 一场小瘟疫席卷营地');
     },
   },
   {
     id: 'merchant', name: '游商到访', weight: 4, cooldown: 240, minTime: 150,
-    // 状况：有可用以交换的物资（木/粮）
-    condition: (ctx) => (ctx.stockpile.wood ?? 0) > 5 || (ctx.stockpile.food ?? 0) > 5,
+    // 状况：有可用以交换的物资（木/粮，阈值读 tuning.event）
+    condition: (ctx) => (ctx.stockpile.wood ?? 0) > ctx.tuning.event.merchantGoodsAt || (ctx.stockpile.food ?? 0) > ctx.tuning.event.merchantGoodsAt,
     run(ctx) {
-      ctx.stockpile.wood = Math.min(500, (ctx.stockpile.wood ?? 0) + 10);
-      ctx.stockpile.food = Math.min(500, (ctx.stockpile.food ?? 0) + 10);
+      const t = ctx.tuning.event;
+      ctx.stockpile.wood = Math.min(t.eventCap, (ctx.stockpile.wood ?? 0) + t.merchantWood);
+      ctx.stockpile.food = Math.min(t.eventCap, (ctx.stockpile.food ?? 0) + t.merchantFood);
       ctx.logEvent('🧺 游商到访，交换到木头与食物');
     },
   },
   {
     id: 'mood_boost', name: '庆典时节', weight: 4, cooldown: 300,
     // 状况：整体心情低落时才会举行庆典提振士气
-    condition: (ctx) => avgMood(ctx) < 55,
+    condition: (ctx) => avgMood(ctx) < ctx.tuning.event.moodBoostAt,
     run(ctx) {
-      for (const eid of ctx.pawnList) ctx.adjustMood(eid, 8);
+      const t = ctx.tuning.event;
+      for (const eid of ctx.pawnList) ctx.adjustMood(eid, t.moodBoost);
       ctx.logEvent('🎉 营地举行小型庆典，大家心情变好');
     },
   },

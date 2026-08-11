@@ -11,7 +11,7 @@ const NEGATIVE = ['瞪了你一眼', '说了句风凉话', '背着你偷笑', '�
 
 export class SocialSystem implements GameSystem {
   id = 'social';
-  private cd = 2; // 全系统社交节流（避免每帧刷）
+  private cd = 0; // 全系统社交节流（避免每帧刷）——间隔读 tuning.social.tickInterval
 
   constructor(private ctx: SimContext) {}
 
@@ -25,7 +25,7 @@ export class SocialSystem implements GameSystem {
       if (st && (st.socialCd ?? 0) > 0) st.socialCd = (st.socialCd ?? 0) - dt;
     }
     if (this.cd > 0) return;
-    this.cd = 2;
+    this.cd = this.ctx.tuning.social.tickInterval;
     this.tickSocial();
   }
 
@@ -41,7 +41,7 @@ export class SocialSystem implements GameSystem {
         const b = list[j];
         const posB = this.ctx.pawnPositions.get(b);
         if (!posB) continue;
-        if (Math.hypot(posA.x - posB.x, posA.y - posB.y) > 1.6) continue; // 相邻才算相遇
+        if (Math.hypot(posA.x - posB.x, posA.y - posB.y) > this.ctx.tuning.social.meetDist) continue; // 相邻才算相遇
         this.interact(a, b, stA.socialCd ?? 0);
         this.relationEffects(a, b); // 关系影响（协作/口角），用户 Q8
       }
@@ -82,12 +82,12 @@ export class SocialSystem implements GameSystem {
         const relWinner = stB.relationships ?? new Map();
         const curA = relLoser.get(winner) ?? 0;
         const curB = relWinner.get(loser) ?? 0;
-        relLoser.set(winner, Math.max(-50, curA - 10));
-        relWinner.set(loser, Math.max(-50, curB - 10));
+        relLoser.set(winner, Math.max(s.punchRelFloor, curA - s.punchRelLoss));
+        relWinner.set(loser, Math.max(s.punchRelFloor, curB - s.punchRelLoss));
         stA.relationships = relLoser;
         stB.relationships = relWinner;
-        this.ctx.adjustMood(winner, 3);
-        this.ctx.adjustMood(loser, -5);
+        this.ctx.adjustMood(winner, s.punchMoodWin);
+        this.ctx.adjustMood(loser, s.punchMoodLose);
         this.ctx.logEvent(`👊 #${winner} 与 #${loser} 动手了！`);
       } else {
         this.ctx.adjustMood(a, s.moodHostile);
@@ -110,15 +110,15 @@ export class SocialSystem implements GameSystem {
       return;
     }
 
-    const moodA = this.ctx.readNeeds(a)?.mood ?? 60;
-    const moodB = this.ctx.readNeeds(b)?.mood ?? 60;
+    const moodA = this.ctx.readNeeds(a)?.mood ?? this.ctx.tuning.needs.initMood;
+    const moodB = this.ctx.readNeeds(b)?.mood ?? this.ctx.tuning.needs.initMood;
     // 心情共同决定基调；性格（APP 魅力）加分
     const dnaA = this.ctx.dnaOf(a);
-    const charm = dnaA ? (dnaA.app - 30) / 100 : 0;
+    const charm = dnaA ? (dnaA.app - s.charmBase) / s.charmDiv : 0;
     let tone: 'positive' | 'negative' | 'neutral';
-    if (moodA > 65 && moodB > 65) tone = this.ctx.rng.next() < 0.7 + charm ? 'positive' : 'neutral';
-    else if (moodA < 25 || moodB < 25) tone = this.ctx.rng.next() < 0.7 ? 'negative' : 'neutral';
-    else tone = this.ctx.rng.next() < 0.5 ? 'neutral' : (this.ctx.rng.next() < 0.5 ? 'positive' : 'negative');
+    if (moodA > s.toneHighAt && moodB > s.toneHighAt) tone = this.ctx.rng.next() < s.tonePosChance + charm ? 'positive' : 'neutral';
+    else if (moodA < s.toneLowAt || moodB < s.toneLowAt) tone = this.ctx.rng.next() < s.toneNegChance ? 'negative' : 'neutral';
+    else tone = this.ctx.rng.next() < s.toneNeutralChance ? 'neutral' : (this.ctx.rng.next() < s.toneNeutralChance ? 'positive' : 'negative');
 
     // 话题：从最近历史里抽一条（狗屁倒灶素材）
     const topic = this.pickTopic();
@@ -127,7 +127,7 @@ export class SocialSystem implements GameSystem {
     const relA = stA.relationships ?? new Map<number, number>();
     const delta = tone === 'positive' ? s.relDeltaPositive : tone === 'negative' ? s.relDeltaNegative : s.relDeltaNeutral;
     const curA = relA.get(b) ?? 0;
-    relA.set(b, Math.max(-50, Math.min(100, curA + delta)));
+    relA.set(b, Math.max(s.relFloor, Math.min(s.relCap, curA + delta)));
     stA.relationships = relA;
 
     // 心情微调
@@ -137,7 +137,7 @@ export class SocialSystem implements GameSystem {
     // 文本（日志用）
     const line = this.line(tone);
     this.ctx.bus.emit({ type: 'social', eid: a, target: b, tone, topic: topic ?? undefined });
-    if (this.ctx.rng.next() < 0.4 || tone !== 'neutral') {
+    if (this.ctx.rng.next() < s.logChance || tone !== 'neutral') {
       this.ctx.logEvent(`💬 #${a} ${line} #${b}${topic ? `（${topic}）` : ''}`);
     }
   }
@@ -155,25 +155,25 @@ export class SocialSystem implements GameSystem {
     const faithA = stA.faith ?? 0;
     const powB = dnaB?.pow ?? 40;
     // 对抗：传教者 ATT（APP/2 + faith/2）vs 目标 守方（POW + 现有信仰抵抗）
-    const att = app / 2 + faithA / 2;
-    const def = powB + (stB.faith ?? 0) * 0.4;
+    const att = app / s.preachAppDiv + faithA / s.preachFaithDiv;
+    const def = powB + (stB.faith ?? 0) * s.preachResistFaith;
     const rollA = this.ctx.rng.int(1, 100) + att;
     const rollB = this.ctx.rng.int(1, 100) + def;
     const relA = stA.relationships ?? new Map<number, number>();
     if (rollA > rollB) {
       // 成功传教
       stB.faith = Math.min(100, (stB.faith ?? 0) + s.preachSucceedFaith);
-      stA.faith = Math.min(100, faithA + 1);
+      stA.faith = Math.min(100, faithA + s.preachSelfFaith);
       this.ctx.growSkill(a, 'social');
-      relA.set(b, Math.max(-50, Math.min(100, (relA.get(b) ?? 0) + s.preachSucceedRel)));
+      relA.set(b, Math.max(s.relFloor, Math.min(s.relCap, (relA.get(b) ?? 0) + s.preachSucceedRel)));
       stA.relationships = relA;
       this.ctx.bus.emit({ type: 'social', eid: a, target: b, tone: 'positive', topic: '布道' });
       this.ctx.logEvent(`🙏 #${a} 向 #${b} 布道，对方听了进去`);
     } else {
       // 失败：目标无动于衷甚至反感
-      relA.set(b, Math.max(-50, Math.min(100, (relA.get(b) ?? 0) + s.preachFailRel)));
+      relA.set(b, Math.max(s.relFloor, Math.min(s.relCap, (relA.get(b) ?? 0) + s.preachFailRel)));
       stA.relationships = relA;
-      this.ctx.adjustMood(a, -2);
+      this.ctx.adjustMood(a, s.preachFailMood);
       this.ctx.bus.emit({ type: 'social', eid: a, target: b, tone: 'negative', topic: '布道' });
       this.ctx.logEvent(`🙅 #${b} 对 #${a} 的说教无动于衷`);
     }

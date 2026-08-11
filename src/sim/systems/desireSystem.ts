@@ -40,7 +40,7 @@ export class DesireSystem implements GameSystem {
       // 恶意槽：长期匮乏的反社会行为（POW 意志压制，DESIGN §3）
       if (critical.length > 0) {
         const dna = this.ctx.dnaOf(eid);
-        const powResist = dna ? 1 - Math.max(0, (dna.pow - 40)) / 100 : 1;
+        const powResist = dna ? 1 - Math.max(0, (dna.pow - t.powResistMid)) / t.powResistScale : 1;
         if (this.ctx.rng.next() < t.malintentChance * Math.max(t.powResistBase, powResist)) {
           this.malintent(eid, st, critical);
         }
@@ -65,18 +65,18 @@ export class DesireSystem implements GameSystem {
       if (pos) {
         const b = this.ctx.world.getBuilding(Math.round(pos.x), Math.round(pos.y));
         if (b) {
-          this.ctx.world.damageBuilding(Math.round(pos.x), Math.round(pos.y), 10);
+          this.ctx.world.damageBuilding(Math.round(pos.x), Math.round(pos.y), t.wrathSmashDmg);
           this.ctx.adjustMood(eid, t.malintentMoodGain);
           this.ctx.logEvent(`😡 小人暴怒，砸了${b.def.name}！`);
           fulfill(d, 'wrath', t.malintentFulfill);
         } else {
-          this.ctx.adjustMood(eid, 5);
+          this.ctx.adjustMood(eid, t.wrathSpinMood);
           this.ctx.logEvent('😡 小人暴躁地原地转圈');
-          fulfill(d, 'wrath', 8);
+          fulfill(d, 'wrath', t.fulfillWrath);
         }
       }
     } else if (first === 'lust' || first === 'envy' || first === 'pride') {
-      this.ctx.adjustMood(eid, -2);
+      this.ctx.adjustMood(eid, t.lustMood);
     }
   }
 }

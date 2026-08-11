@@ -30,7 +30,7 @@ import { SocialSystem } from './systems/socialSystem';
 import { EventSystem, type ScriptedEvent } from './systems/eventSystem';
 import { AutonomousBuildSystem } from './systems/autonomousBuildSystem';
 import { SocialUnitSystem } from './systems/socialUnitSystem';
-import { SCRIPTED_EVENTS } from './systems/scripts';
+import { SCRIPTED_EVENTS } from './defs/events';
 import { BehaviorSystem } from './systems/cardSystem';
 import { GatherSystem } from './systems/gatherSystem';
 import { BuildSystem } from './systems/buildSystem';
@@ -149,11 +149,11 @@ export class Sim implements SimContext {
   bus: EventBus;
   tickHz: number;
   time = 0;
-  dayLength = 120;
+  dayLength: number; // 昼夜时长（秒）—— 装配自 tuning.env.dayLength
   dayTime = 0;  speed = 1;
   paused = false;
   events: { time: number; text: string }[] = [];
-  env: EnvState = initEnv(); // 天气/气温（DESIGN §6）
+  env: EnvState; // 天气/气温（DESIGN §6）—— initEnv 读 tuning.env.baseTemp
   // 派系优先级（用户 Q8：AI 按环境下达工作优先指令）：卡 id → 权重倍率
   factionPriority: Record<string, number> = {};
   private prioTimer = 0;
@@ -163,7 +163,7 @@ export class Sim implements SimContext {
   selected: number[] = [];
   hostiles: { x: number; y: number; hp: number; maxHp: number; targetX: number; targetY: number; name?: string; faction?: string; enemyId?: string; speed?: number; dmgPerSec?: number; loot?: { item: string; amount: number } }[] = [];
   buildQueue: { x: number; y: number; defId: string; progress: number; faction: string; cost?: { wood: number; ore: number } }[] = [];
-  stockpile: Record<string, number> = { wood: 50, ore: 0, food: 30, tools: 0 };
+  stockpile: Record<string, number>; // 初始库存 = tuning.population.startStockpile（构造函数里装配）
 
   private _pawnList: number[] = [];
   private trailCache = new Map<string, { x: number; y: number }[]>();
@@ -204,6 +204,10 @@ export class Sim implements SimContext {
     const seed = opts.seed ?? 12345;
     const pawnCount = opts.pawnCount ?? 4;
     this.tickHz = opts.tickHz ?? 20;
+    // 装配初始数据（数据驱动：初始库存/初始气温/昼夜时长读 tuning）
+    this.stockpile = { ...TUNING.population.startStockpile };
+    this.env = initEnv(TUNING.env);
+    this.dayLength = TUNING.env.dayLength;
     // 应用 mod（在 world/spawn 前，可覆盖 defs/tuning/配方）——构造期回调
     opts.mods?.(this.mods);
     this._eventProvider = opts.eventProvider ?? null;
@@ -294,7 +298,7 @@ export class Sim implements SimContext {
   setPosition(eid: number, p: PositionData): void { setComponent(this.ecs, eid, Position, p); }
 
   isNight(): boolean {
-    return this.dayTime > 0.72 || this.dayTime < 0.22;
+    return this.dayTime > this.tuning.env.nightStart || this.dayTime < this.tuning.env.nightEnd;
   }
 
   moveTo(eid: number, x: number, y: number): void {
@@ -372,22 +376,23 @@ export class Sim implements SimContext {
     setComponent(this.ecs, eid, Position, { x, y });
     addComponent(this.ecs, eid, Pawn);
     addComponent(this.ecs, eid, NeedsComp);
-    setComponent(this.ecs, eid, NeedsComp, initNeeds());
+    setComponent(this.ecs, eid, NeedsComp, initNeeds(this.tuning.needs));
     addComponent(this.ecs, eid, Speed);
     setComponent(this.ecs, eid, Speed, { v: this.tuning.pawn.baseSpeed });
     const dna = generateDna(this.seedFor(eid));
     addComponent(this.ecs, eid, Health);
     const maxHp = this.tuning.pawn.hpBase + Math.floor((dna.con + dna.siz) / 2);
     setComponent(this.ecs, eid, Health, { hp: maxHp, maxHp });
-    // COC 技能初始值：INT + EDU 高 → 起点高（百分制）
-    const intBase = Math.floor((dna.int - 30) / 4) + Math.floor((dna.edu - 30) / 8);
+    // COC 技能初始值：INT + EDU 高 → 起点高（百分制）—— 公式参数读 tuning.pawn
+    const pw = this.tuning.pawn;
+    const intBase = Math.floor((dna.int - pw.skillIntFrom) / pw.skillIntDiv) + Math.floor((dna.edu - pw.skillEduFrom) / pw.skillEduDiv);
     this.pawnStates.set(eid, {
       dna,
       slots: initSlots(dna, [...this.mods.cards.values()]),
       path: [],
       pathIndex: 0,
-      skills: { work: 20 + intBase, fight: 15 + intBase, craft: 15 + intBase, social: 10 + intBase, faith: 10 + intBase },
-      desires: initDesires(this.rng),
+      skills: Object.fromEntries(Object.entries(this.tuning.pawn.skillInit).map(([k, v]) => [k, v + intBase])) as Record<SkillId, number>,
+      desires: initDesires(this.rng, this.tuning.desire),
       lean: initLean(this.rng),
     });
     this._pawnList.push(eid);
@@ -572,7 +577,7 @@ export class Sim implements SimContext {
       return;
     }
     if (cmd.type === 'assign') {
-      for (const eid of this.selected) {
+      for (const eid of cmd.pawnId ? [cmd.pawnId] : this.selected) {
         const st = this.pawnStates.get(eid);
         if (st) {
           st.assignedJob = cmd.job || undefined;
@@ -760,7 +765,7 @@ export class Sim implements SimContext {
       pos: this.pawnPositions.get(eid) ?? { x: 0, y: 0 },
       faith: st.faith ?? 0,
       skills: st.skills ?? {},
-      desires: st.desires ?? initDesires(this.rng),
+      desires: st.desires ?? initDesires(this.rng, this.tuning.desire),
       oracleBuff: st.oracleBuff,
       assignedJob: st.assignedJob,
       lastDecision: st.lastDecision,
@@ -802,7 +807,7 @@ export class Sim implements SimContext {
           health: this.readHealth(eid),
           faith: st.faith ?? 0,
           skills: st.skills ?? {},
-          desires: st.desires ?? initDesires(this.rng),
+          desires: st.desires ?? initDesires(this.rng, this.tuning.desire),
           oracleBuff: st.oracleBuff,
           assignedJob: st.assignedJob,
         };
@@ -813,7 +818,7 @@ export class Sim implements SimContext {
   load(data: SaveData): void {
     this.time = data.time ?? 0;
     this.dayTime = data.dayTime ?? 0;
-    if (data.stockpile) this.stockpile = { wood: 50, ore: 0, food: 30, tools: 0, ...data.stockpile };
+    if (data.stockpile) this.stockpile = { ...TUNING.population.startStockpile, ...data.stockpile };
     if (data.tiles) this.world.loadTiles(data.tiles);
     if (data.buildings) this.world.loadBuildings(data.buildings);
     // 恢复社会单位（派系记忆/看法/库存）
@@ -856,7 +861,7 @@ export class Sim implements SimContext {
         });
         st.faith = p.faith ?? 0;
         st.skills = p.skills ?? {};
-        st.desires = p.desires ?? initDesires(this.rng);
+        st.desires = p.desires ?? initDesires(this.rng, this.tuning.desire);
         st.oracleBuff = p.oracleBuff;
         st.assignedJob = p.assignedJob;
         if (p.needs) this.setNeeds(eid, p.needs);

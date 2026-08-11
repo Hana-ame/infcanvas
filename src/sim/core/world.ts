@@ -2,6 +2,17 @@
 import { SimRng } from './rng';
 import { TILES, BUILDINGS, type TileDef, type BuildingDef } from '../defs';
 import { generateBiomeMap } from './noise';
+import { TUNING, type WorldTuning } from '../defs/tuning';
+
+// 世界生成参数（数据驱动：默认取 tuning.world；Sim 构造时传入可被 mod 覆盖的副本）
+type WorldGenTuning = Pick<WorldTuning, 'spawnClearRadius' | 'spawnTries' | 'spawnDistMin' | 'spawnDistRand' | 'spawnCounts'>;
+const DEFAULT_WORLD_GEN: WorldGenTuning = {
+  spawnClearRadius: TUNING.world.spawnClearRadius,
+  spawnTries: TUNING.world.spawnTries,
+  spawnDistMin: TUNING.world.spawnDistMin,
+  spawnDistRand: TUNING.world.spawnDistRand,
+  spawnCounts: TUNING.world.spawnCounts,
+};
 
 export const CHUNK_SIZE = 32; // 每 chunk 的 tile 数（32x32）
 export const WORLD_CHUNKS = 6; // P0 世界 = 6x6 chunks = 192x192 tiles
@@ -10,6 +21,7 @@ export type TileId = string;
 
 // 世界地形数组：chunkId -> Uint8Array（存 tile 索引），建筑用 Map 单独存
 export class World {
+  readonly gen: WorldGenTuning;
   readonly chunkCols: number;
   readonly chunkRows: number;
   readonly width: number; // 总 tile 宽
@@ -27,9 +39,11 @@ export class World {
     defs: { tiles?: Record<string, TileDef>; buildings?: Record<string, BuildingDef> } = {},
     chunksX: number = WORLD_CHUNKS,
     chunksY: number = WORLD_CHUNKS,
+    gen?: WorldGenTuning,
   ) {
     this.seed = seed;
     this.rng = new SimRng(seed);
+    this.gen = gen ?? DEFAULT_WORLD_GEN;
     this.chunkCols = chunksX;
     this.chunkRows = chunksY;
     this.width = chunksX * CHUNK_SIZE;
@@ -52,11 +66,12 @@ export class World {
     for (let i = 0; i < biomeMap.length; i++) {
       this.tileIndex[i] = this.tileIdToIndex(biomeMap[i]);
     }
-    // 保证出生点是一块草地（5x5 可通行，四周仍是树林/资源）
+    // 保证出生点是一块草地（spawnClearRadius 可通行，四周仍是树林/资源）
     const cx = Math.floor(this.width / 2);
     const cy = Math.floor(this.height / 2);
-    for (let dy = -2; dy <= 2; dy++) {
-      for (let dx = -2; dx <= 2; dx++) {
+    const clr = this.gen.spawnClearRadius;
+    for (let dy = -clr; dy <= clr; dy++) {
+      for (let dx = -clr; dx <= clr; dx++) {
         this.setTile(cx + dx, cy + dy, 'grass');
       }
     }
@@ -64,12 +79,13 @@ export class World {
     this.ensureSpawnResources(cx, cy);
   }
 
-  // 出生点近圈撒资源：保证开局可采集（树、矿、石、水）
+  // 出生点近圈撒资源：保证开局可采集（树、矿、石、水）—— 参数全读 world gen 表
   private ensureSpawnResources(cx: number, cy: number): void {
+    const g = this.gen;
     const rng = new SimRng(this.seed ^ 0x5eed);
     const place = (id: string) => {
-      for (let tries = 0; tries < 24; tries++) {
-        const r = 3 + rng.int(0, 5); // 距离 3-7
+      for (let tries = 0; tries < g.spawnTries; tries++) {
+        const r = g.spawnDistMin + rng.int(0, g.spawnDistRand); // 距离 min ~ min+rand
         const a = rng.next() * Math.PI * 2;
         const x = cx + Math.round(Math.cos(a) * r);
         const y = cy + Math.round(Math.sin(a) * r);
@@ -81,10 +97,10 @@ export class World {
         }
       }
     };
-    // 至少各放几处，保证开局资源不枯竭
-    for (let i = 0; i < 4; i++) place('tree');
-    for (let i = 0; i < 3; i++) place('ore');
-    for (let i = 0; i < 3; i++) place('stone');
+    // 至少各放几处，保证开局资源不枯竭（数量表驱动）
+    for (const [id, n] of Object.entries(g.spawnCounts)) {
+      for (let i = 0; i < n; i++) place(id);
+    }
   }
 
   inBounds(x: number, y: number): boolean {

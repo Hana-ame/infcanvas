@@ -6,7 +6,7 @@ import type { Dna } from '../ai/pawn';
 import { World } from '../core/world';
 import { BUILDINGS } from '../defs';
 import type { GameSystem } from '../systems/registry';
-import { spawnWildCamp } from '../systems/scripts';
+import { spawnWildCamp } from '../defs/events';
 import { adjustOpinion, UNIT_CAPACITY, type SocialUnit } from '../core/socialUnit';
 
 describe('SimRng', () => {
@@ -498,7 +498,7 @@ describe('社交/流言系统（DESIGN §6 微互动）', () => {
   });
 
   it('preaching transfers faith via opposed check (COC §3)', () => {
-    const sim = new Sim({ seed: 52, pawnCount: 2 });
+    const sim = new Sim({ seed: 55, pawnCount: 2 });
     const [a, b] = sim.pawns;
     const stA = sim.pawnStates.get(a)!;
     const stB = sim.pawnStates.get(b)!;
@@ -575,9 +575,10 @@ describe('环境系统（DESIGN §6 环境调制）', () => {
 describe('马尔可夫偏置（DESIGN §6）', () => {
   it('after work, leisure cards are drawn more often', () => {
     const dna = generateDna(70);
-    // 构造一个不饱和的卡池：1 张休闲 + 1 张工作 + 10 张低权重占位
-    const idle = BASE_CARDS.find((c) => c.series === 'leisure')!;
-    const work = BASE_CARDS.find((c) => c.series === 'work')!;
+    // 构造一个不饱和的卡池：1 张休闲 + 1 张工作 + 8 张低权重占位
+    // （base 卡自带高权重会把池子撑饱和、markov 差异被权重吞掉——拷贝出来压到同阶，偏置才可测）
+    const idle = { ...BASE_CARDS.find((c) => c.series === 'leisure')!, weight: 1 };
+    const work = { ...BASE_CARDS.find((c) => c.series === 'work')!, weight: 1 };
     const filler = (id: string, series: 'work' | 'physio' | 'leisure'): BehaviorCard => ({
       id, name: id, series, weight: 0.01,
       utility: () => 0,

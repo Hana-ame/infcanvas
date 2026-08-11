@@ -23,10 +23,10 @@ export function allDesires(): string[] {
   return Object.keys(DESIRES);
 }
 
-// 初始满足度（各罪 50-75，随机）
-export function initDesires(rng: { next(): number }): Record<DesireId, number> {
+// 初始满足度（各罪 initMin ~ initMin+initRange，随机）—— 参数读 tuning.desire
+export function initDesires(rng: { next(): number }, t: { initMin: number; initRange: number }): Record<DesireId, number> {
   const d = {} as Record<DesireId, number>;
-  for (const k of allDesires()) d[k] = 50 + Math.floor(rng.next() * 25);
+  for (const k of allDesires()) d[k] = t.initMin + Math.floor(rng.next() * t.initRange);
   return d;
 }
 

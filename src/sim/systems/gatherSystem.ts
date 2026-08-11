@@ -65,16 +65,16 @@ export class GatherSystem implements GameSystem {
           continue;
         }
         const recipe = this.ctx.recipe('cave');
-        const interval = recipe?.interval ?? 4;
+        const interval = recipe?.interval ?? this.ctx.tuning.gather.harvestInterval;
         if (st.caveWork.progress >= interval) {
           st.caveWork.progress = 0;
-          const dc = recipe?.dc ?? 70;
-          const skill = recipe?.skill ?? 'work';
+          const dc = recipe?.dc ?? this.ctx.tuning.gather.harvestDc;
+          const skill = recipe?.skill ?? this.ctx.tuning.gather.harvestSkill;
           const ev = this.ctx.rollEventSkill(eid, dc, skill);
-          const gain = Math.round((ev.success ? (recipe?.output.amount ?? 2) : (recipe?.failOutput?.amount ?? 1)) * toolBonus * strBonusOf(eid));
+          const gain = Math.round((ev.success ? (recipe?.output.amount ?? this.ctx.tuning.gather.harvestYield) : (recipe?.failOutput?.amount ?? this.ctx.tuning.gather.harvestFailYield)) * toolBonus * strBonusOf(eid));
           this.ctx.stockpile.ore += gain;
           this.ctx.growSkill(eid, skill); this.ctx.recordOutcome(eid, 'caveMine', ev.success ? gain : -gain);
-          this.ctx.bus.emit({ type: 'resource_gained', eid, item: recipe?.output.item ?? 'ore', amount: gain });
+          this.ctx.bus.emit({ type: 'resource_gained', eid, item: recipe?.output.item ?? this.ctx.tuning.gather.harvestItem, amount: gain });
           this.ctx.adjustMood(eid, ev.success ? 2 : -2);
           this.ctx.logEvent(ev.success ? '矿洞采到矿石' : '矿洞挖出废石');
         }
@@ -85,18 +85,18 @@ export class GatherSystem implements GameSystem {
         st.mining.progress += dt;
         const tile = this.ctx.world.getTileDef(st.mining.x, st.mining.y);
         const hv = tile.mineral ? tile.harvest : undefined;
-        const time = hv?.time ?? 3;
+        const time = hv?.time ?? this.ctx.tuning.gather.harvestTime;
         if (st.mining.progress >= time) {
           const { x, y } = st.mining;
           // 采后瓦片：harvestReplaces 声明优先，缺省 growable→grass / mineral→dirt
           this.ctx.world.setTile(x, y, tile.harvestReplaces ?? (tile.growable ? 'grass' : 'dirt'));
-          const dc = hv?.dc ?? 60;
-          const skill = hv?.skill ?? 'work';
+          const dc = hv?.dc ?? this.ctx.tuning.gather.harvestDc;
+          const skill = hv?.skill ?? this.ctx.tuning.gather.harvestSkill;
           const ev = this.ctx.rollEventSkill(eid, dc, skill);
-          const gain = Math.round((ev.success ? (hv?.yieldSuccess ?? 3) : (hv?.yieldFail ?? 1)) * toolBonus * strBonusOf(eid));
+          const gain = Math.round((ev.success ? (hv?.yieldSuccess ?? this.ctx.tuning.gather.harvestYield) : (hv?.yieldFail ?? this.ctx.tuning.gather.harvestFailYield)) * toolBonus * strBonusOf(eid));
           this.ctx.stockpile.ore += gain;
           this.ctx.growSkill(eid, skill); this.ctx.recordOutcome(eid, 'mine', ev.success ? gain : -gain);
-          this.ctx.bus.emit({ type: 'resource_gained', eid, item: hv?.product ?? 'ore', amount: gain });
+          this.ctx.bus.emit({ type: 'resource_gained', eid, item: hv?.product ?? this.ctx.tuning.gather.harvestItem, amount: gain });
           this.ctx.bus.emit({ type: 'work_completed', eid, work: 'mine', success: ev.success, x, y });
           this.ctx.adjustMood(eid, ev.success ? 3 : -4);
           this.ctx.logEvent(ev.success ? '采到富矿！' : '采矿一无所获');
@@ -109,17 +109,17 @@ export class GatherSystem implements GameSystem {
         st.chopProgress = (st.chopProgress ?? 0) + dt;
         const tile = this.ctx.world.getTileDef(st.chopXY.x, st.chopXY.y);
         const h = tile.harvest;
-        const time = h?.time ?? 2.5;
+        const time = h?.time ?? this.ctx.tuning.gather.chopTime;
         if (st.chopProgress >= time) {
           const { x, y } = st.chopXY;
           this.ctx.world.setTile(x, y, tile.harvestReplaces ?? 'grass');
-          const dc = h?.dc ?? 55;
-          const skill = h?.skill ?? 'work';
+          const dc = h?.dc ?? this.ctx.tuning.gather.chopDc;
+          const skill = h?.skill ?? this.ctx.tuning.gather.chopSkill;
           const ev = this.ctx.rollEventSkill(eid, dc, skill);
-          const gain = Math.round((ev.success ? (h?.yieldSuccess ?? 5) : (h?.yieldFail ?? 2)) * toolBonus * strBonusOf(eid));
+          const gain = Math.round((ev.success ? (h?.yieldSuccess ?? this.ctx.tuning.gather.chopYield) : (h?.yieldFail ?? this.ctx.tuning.gather.chopFailYield)) * toolBonus * strBonusOf(eid));
           this.ctx.stockpile.wood += gain;
           this.ctx.growSkill(eid, skill); this.ctx.recordOutcome(eid, 'chop', ev.success ? gain : -gain);
-          this.ctx.bus.emit({ type: 'resource_gained', eid, item: h?.product ?? 'wood', amount: gain });
+          this.ctx.bus.emit({ type: 'resource_gained', eid, item: h?.product ?? this.ctx.tuning.gather.chopItem, amount: gain });
           this.ctx.bus.emit({ type: 'work_completed', eid, work: 'chop', success: ev.success, x, y });
           this.ctx.adjustMood(eid, ev.success ? 2 : -3);
           this.ctx.clearTrailCache();

@@ -12,7 +12,11 @@ import type { GameSystem } from '../systems/registry';
 import type { ScriptedEvent } from '../systems/eventSystem';
 import type { ExpansionPlan } from '../systems/autonomousBuildSystem';
 import { DESIRES } from '../core/desires';
-import { LEANS as BUILTIN_LEANS, type LeanDef, type LeanKey } from '../core/lean';
+import type { DesireId } from '../core/desires';
+import { TRAITS as BUILTIN_TRAITS, type TraitDef } from '../defs/traits';
+import { MARKOV_BIAS as BUILTIN_MARKOV, SERIES_TO_DESIRE as BUILTIN_SERIES } from '../defs/behavior';
+import { JOBS as BUILTIN_JOBS } from '../defs/jobs';
+import { LEANS as BUILTIN_LEANS, type LeanDef, type LeanKey } from '../defs/leans';
 import { registerUnitLevel as _registerUnitLevel } from '../core/socialUnit';
 
 // 生命周期钩子上下文（step:before / step:after，见 sim.step）
@@ -183,6 +187,65 @@ export class ModRegistry {
     const old = ModRegistry.leanStore.get(def.key);
     if (old && old.scale !== def.scale) throw new Error(`mod: lean "${def.key}" 冲突（已定义 scale=${old.scale}）`);
     ModRegistry.leanStore.set(def.key, { ...old, ...def });
+    return this;
+  }
+
+  // 天赋表（跨实例共享，与 DESIRES 同策略）：registerTrait 直接写 BUILTIN_TRAITS
+  private static traitStore: Record<string, TraitDef> = BUILTIN_TRAITS;
+  // 马尔可夫偏置表（跨实例共享）：overrideMarkovBias 以"来源系列"为单位合并
+  private static markovStore: Record<string, Record<string, number>> = BUILTIN_MARKOV;
+  // 系列→欲望默认映射（跨实例共享）
+  private static seriesStore: Record<string, DesireId> = BUILTIN_SERIES;
+  // 职业表（跨实例共享）：registerJob 新职业
+  private static jobStore: Record<string, { label: string; cardId: string }> = BUILTIN_JOBS;
+
+  get traits(): Record<string, TraitDef> {
+    return ModRegistry.traitStore;
+  }
+  get markovBias(): Record<string, Record<string, number>> {
+    return ModRegistry.markovStore;
+  }
+  get seriesDesire(): Record<string, DesireId> {
+    return ModRegistry.seriesStore;
+  }
+  get jobCards(): Record<string, string> {
+    return Object.fromEntries(Object.entries(ModRegistry.jobStore).map(([id, j]) => [id, j.cardId]));
+  }
+
+  // 新天赋：进天赋表（跨实例共享）；id 冲突同定义幂等、不同定义抛错
+  registerTrait(def: TraitDef): this {
+    const old = ModRegistry.traitStore[def.id];
+    if (old && JSON.stringify(old) !== JSON.stringify(def)) {
+      throw new Error(`mod: trait "${def.id}" 已存在，请用 overrideTrait 或不同 id`);
+    }
+    ModRegistry.traitStore[def.id] = def;
+    return this;
+  }
+
+  // 覆盖天赋（部分字段合并）
+  overrideTrait(id: string, patch: Partial<TraitDef>): this {
+    const old = ModRegistry.traitStore[id];
+    if (!old) throw new Error(`mod: 覆盖目标 trait "${id}" 不存在，请先 registerTrait`);
+    ModRegistry.traitStore[id] = { ...old, ...patch };
+    return this;
+  }
+
+  // 扩展马尔可夫偏置：为某来源系列合并/覆盖一组目标系列倍率
+  registerMarkovBias(fromSeries: string, toMuls: Record<string, number>): this {
+    ModRegistry.markovStore[fromSeries] = { ...ModRegistry.markovStore[fromSeries], ...toMuls };
+    return this;
+  }
+
+  // 系列默认欲望映射（mod 自定义系列 → 默认欲望）
+  registerSeriesDesire(series: string, desire: DesireId): this {
+    ModRegistry.seriesStore[series] = desire;
+    return this;
+  }
+
+  // 新职业（Q10）：记录职业 → 主导工作卡 + 标签
+  registerJob(id: string, def: { label: string; cardId: string }): this {
+    if (!(id in ModRegistry.jobStore)) ModRegistry.jobStore[id] = def;
+    else throw new Error(`mod: job "${id}" 已存在`);
     return this;
   }
 

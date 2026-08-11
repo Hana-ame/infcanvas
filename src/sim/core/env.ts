@@ -10,8 +10,8 @@ export interface EnvState {
   temperature: number;    // 摄氏度
 }
 
-export function initEnv(): EnvState {
-  return { raining: false, rainLeft: 0, temperature: 18 };
+export function initEnv(t: { baseTemp: number }): EnvState {
+  return { raining: false, rainLeft: 0, temperature: t.baseTemp };
 }
 
 // 环境 tick：气温随昼夜（白天热、夜晚凉）波动；降雨周期性

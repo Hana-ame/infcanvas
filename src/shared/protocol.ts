@@ -9,11 +9,20 @@ export type ClientMsg = HelloMsg | CmdMsg;
 
 // ---- S → C ----
 // welcome：建立连接时发一次世界底（chunk 全量 tile + defs 只读表）
+// 服务端下发的客户端 UI 常量（与 server 同一份 tuning，消除双真值源）
+export interface WelcomeTuning {
+  needs: { foodMoodLow: number };               // 食物告急阈值
+  faction: { unitCapChurch: number; unitCapCampfire: number }; // 派系单位成员上限
+  env: { dayLength: number; baseTemp: number }; // 昼夜时长/基础气温
+}
+
 export interface WelcomeMsg {
   type: 'welcome';
   you: number;               // 分配到的 clientId
   seed: number;
   tickHz: number;
+  dayLength: number;         // 昼夜时长（秒，读 sim tuning）
+  tuning: WelcomeTuning;     // 客户端 UI 常量快照
   world: { width: number; height: number };
   tiles: Record<string, { id: string; color: string; passable: boolean; buildable: boolean; emoji?: string; sprite?: string }>;
   buildings: Record<string, { id: string; name: string; size: { x: number; y: number }; color: string; emoji?: string; passable: boolean; hp: number; costWood?: number; costOre?: number }>;

@@ -78,7 +78,7 @@ export class RaidSystem implements GameSystem {
       const dx = h.targetX - h.x;
       const dy = h.targetY - h.y;
       const d = Math.hypot(dx, dy);
-      const step = (h.speed ?? 3.5) * dt;
+      const step = (h.speed ?? this.ctx.tuning.combat.wolfSpeed) * dt;
       if (d > step) {
         h.x += (dx / d) * step;
         h.y += (dy / d) * step;
@@ -115,7 +115,7 @@ export class RaidSystem implements GameSystem {
         this.ctx.growSkill(nearest, 'fight');
         if (h.hp <= 0) {
           this.ctx.hostiles.splice(i, 1);
-          const loot = h.loot ?? { item: 'ore', amount: 2 };
+          const loot = h.loot ?? { item: this.ctx.tuning.combat.wolfLootItem, amount: this.ctx.tuning.combat.wolfLootAmount };
           this.ctx.stockpile[loot.item] = (this.ctx.stockpile[loot.item] ?? 0) + loot.amount;
           this.ctx.bus.emit({ type: 'resource_gained', eid: nearest, item: loot.item, amount: loot.amount });
           // 战斗结果反馈（EWA）：击杀战利品量 → fight 吸引力（被杀的小人已死，不需记录）

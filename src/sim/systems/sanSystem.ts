@@ -26,8 +26,8 @@ export class SanSystem implements GameSystem {
             if (n) {
               // POW 意志抗压：高意志对死亡冲击耐受（COC §3）
               const dna = this.ctx.dnaOf(eid);
-              const resist = dna ? 1 - Math.max(0, (dna.pow - 40)) / 100 : 1;
-              const shock = s.deathShock * Math.max(0.4, 1 - d / s.witnessRadius) * Math.max(0.4, resist);
+              const resist = dna ? 1 - Math.max(0, (dna.pow - s.powResistMid)) / s.powResistScale : 1;
+              const shock = s.deathShock * Math.max(s.resistFloor, 1 - d / s.witnessRadius) * Math.max(s.resistFloor, resist);
               n.san -= shock;
               n.mood -= s.deathMood;
               this.ctx.setNeeds(eid, n);
@@ -53,8 +53,8 @@ export class SanSystem implements GameSystem {
       // 黑夜 + 远离篝火 → 黑暗恐惧，理智流失（POW 高更镇定）
       if (this.ctx.isNight() && !this.nearCampfire(pos.x, pos.y, s.fireComfortRadius)) {
         const dna = this.ctx.dnaOf(eid);
-        const resist = dna ? 1 - Math.max(0, (dna.pow - 40)) / 100 : 1;
-        n.san -= s.nightDrain * Math.max(0.4, resist) * dt;
+        const resist = dna ? 1 - Math.max(0, (dna.pow - s.powResistMid)) / s.powResistScale : 1;
+        n.san -= s.nightDrain * Math.max(s.resistFloor, resist) * dt;
       }
 
       // 篝火旁休息 → 理智恢复（BuildingDef.aura.sanPerSec 优先）
@@ -109,9 +109,9 @@ export class SanSystem implements GameSystem {
     const pos = this.ctx.pawnPositions.get(eid);
     if (!pos) return;
     const w = this.ctx.world;
-    for (let attempt = 0; attempt < 8; attempt++) {
-      const tx = Math.round(pos.x) + this.ctx.rng.int(-6, 6);
-      const ty = Math.round(pos.y) + this.ctx.rng.int(-6, 6);
+    for (let attempt = 0; attempt < s.crazyWanderAttempts; attempt++) {
+      const tx = Math.round(pos.x) + this.ctx.rng.int(-s.crazyWanderRange, s.crazyWanderRange);
+      const ty = Math.round(pos.y) + this.ctx.rng.int(-s.crazyWanderRange, s.crazyWanderRange);
       if (w.inBounds(tx, ty) && w.isPassable(tx, ty)) {
         this.ctx.moveTo(eid, tx, ty);
         st.crazyCooldown = s.crazyCooldownMin + this.ctx.rng.next() * (s.crazyCooldownMax - s.crazyCooldownMin);

@@ -21,7 +21,8 @@ export class PopulationSystem implements GameSystem {
     // 找出生点附近空位生成
     const cx = Math.floor(this.ctx.world.width / 2);
     const cy = Math.floor(this.ctx.world.height / 2);
-    for (let r = 2; r <= 6; r++) {
+    const pp = this.ctx.tuning.population;
+    for (let r = pp.spawnRingMin; r <= pp.spawnRingMax; r++) {
       for (let dy = -r; dy <= r; dy++) {
         for (let dx = -r; dx <= r; dx++) {
           if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue;

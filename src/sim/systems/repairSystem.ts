@@ -43,7 +43,7 @@ export class RepairSystem implements GameSystem {
       st.job = '修理';
       // 距离近则直接开始修，否则走过去
       const d = Math.hypot(pos.x - target.x, pos.y - target.y);
-      if (d <= 1.5) {
+      if (d <= this.ctx.tuning.repair.inPlaceDist) {
         this.repairing.set(eid, { x: target.x, y: target.y, progress: 0 });
       } else {
         this.ctx.moveAdjacent(eid, target.x, target.y);

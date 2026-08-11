@@ -29,7 +29,7 @@ describe('server 网络层基础（P1）', () => {
     const rs = new RemoteSim('ws://unused');
     // 手工喂 welcome（等价于 server 下发）
     const welcome: WelcomeMsg = {
-      type: 'welcome', you: 1, seed: 42, tickHz: 20,
+      type: 'welcome', you: 1, seed: 42, tickHz: 20, dayLength: 120, tuning: { needs: { foodMoodLow: 30 }, faction: { unitCapChurch: 10, unitCapCampfire: 3 }, env: { dayLength: 120, baseTemp: 18 } },
       world: { width: 4, height: 3 },
       tiles: { grass: { id: 'grass', color: '#3a7d44', passable: true, buildable: true } },
       buildings: { campfire: { id: 'campfire', name: '篝火', size: { x: 1, y: 1 }, color: '#f4a340', passable: true, hp: 100 } },
@@ -48,7 +48,7 @@ describe('server 网络层基础（P1）', () => {
   it('RemoteSim: 快照驱动 pawns/资源/建筑 + tile 增量事件更新地面', () => {
     const rs = new RemoteSim('ws://unused');
     (rs as unknown as { onMessage(s: string): void }).onMessage(JSON.stringify({
-      type: 'welcome', you: 1, seed: 42, tickHz: 20,
+      type: 'welcome', you: 1, seed: 42, tickHz: 20, dayLength: 120, tuning: { needs: { foodMoodLow: 30 }, faction: { unitCapChurch: 10, unitCapCampfire: 3 }, env: { dayLength: 120, baseTemp: 18 } },
       world: { width: 4, height: 3 },
       tiles: { grass: { id: 'grass', color: '#3a7d44', passable: true, buildable: true } },
       buildings: {},

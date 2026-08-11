@@ -1,10 +1,16 @@
 // 数据驱动行为卡系统 —— 卡产"意图"，行为系统执行（mod 友好）
-// 设计：卡 = 数据 + 条件 + 收益 + 决策(intent)。意图由统一 BehaviorSystem 消化成走位/工作。
-// 加新卡 = 定义一张卡（含 condition/utility/intent），不改任何分发逻辑。
+// 设计：卡 = 数据表（权重/阈值/收益/意图）+ 统一工厂生成 condition/utility/decide
+// 玩法数值全部在 defs（卡片表）+ tuning；本文件只剩机制（抽卡/权重合成/生成流程）
+// 加新卡 = defs/cards.ts 加一行（或 ModRegistry.registerCard），不改分发逻辑
 
 import { SimRng } from '../core/rng';
 import type { DesireId } from '../core/desires';
 import { allDesires } from '../core/desires';
+import { TRAITS, allTraits, type AttrKey, type TraitDef } from '../defs/traits';
+import { MARKOV_BIAS, SERIES_TO_DESIRE } from '../defs/behavior';
+import { TUNING, type PawnTuning, type DesireTuning, type TuningConfig } from '../defs/tuning';
+import { BASE_CARD_DEFS } from '../defs/cards';
+import { JOBS } from '../defs/jobs';
 
 export type SkillId = 'work' | 'fight' | 'social' | 'faith' | 'craft';
 
@@ -43,6 +49,14 @@ export interface CardView {
   assignedJob?: string;
   // 行为结果学习（EWA 吸引模型）：经验记忆（期望收益）→ 权重倍率（1=中性，>1 偏做，<1 回避）
   leanOf?(eid: number, key: string): number;
+  // 全量平衡参数（只读；卡组/mod 卡可读阈值/倍率做决策）
+  tuning?: TuningConfig;
+  // 马尔可夫偏置表（registry 替身，mod 可覆盖/扩展）
+  markovBias?: Record<string, Record<string, number>>;
+  // 指派职业 → 主导工作卡（registry 替身，mod 可注册新职业）
+  jobCards?: Record<string, string>;
+  // 系列默认欲望映射（registry 替身；卡 declare desire 优先）
+  desireOfSeries?(series: string): DesireId | null;
 }
 
 export interface CardContext {
@@ -78,178 +92,159 @@ export interface BehaviorCard {
   decide(ctx: CardContext): BehaviorIntent;
 }
 
+// 声明式卡数据（数据驱动核心）：工厂把 needAt/utility* 生成 condition/utility
+export interface BehaviorCardDef {
+  id: string;
+  name: string;
+  series: string;
+  weight: number;
+  needAt?: Partial<{ food: number; rest: number; mood: number; hp: number }>; // 需求触发阈值
+  utilityBase?: number;    // utility = utilityBase - 对应需求值（needAt 首个键）
+  utilityFixed?: number;   // 固定收益
+  utilityPerQueue?: number; // utility = 建造队列长度 × 此值
+  action: IntentAction;    // 意图（eat/rest/pray/heal/idle/walkAndWork…）
+  workType?: string;       // walkAndWork 用
+  label: string;           // 显示的工作名
+  satisfies?: { desire: DesireId; amount: number }[];
+  desire?: DesireId;
+  condition?: (c: CardContext) => boolean; // needAt 之外的自定义条件
+  extraUtility?: (c: CardContext) => number; // 叠加收益（与 need/queue 合并）
+}
+
+// 卡工厂：声明式数据 → 行为卡（condition/utility/decide 统一生成）
+export function cardFromDef(def: BehaviorCardDef): BehaviorCard {
+  let condition = def.condition;
+  let utility: ((c: CardContext) => number) | undefined = def.utilityFixed !== undefined ? () => def.utilityFixed! : undefined;
+  // 需求阈值：condition = 需求 < 阈值；utility = utilityBase - 需求值
+  const needKey = def.needAt ? (Object.keys(def.needAt)[0] as 'food' | 'rest' | 'mood' | 'hp') : null;
+  if (needKey && def.needAt) {
+    const at = def.needAt[needKey]!;
+    const readNeed = (c: CardContext): number => {
+      if (needKey === 'hp') return c.view.healthOf?.(c.eid)?.hp ?? 100;
+      return c.view.needsOf(c.eid)?.[needKey] ?? 100;
+    };
+    condition = condition ?? ((c) => readNeed(c) < at);
+    if (def.utilityBase !== undefined) {
+      utility = (c) => def.utilityBase! - readNeed(c);
+    }
+  }
+  // 建造队列收益
+  if (def.utilityPerQueue !== undefined) {
+    condition = condition ?? ((c) => c.view.buildQueueCount > 0);
+    utility = (c) => c.view.buildQueueCount * def.utilityPerQueue!;
+  }
+  if (!utility && def.extraUtility) utility = def.extraUtility;
+  return {
+    id: def.id, name: def.name, series: def.series, weight: def.weight,
+    condition, utility,
+    satisfies: def.satisfies, desire: def.desire,
+    decide: () => ({ action: def.action, workType: def.workType, label: def.label }),
+  };
+}
+
 export interface PawnLike {
   dna: Dna;
   slots: (BehaviorCard | null)[];
 }
 
-// ---- 基础卡池 ----
-export const BASE_CARDS: BehaviorCard[] = [
-  {
-    id: 'eat', name: '进食', series: 'physio', weight: 9,
-    condition: (c) => (c.view.needsOf(c.eid)?.food ?? 0) < 45,
-    utility: (c) => 60 - (c.view.needsOf(c.eid)?.food ?? 0),
-    decide: () => ({ action: 'eat', label: '进食' }),
-  },
-  {
-    id: 'rest', name: '休息', series: 'physio', weight: 8,
-    condition: (c) => (c.view.needsOf(c.eid)?.rest ?? 0) < 40,
-    utility: (c) => 50 - (c.view.needsOf(c.eid)?.rest ?? 0),
-    decide: () => ({ action: 'rest', label: '休息' }),
-  },
-  {
-    id: 'chop', name: '伐木', series: 'work', weight: 6,
-    utility: () => 30,
-    satisfies: [{ desire: 'greed', amount: 2 }],
-    decide: () => ({ action: 'walkAndWork', workType: 'chop', label: '伐木' }),
-  },
-  {
-    id: 'mine', name: '采矿', series: 'work', weight: 4,
-    utility: () => 25,
-    satisfies: [{ desire: 'greed', amount: 2 }],
-    decide: () => ({ action: 'walkAndWork', workType: 'mine', label: '采矿' }),
-  },
-  {
-    id: 'caveMine', name: '矿洞采掘', series: 'work', weight: 6,
-    condition: (c) => c.view.hasCave(),
-    utility: () => 28,
-    satisfies: [{ desire: 'greed', amount: 2 }],
-    decide: () => ({ action: 'walkAndWork', workType: 'caveMine', label: '矿洞采掘' }),
-  },
-  {
-    id: 'build', name: '建造', series: 'work', weight: 5,
-    condition: (c) => c.view.buildQueueCount > 0,
-    utility: (c) => c.view.buildQueueCount * 20,
-    satisfies: [{ desire: 'greed', amount: 1.5 }],
-    decide: () => ({ action: 'walkAndWork', workType: 'build', label: '建造' }),
-  },
-  {
-    id: 'pray', name: '祈祷', series: 'religion', weight: 1,
-    condition: (c) => c.view.hasCampfire(),
-    utility: () => 6,
-    satisfies: [{ desire: 'pride', amount: 2 }],
-    decide: () => ({ action: 'pray', label: '祈祷' }),
-  },
-  {
-    id: 'heal', name: '疗伤', series: 'physio', weight: 6,
-    condition: (c) => (c.view.healthOf ? (c.view.healthOf(c.eid)?.hp ?? 100) < 70 : false),
-    utility: (c) => 70 - (c.view.healthOf ? (c.view.healthOf(c.eid)?.hp ?? 100) : 100),
-    decide: () => ({ action: 'heal', label: '疗伤' }),
-  },
-  {
-    id: 'idle', name: '闲逛', series: 'leisure', weight: 2,
-    utility: () => 2,
-    decide: () => ({ action: 'idle', label: '闲逛' }),
-  },
-];
+// ---- 基础卡池（数据表在 defs/cards.ts，工厂生成）----
+export const BASE_CARDS: BehaviorCard[] = BASE_CARD_DEFS.map(cardFromDef);
 
-// 生成 DNA（确定性：给定 seed）
-export function generateDna(seed: number): Dna {
+// 天赋卡池（数据表在 defs/traits.ts；动态生成——registerTrait 后新天赋卡自动生效）
+export const TRAIT_CARDS: Record<string, BehaviorCard> = Object.fromEntries(
+  allTraits().filter((id) => TRAITS[id]?.card).map((id) => [id, traitCardOf(TRAITS[id]!)]),
+);
+
+function traitCardOf(t: TraitDef): BehaviorCard {
+  return cardFromDef({ ...t.card!, id: t.card!.id, name: t.card!.name, series: t.card!.series, weight: t.card!.weight });
+}
+
+// 生成 DNA（确定性：给定 seed）；出生参数全读 tuning
+export function generateDna(
+  seed: number,
+  t?: PawnTuning & Pick<DesireTuning, 'sinInitMin' | 'sinInitRange' | 'sinFloor'>,
+): Dna {
+  const cfg = t ?? { ...TUNING.pawn, sinInitMin: TUNING.desire.sinInitMin, sinInitRange: TUNING.desire.sinInitRange, sinFloor: TUNING.desire.sinFloor };
   const rng = new SimRng(seed);
   const roll = (min: number, max: number) => rng.int(min, max);
 
+  // 天赋抽选（按表 weight 加权；同人不重复）
   const traits: string[] = [];
-  const traitCount = rng.int(1, 3);
-  const traitPool = ['夜猫子', '热爱工作', '好斗', '虔诚', '懒惰', '强壮', '机灵'];
+  const traitCount = rng.int(cfg.traitCountMin, cfg.traitCountMax);
+  const pool = allTraits().filter((id) => TRAITS[id] !== undefined);
   for (let i = 0; i < traitCount; i++) {
-    const t = rng.pick(traitPool);
-    if (!traits.includes(t)) traits.push(t);
+    const cand = pool.filter((id) => !traits.includes(id));
+    if (cand.length === 0) break;
+    const weights = cand.map((id) => TRAITS[id].weight);
+    const picked = rng.weightedPick(cand, weights);
+    if (picked) traits.push(picked);
   }
 
   const dna: Dna = {
-    str: roll(30, 70),
-    con: roll(30, 70),
-    int: roll(30, 70),
-    siz: roll(30, 70),
-    dex: roll(30, 70),
-    app: roll(30, 70),
-    pow: roll(30, 70),
-    edu: roll(30, 70),
+    str: roll(cfg.attrMin, cfg.attrMax),
+    con: roll(cfg.attrMin, cfg.attrMax),
+    int: roll(cfg.attrMin, cfg.attrMax),
+    siz: roll(cfg.attrMin, cfg.attrMax),
+    dex: roll(cfg.attrMin, cfg.attrMax),
+    app: roll(cfg.attrMin, cfg.attrMax),
+    pow: roll(cfg.attrMin, cfg.attrMax),
+    edu: roll(cfg.attrMin, cfg.attrMax),
     traits,
-    maxSlots: 2 + rng.int(0, 2),
+    maxSlots: cfg.maxSlotsMin + rng.int(0, cfg.maxSlotsRand),
     skillBonuses: {},
     sins: {},
   };
 
-  // 天赋 → 属性微调（COC 属性卡，DESIGN §3）
-  if (traits.includes('强壮')) { dna.str = Math.min(90, dna.str + 12); dna.siz = Math.min(90, dna.siz + 6); }
-  if (traits.includes('机灵')) { dna.int = Math.min(90, dna.int + 10); dna.dex = Math.min(90, dna.dex + 6); }
-  if (traits.includes('夜猫子')) dna.pow = Math.min(90, dna.pow + 8);
+  // 天赋 → 属性微调（表驱动：statMods）
+  for (const id of traits) {
+    const tr = TRAITS[id];
+    if (!tr?.statMods) continue;
+    for (const [k, mod] of Object.entries(tr.statMods) as [AttrKey, number][]) {
+      dna[k] = Math.min(90, dna[k] + mod);
+    }
+  }
 
-  // 天赋 → 罪孽倾向（个性权重 0-1）：遍历欲望目录（动态，mod 新欲望自动有先天倾向）
+  // 天赋 → 罪孽倾向（个性权重 0-1）：先随机底值，再叠加天赋修正（表驱动：sinMods）
   const sins: Dna['sins'] = {};
-  for (const k of allDesires()) sins[k] = 0.2 + rng.next() * 0.5;
-  if (traits.includes('懒惰')) sins.sloth = Math.min(1, (sins.sloth ?? 0) + 0.3);
-  if (traits.includes('好斗')) sins.wrath = Math.min(1, (sins.wrath ?? 0) + 0.3);
-  if (traits.includes('热爱工作')) sins.sloth = Math.max(0.1, (sins.sloth ?? 0) - 0.3);
-  if (traits.includes('虔诚')) sins.pride = Math.max(0.1, (sins.pride ?? 0) - 0.2);
+  for (const k of allDesires()) sins[k] = cfg.sinInitMin + rng.next() * cfg.sinInitRange;
+  for (const id of traits) {
+    const tr = TRAITS[id];
+    if (!tr?.sinMods) continue;
+    for (const [k, mod] of Object.entries(tr.sinMods) as [DesireId, number][]) {
+      const v = (sins[k] ?? 0) + mod;
+      sins[k] = Math.min(1, Math.max(cfg.sinFloor, v));
+    }
+  }
   dna.sins = sins;
 
-  if (traits.includes('热爱工作')) dna.skillBonuses.work = 1.5;
-  if (traits.includes('好斗')) dna.skillBonuses.fight = 1.5;
-  if (traits.includes('虔诚')) dna.skillBonuses.faith = 1.5;
-  if (traits.includes('机灵')) dna.skillBonuses.craft = 1.2;
+  // 天赋 → 技能加成（表驱动：skillBonuses）
+  for (const id of traits) {
+    const tr = TRAITS[id];
+    if (!tr?.skillBonuses) continue;
+    for (const [k, mod] of Object.entries(tr.skillBonuses) as [SkillId, number][]) {
+      dna.skillBonuses[k] = (dna.skillBonuses[k] ?? 1) * mod;
+    }
+  }
 
   return dna;
 }
 
-// 天赋卡
-export const TRAIT_CARDS: Record<string, BehaviorCard> = {
-  '夜猫子': {
-    id: 'trait:夜猫子', name: '夜猫子', series: 'physio', weight: 1,
-    condition: (c) => c.view.isNight() && (c.view.needsOf(c.eid)?.rest ?? 0) < 70,
-    utility: (c) => 40 - (c.view.needsOf(c.eid)?.rest ?? 0),
-    decide: () => ({ action: 'rest', label: '夜间活动' }),
-  },
-  '热爱工作': {
-    id: 'trait:热爱工作', name: '热爱工作', series: 'work', weight: 0,
-    utility: () => 0,
-    decide: () => ({ action: 'idle', label: '闲逛' }),
-  },
-  '好斗': {
-    id: 'trait:好斗', name: '好斗', series: 'combat', weight: 2,
-    condition: () => false,
-    utility: () => 0,
-    decide: () => ({ action: 'idle', label: '闲逛' }),
-  },
-  '虔诚': {
-    id: 'trait:虔诚', name: '虔诚', series: 'religion', weight: 3,
-    condition: (c) => (c.view.needsOf(c.eid)?.mood ?? 0) < 50,
-    utility: () => 10,
-    decide: () => ({ action: 'pray', label: '祈祷' }),
-  },
-  '懒惰': {
-    id: 'trait:懒惰', name: '懒惰', series: 'leisure', weight: 4,
-    utility: () => 12,
-    decide: () => ({ action: 'idle', label: '偷懒' }),
-  },
-  '强壮': {
-    id: 'trait:强壮', name: '强壮', series: 'work', weight: 0,
-    utility: () => 0,
-    decide: () => ({ action: 'idle', label: '闲逛' }),
-  },
-  '机灵': {
-    id: 'trait:机灵', name: '机灵', series: 'work', weight: 0,
-    utility: () => 0,
-    decide: () => ({ action: 'idle', label: '闲逛' }),
-  },
-};
-
-// 初始卡池：天赋卡 + mod 卡（全部进入，确保 mod 卡必在池中）+ 基础卡保底
-export function initSlots(dna: Dna, extraCards?: BehaviorCard[]): (BehaviorCard | null)[] {
+// 初始卡池：天赋卡（表驱动）+ mod 卡（全部进入，确保 mod 卡必在池中）+ 基础卡保底
+export function initSlots(dna: Dna, extraCards?: BehaviorCard[], t?: CardTuningLike): (BehaviorCard | null)[] {
+  const cfg = t ?? TUNING.card;
   const slots: (BehaviorCard | null)[] = [];
-  const traitCards = dna.traits
-    .map((t) => TRAIT_CARDS[t])
-    .filter((c): c is BehaviorCard => c !== undefined);
-  for (const tc of traitCards) slots.push(tc);
+  // 天赋卡：从 traits 表生成（registerTrait 后新天赋自动生效 + 卡槽自动进入）
+  for (const id of dna.traits) {
+    const tr = TRAITS[id];
+    if (tr?.card) slots.push(traitCardOf(tr));
+  }
   // mod 卡全部进池（去重排除基础卡；即使超 maxSlots 也保留——抽卡按权重，容量不再挤出 mod 玩法）
   const extra = (extraCards ?? []).filter((c) => !BASE_CARDS.some((b) => b.id === c.id));
   for (const ec of extra) slots.push(ec);
-  // 基础卡保底 GUARANTEED_BASE 张（eat/rest/chop）：maxSlots=2 且 2 trait 卡时若无保底 → 小人
+  // 基础卡保底 guaranteedBase 张（eat/rest/chop）：maxSlots=2 且 2 trait 卡时若无保底 → 小人
   // 没有任何基础卡、永久闲逛（曾实测发生）。保底让"天赋再强也有生存底线"。
-  const GUARANTEED_BASE = 3;
   let baseIdx = 0;
-  while (baseIdx < GUARANTEED_BASE && baseIdx < BASE_CARDS.length) {
+  while (baseIdx < cfg.guaranteedBase && baseIdx < BASE_CARDS.length) {
     slots.push(BASE_CARDS[baseIdx++]);
   }
   // 空槽（maxSlots 更大）再继续填
@@ -258,6 +253,8 @@ export function initSlots(dna: Dna, extraCards?: BehaviorCard[]): (BehaviorCard 
   }
   return slots;
 }
+
+export type CardTuningLike = TuningConfig['card'];
 
 // 抽卡：按权重不放回抽 n 张（种子化）
 export function drawCards(pawn: PawnLike, rng: SimRng, n: number, ctx: CardContext): BehaviorCard[] {
@@ -278,67 +275,54 @@ export function drawCards(pawn: PawnLike, rng: SimRng, n: number, ctx: CardConte
   return drawn;
 }
 
-// 马尔可夫偏置表：上一事件系列 → 本轮系列权重倍率（DESIGN §6）
-// 未列出的默认 1。mod 可扩展。
-export const MARKOV_BIAS: Record<string, Record<string, number>> = {
-  work:    { leisure: 1.6, physio: 1.4 },   // 干完活想歇
-  combat:  { physio: 1.6, work: 1.2 },      // 打完想缓、也容易上头继续干活
-  physio:  { work: 1.5, leisure: 1.2 },     // 吃饱睡足想动
-  leisure: { work: 1.4 },                    // 闲够了想干点正事
-  religion:{ work: 1.2, physio: 1.1 },      // 祈祷完心安
-  social:  { leisure: 1.4 },
-};
-
-// 指派职业（Q10 生产线）→ 主导工作卡 id
-export const JOB_CARD: Record<string, string> = {
-  lumberjack: 'chop',
-  miner: 'mine',
-  farmer: 'build',   // 农田自动产粮，农民负责扩建/维护农田（build）
-  crafter: 'build',
-};
-
-function effectiveWeight(card: BehaviorCard, pawn: PawnLike, ctx?: CardContext): number {
+export function effectiveWeight(card: BehaviorCard, pawn: PawnLike, ctx?: CardContext): number {
   let w = card.weight;
-  if (pawn.dna.traits.includes('热爱工作') && card.series === 'work') w *= 1.8;
-  if (pawn.dna.traits.includes('懒惰') && card.series === 'work') w *= 0.5;
+  // 天赋权重倍率（表驱动：TraitDef.weightMuls[series]；mod 天赋也可声明自己的调制）
+  for (const id of pawn.dna.traits) {
+    const mul = TRAITS[id]?.weightMuls?.[card.series];
+    if (mul !== undefined) w *= mul;
+  }
   // 欲望驱动：未满足的欲望 → 对应系列卡权重升高（DESIGN §3）
   // 关联 = 卡声明 desire ?? 系列默认映射（可扩展不破坏）
-  if (ctx?.view.desiresOf) {
-    const desire = card.desire ?? seriesToDesire(card.series);
+  const cardT = ctx?.view.tuning?.card;
+  if (ctx?.view.desiresOf && cardT) {
+    const desire = card.desire ?? ctx.view.desireOfSeries?.(card.series) ?? null;
     if (desire) {
       const d = ctx.view.desiresOf(ctx.eid);
       if (d && d[desire] !== undefined) {
         const hunger = 100 - d[desire];
-        if (hunger > 40) w *= 1 + (hunger - 40) / 100; // 匮乏(>40%) → 权重升
+        if (hunger > cardT.desireHungerAt) w *= 1 + (hunger - cardT.desireHungerAt) / cardT.desireDriveDiv; // 匮乏 → 权重升
       }
     }
   }
-  // 环境调制（DESIGN §6）：下雨/酷暑/严寒 → 户外工作低，娱乐高
+  // 环境调制（DESIGN §6）：下雨/酷暑/严寒 → 户外工作低，娱乐高（倍率全读 tuning.card）
   const env = ctx?.view.env;
-  if (env) {
+  if (env && cardT && ctx) {
+    const extreme = () => env.temperature > ctx.view.tuning!.env.hotAt || env.temperature < ctx.view.tuning!.env.coldAt;
     if (card.series === 'work') {
-      if (env.raining) w *= 0.5;
-      if (env.temperature > 32 || env.temperature < 0) w *= 0.6;
+      if (env.raining) w *= cardT.envWorkRainMul;
+      if (extreme()) w *= cardT.envWorkExtremeMul;
     } else if (card.series === 'leisure') {
-      if (env.raining) w *= 1.6;
+      if (env.raining) w *= cardT.envLeisureRainMul;
     } else if (card.series === 'physio') {
-      if (env.temperature > 32 || env.temperature < 0) w *= 1.3; // 极端天气更想进食/休息
+      if (extreme()) w *= cardT.envPhysioExtremeMul; // 极端天气更想进食/休息
     }
   }
-  // 马尔可夫偏置（DESIGN §6）：上一轮干了什么 → 本轮倾向
+  // 马尔可夫偏置（DESIGN §6）：上一轮干了什么 → 本轮倾向（mods 注入可覆盖，未注入用内建表）
+  const bias = ctx?.view.markovBias ?? MARKOV_BIAS;
   const last = ctx?.view.lastSeries;
-  if (last && MARKOV_BIAS[last]?.[card.series] !== undefined) {
-    w *= MARKOV_BIAS[last][card.series];
+  if (last && bias?.[last]?.[card.series] !== undefined) {
+    w *= bias[last][card.series];
   }
   // 派系优先级（用户 Q8）：环境评估下达的工作优先指令，调制对应工作卡权重
   const pri = ctx?.view.factionPriority?.[card.id];
   if (pri !== undefined) w *= pri;
-  // 指派职业（Q10）：强制主导对应工作卡，其他工作卡权重压到极低
+  // 指派职业（Q10）：强制主导对应工作卡，其他工作卡权重压到极低（倍率读 tuning）
   const job = ctx?.view.assignedJob;
-  if (job) {
-    const jobCard = JOB_CARD[job];
+  if (job && cardT) {
+    const jobCard = ctx!.view.jobCards?.[job];
     if (jobCard) {
-      w *= card.id === jobCard ? 6 : 0.1;
+      w *= card.id === jobCard ? cardT.jobCardMul : cardT.jobOthersMul;
     }
   }
   // 行为结果学习（EWA）：经验吸引 A → exp(βA) 权重倍率（1=无经验中性，>1 偏做，<1 回避）
@@ -346,17 +330,6 @@ function effectiveWeight(card: BehaviorCard, pawn: PawnLike, ctx?: CardContext):
   if (lean !== undefined) w *= lean;
   return w;
 }
-
-const seriesToDesire = (series: BehaviorCard['series']): DesireId | null => {
-  switch (series) {
-    case 'physio': return 'gluttony';
-    case 'leisure': return 'sloth';
-    case 'work': return 'greed';
-    case 'combat': return 'wrath';
-    case 'religion': return 'pride';
-    default: return null;
-  }
-};
 
 // 挑收益最高
 export function pickBest(drawn: BehaviorCard[], ctx: CardContext): BehaviorCard | null {
@@ -369,3 +342,9 @@ export function pickBest(drawn: BehaviorCard[], ctx: CardContext): BehaviorCard 
   }
   return best;
 }
+
+// 职业 → 主导工作卡（数据在 defs/jobs.ts；保留导出兼容）
+export { JOBS, JOB_CARD } from '../defs/jobs';
+export { MARKOV_BIAS, SERIES_TO_DESIRE } from '../defs/behavior';
+export * from '../defs/traits';
+export type { TraitDef } from '../defs/traits';

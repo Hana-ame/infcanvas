@@ -66,7 +66,7 @@ export class SocialUnitSystem implements GameSystem {
     for (const u of this.units.values()) {
       const ux = u.key % w.width;
       const uy = Math.floor(u.key / w.width);
-      if (Math.abs(ux - x) <= 4 && Math.abs(uy - y) <= 4) return u;
+      if (Math.abs(ux - x) <= this.ctx.tuning.faction.upgradeNearDist && Math.abs(uy - y) <= this.ctx.tuning.faction.upgradeNearDist) return u;
     }
     return null;
   }
@@ -83,7 +83,7 @@ export class SocialUnitSystem implements GameSystem {
       memory: [],
       opinions: new Map(),
       createdAt: now,
-      resources: { wood: 30, ore: 5, food: 25, tools: 0 }, // 派系初始库存（Q9）
+      resources: { ...this.ctx.tuning.faction.unitStartResources }, // 派系初始库存（Q9，数据在 tuning.faction）
       tradeBalance: new Map(),
     };
     this.units.set(unit.id, unit);
@@ -252,8 +252,8 @@ export class SocialUnitSystem implements GameSystem {
     this.msgCd.set(ua.id, this.ctx.time + f.msgCooldown);
     const sum = ab + ba;
     if (sum >= 0) {
-      adjustOpinion(ua, ub.id, 1, this.ctx.time);
-      adjustOpinion(ub, ua.id, 1, this.ctx.time);
+      adjustOpinion(ua, ub.id, f.opinionMsgFriendly, this.ctx.time);
+      adjustOpinion(ub, ua.id, f.opinionMsgFriendly, this.ctx.time);
       this.ctx.logEvent(`💬 ${ua.name} 传话给 ${ub.name}："听闻贵部族兴起，愿结善缘"`);
       this.ctx.bus.emit({ type: 'faction_event', kind: 'message', from: ua.name, to: ub.name });
       addMemory(ua, this.ctx.time, `💬 向 ${ub.name} 传友善的话`);
@@ -278,7 +278,7 @@ export class SocialUnitSystem implements GameSystem {
     const isPlayer = ua.id === this.ctx.playerUnitId;
     const uaFood = isPlayer ? (this.ctx.stockpile.food ?? 0) : (ua.resources.food ?? 0);
     const uaWood = isPlayer ? this.ctx.stockpile.wood : (ua.resources.wood ?? 0);
-    const rate = uaFood < 40 ? f.tradeRateShort : f.tradeRateNormal;
+    const rate = uaFood < f.tradeFoodScarceAt ? f.tradeRateShort : f.tradeRateNormal;
     if (uaWood >= f.tradeWood) {
       if (isPlayer) {
         this.ctx.stockpile.wood = uaWood - f.tradeWood;
@@ -318,7 +318,7 @@ export class SocialUnitSystem implements GameSystem {
         if (!ubId || ubId === uaId) continue;
         const posB = this.ctx.pawnPositions.get(b);
         if (!posB) continue;
-        if (Math.hypot(posA.x - posB.x, posA.y - posB.y) > 4) continue;
+        if (Math.hypot(posA.x - posB.x, posA.y - posB.y) > f.trustMeetDist) continue;
         // 两单位成员协作 → 双向看法增进（信任机制 → 派系涌现）
         adjustOpinion(this.units.get(uaId)!, ubId, f.opinionFriendly, this.ctx.time);
         adjustOpinion(this.units.get(ubId)!, uaId, f.opinionFriendly, this.ctx.time);

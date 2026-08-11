@@ -28,7 +28,8 @@ class FakeWs {
 }
 
 const WELCOME: WelcomeMsg = {
-  type: 'welcome', you: 1, seed: 42, tickHz: 20,
+  type: 'welcome', you: 1, seed: 42, tickHz: 20, dayLength: 120,
+  tuning: { needs: { foodMoodLow: 30 }, faction: { unitCapChurch: 10, unitCapCampfire: 3 }, env: { dayLength: 120, baseTemp: 18 } },
   world: { width: 4, height: 3 },
   tiles: { grass: { id: 'grass', color: '#3a7d44', passable: true, buildable: true } },
   buildings: {},
@@ -203,7 +204,8 @@ describe('RemoteSim 断线重连（P1）', () => {
 });
 
 const RECOVER: WelcomeMsg = {
-  type: 'welcome', you: 1, seed: 42, tickHz: 20,
+  type: 'welcome', you: 1, seed: 42, tickHz: 20, dayLength: 120,
+  tuning: { needs: { foodMoodLow: 30 }, faction: { unitCapChurch: 10, unitCapCampfire: 3 }, env: { dayLength: 120, baseTemp: 18 } },
   world: { width: 4, height: 3 },
   tiles: { grass: { id: 'grass', color: '#3a7d44', passable: true, buildable: true } },
   buildings: {},

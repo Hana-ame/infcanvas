@@ -7,6 +7,7 @@ import type { SimView } from './remote';
 import { SvgAssets } from './svgLoader';
 import { weatherLabel } from '../sim/core/env';
 import { DESIRES } from '../sim/core/desires';
+import { JOBS, jobLabelOf } from '../sim/defs/jobs';
 import { loadSave, writeSave } from './storage';
 
 const nf = (v: number | undefined): string => (v === undefined ? '-' : Math.round(v).toString());
@@ -155,7 +156,8 @@ function createHud(sim: SimView, onSelectBuild: (id: string | null) => void, onZ
   const update = (bm: string | null): void => {
     // 资源条
     const s = sim.stockpile;
-    const foodWarn = s.food < 30 ? ` <span style="color:#f66">⚠食物告急!</span>` : '';
+    const foodLow = sim.tuning.needs?.foodMoodLow ?? 30;
+    const foodWarn = s.food < foodLow ? ` <span style="color:#f66">⚠食物告急!</span>` : '';
     const raidWarn = sim.hostiles.length > 0 ? ` <span style="color:#f66">⚔ 袭击！${sim.hostiles.length}${sim.hostiles[0]?.faction === 'unit' ? ' 名掠夺者' : ' 只野狼'}</span>` : '';
     const dayIcon = sim.isNight() ? '🌙' : '☀️';
     const pauseMark = sim.paused ? ' ⏸暂停' : ` ${sim.speed}x`;
@@ -218,12 +220,9 @@ function createHud(sim: SimView, onSelectBuild: (id: string | null) => void, onZ
         selPanel.innerHTML =
           `<b>🐭 小人 ${eid}</b> (${Math.round(p.pos.x)},${Math.round(p.pos.y)})<br>` +
           `<span style="color:#4cf">工作：${p.job || '闲逛'}</span>` +
-          (p.assignedJob ? `<br><span style="color:#9cf">指派：${({ lumberjack: '伐木工', miner: '矿工', farmer: '农民', crafter: '工匠' } as Record<string, string>)[p.assignedJob] ?? p.assignedJob}</span>` : '') +
+          (p.assignedJob ? `<br><span style="color:#9cf">指派：${jobLabelOf(p.assignedJob)}</span>` : '') +
           `<br><button data-job="" style="pointer-events:auto;border:1px solid #555;background:#333;color:#eee;border-radius:5px;padding:2px 7px;cursor:pointer;font:11px system-ui;">自由</button>` +
-          `<button data-job="lumberjack" style="pointer-events:auto;border:1px solid #555;background:#333;color:#eee;border-radius:5px;padding:2px 7px;cursor:pointer;font:11px system-ui;">伐木工</button>` +
-          `<button data-job="miner" style="pointer-events:auto;border:1px solid #555;background:#333;color:#eee;border-radius:5px;padding:2px 7px;cursor:pointer;font:11px system-ui;">矿工</button>` +
-          `<button data-job="farmer" style="pointer-events:auto;border:1px solid #555;background:#333;color:#eee;border-radius:5px;padding:2px 7px;cursor:pointer;font:11px system-ui;">农民</button>` +
-          `<button data-job="crafter" style="pointer-events:auto;border:1px solid #555;background:#333;color:#eee;border-radius:5px;padding:2px 7px;cursor:pointer;font:11px system-ui;">工匠</button><br>` +
+          `${Object.entries(JOBS).map(([id, j]) => `<button data-job="${id}" style="pointer-events:auto;border:1px solid #555;background:#333;color:#eee;border-radius:5px;padding:2px 7px;cursor:pointer;font:11px system-ui;">${j.label}</button>`).join('')}<br>` +
           `HP ${nf(hk?.hp)}/${nf(hk?.maxHp)} · 信仰 ${nf(p.faith)}<br>` +
           `STR ${p.dna.str} · CON ${p.dna.con} · SIZ ${p.dna.siz} · DEX ${p.dna.dex}<br>` +
           `INT ${p.dna.int} · POW ${p.dna.pow} · APP ${p.dna.app} · EDU ${p.dna.edu}<br>` +
@@ -234,11 +233,11 @@ function createHud(sim: SimView, onSelectBuild: (id: string | null) => void, onZ
           (dec ? `<span style="color:#caa">${dec}</span><br>` : '') +
           (nd ? `饥饿 ${nf(nd.food)} · 精力 ${nf(nd.rest)} · 心情 ${nf(nd.mood)} · 理智 ${nf(nd.san)}` : '') +
           (p.oracleBuff && p.oracleBuff.until > sim.time ? `<br><span style="color:#e0b0ff">✨ 受神谕祝福</span>` : '');
-        // 指派职业按钮（Q10 生产线）
+        // 指派职业按钮（Q10 生产线）。带 pawnId：远程模式 server 无 selected 镜像，显式指定
         selPanel.querySelectorAll<HTMLButtonElement>('button[data-job]').forEach((btn) => {
           btn.onclick = () => {
             sim.selected = [eid];
-            sim.issueCommand({ type: 'assign', x: 0, y: 0, job: btn.dataset.job || '' });
+            sim.issueCommand({ type: 'assign', x: 0, y: 0, job: btn.dataset.job || '', pawnId: eid });
           };
         });
       } else {
@@ -271,7 +270,7 @@ function createHud(sim: SimView, onSelectBuild: (id: string | null) => void, onZ
     if (facPanel.style.display === 'block') {
       const units = [...sim.socialUnits.units.values()];
       const rows = units.map((u) => {
-        const cap = u.level === 'church' ? 10 : 3;
+        const cap = u.level === 'church' ? (sim.tuning.faction?.unitCapChurch ?? 10) : (sim.tuning.faction?.unitCapCampfire ?? 3);
         const opinions = [...u.opinions.entries()].map(([id, op]) => {
           const other = sim.socialUnits.units.get(id);
           return `${other?.name ?? id} ${op.value > 0 ? '+' : ''}${Math.round(op.value)}`;
@@ -404,8 +403,9 @@ function attachScene(sim: SimView, renderer: Renderer, isTouch: boolean): void {
     const world = renderer.screenToWorld(pos.x, pos.y);
     if (buildMode) {
       sim.issueCommand({ type: 'build', x: world.x, y: world.y, buildingId: buildMode });
+    // 移动选中 pawn。带 pawnId：远程模式 server 无 selected 镜像，显式指定
     } else if (sim.selectedIds.length > 0) {
-      sim.issueCommand({ type: 'move', x: world.x, y: world.y });
+      sim.issueCommand({ type: 'move', x: world.x, y: world.y, pawnId: sim.selectedIds[0] });
     }
   };
 

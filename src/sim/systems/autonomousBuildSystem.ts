@@ -89,9 +89,10 @@ export class AutonomousBuildSystem implements GameSystem {
       if (spot) {
         // 成本与手动队列一致（def.costWood/costOre；缺省 size²×2 木 / 0 矿）
         const def = this.ctx.buildingDef(plan.defId);
+        const t = this.ctx.tuning.autobuild;
         this.ctx.buildQueue.push({
           x: spot.x, y: spot.y, defId: plan.defId, progress: 0, faction: 'auto',
-          cost: { wood: def?.costWood ?? def ? def.size.x * def.size.y * 2 : 1, ore: def?.costOre ?? 0 },
+          cost: { wood: def?.costWood ?? def ? def.size.x * def.size.y * t.costWoodPerCell : t.costWoodFallback, ore: def?.costOre ?? t.costOreFallback },
         });
         this.ctx.logEvent(`🏗 AI 规划：${plan.onExisting ? '升级' : '建造'}【${plan.defId}】`);
         pushed++;
@@ -112,8 +113,9 @@ export class AutonomousBuildSystem implements GameSystem {
 
   private findBuildSpot(cx: number, cy: number): { x: number; y: number } | null {
     const w = this.ctx.world;
-    for (let r = 2; r <= 6; r++) {
-      for (let attempt = 0; attempt < 12; attempt++) {
+    const t = this.ctx.tuning.autobuild;
+    for (let r = t.spotRingMin; r <= t.spotRingMax; r++) {
+      for (let attempt = 0; attempt < t.spotAttempts; attempt++) {
         const a = this.ctx.rng.next() * Math.PI * 2;
         const x = cx + Math.round(Math.cos(a) * r);
         const y = cy + Math.round(Math.sin(a) * r);

@@ -7,6 +7,7 @@ import { Sim } from '../sim/sim';
 import type { Command } from '../sim/sim';
 import { makeLlmProvider } from './llm';
 import { buildDelta } from './diff';
+import { validateCommand, allowRate, type CmdGuardState } from './cmdValidate';
 import type { ClientMsg, ServerMsg, SnapshotMsg, WelcomeMsg, EventMsg } from '../shared/protocol';
 
 const PORT = Number(process.argv[2] ?? 8080);
@@ -70,8 +71,14 @@ function buildWelcome(clientId: number): WelcomeMsg {
   }
   const items: WelcomeMsg['items'] = {};
   for (const [id, d] of Object.entries(sim.mods.items)) items[id] = { id, name: d.name };
+  const t = sim.tuning;
   return {
-    type: 'welcome', you: clientId, seed: SEED, tickHz: TICK_HZ,
+    type: 'welcome', you: clientId, seed: SEED, tickHz: TICK_HZ, dayLength: sim.dayLength,
+    tuning: {
+      needs: { foodMoodLow: t.needs.foodMoodLow },
+      faction: { unitCapChurch: t.faction.unitCapChurch, unitCapCampfire: t.faction.unitCapCampfire },
+      env: { dayLength: t.env.dayLength, baseTemp: t.env.baseTemp },
+    },
     world: { width: w.width, height: w.height },
     tiles, buildings, items,
     tileGrid: w.serializeTiles(),
@@ -131,6 +138,8 @@ function buildSnapshot(): SnapshotMsg {
 wss.on('connection', (ws, req) => {
   const clientId = nextClient++;
   clients.set(clientId, ws);
+  // 命令频率守卫（每 client 独立令牌桶）
+  const guard: CmdGuardState = { lastCmdAt: Date.now(), budget: 30 };
   console.log(`[server] +client #${clientId} (${req.socket.remoteAddress})`);
   sendTo(ws, buildWelcome(clientId));
   // 新连接：先收全量底（welcome 只含 defs/tile，动态世界靠这份快照）
@@ -141,22 +150,23 @@ wss.on('connection', (ws, req) => {
   ws.on('message', (data) => {
     let msg: ClientMsg;
     try { msg = JSON.parse(String(data)); } catch { return; }
-    if (msg.type === 'cmd' && looksLikeCommand(msg.cmd)) {
-      try {
-        sim.issueCommand(msg.cmd);
-        console.log('[server] cmd', msg.cmd);
-      } catch (e) { console.warn('[server] cmd rejected:', (e as Error).message); }
+    if (msg.type !== 'cmd') return;
+    // 权威校验（形状/范围/pawnId/频率）：非法命令丢弃（记录），不踢连接
+    const v = validateCommand(sim, msg.cmd, guard, Date.now());
+    if (!v.ok) {
+      console.warn(`[server] cmd rejected (#${clientId}): ${v.reason}`);
+      return;
     }
+    try {
+      sim.issueCommand(msg.cmd);
+      console.log('[server] cmd', msg.cmd);
+    } catch (e) { console.warn('[server] cmd rejected:', (e as Error).message); }
   });
   ws.on('close', () => {
     clients.delete(clientId);
     console.log(`[server] - #${clientId}`);
   });
 });
-
-function looksLikeCommand(c: unknown): c is Command {
-  return typeof c === 'object' && c !== null && typeof (c as { type?: unknown }).type === 'string';
-}
 
 // 主循环：固定步进（accumulator，不随帧率漂移）+ tick delta 增量 + 定期全量对账 + feed 增量推送
 const tickMs = 1000 / TICK_HZ;

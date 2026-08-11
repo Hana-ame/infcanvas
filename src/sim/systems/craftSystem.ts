@@ -32,11 +32,11 @@ export class CraftSystem implements GameSystem {
     // 每配方组各做一批（各自成本/产物）
     for (const g of groups.values()) {
       const input = g.recipe.input?.[0];
-      const cost = input?.amount ?? 5;
+      const cost = input?.amount ?? this.ctx.tuning.craft.costFallback;
       if (this.ctx.stockpile.wood < cost) continue;
       this.ctx.stockpile.wood -= cost;
       const item = g.recipe.output.item;
-      this.ctx.stockpile[item] = (this.ctx.stockpile[item] ?? 0) + (g.recipe.output.amount ?? 1);
+      this.ctx.stockpile[item] = (this.ctx.stockpile[item] ?? 0) + (g.recipe.output.amount ?? this.ctx.tuning.craft.outputFallback);
       this.ctx.logEvent(`🛠 ${g.recipe.name ?? item} 完成`);
     }
   }
@@ -45,7 +45,7 @@ export class CraftSystem implements GameSystem {
   private craftNextInterval(groups: Map<string, { recipe: RecipeDef; count: number }>): number {
     let next = Infinity;
     for (const g of groups.values()) {
-      const itv = (g.recipe.interval ?? 6) / Math.max(1, g.count);
+      const itv = (g.recipe.interval ?? this.ctx.tuning.craft.intervalFallback) / Math.max(1, g.count);
       if (itv < next) next = itv;
     }
     return next === Infinity ? 6 : next;

@@ -5,7 +5,8 @@ import type { SimContext } from './context';
 import type { EventBus } from '../core/events';
 import type { PawnState } from '../sim';
 import type { BehaviorCard, CardContext, CardView, BehaviorIntent } from '../ai/pawn';
-import { drawCards, pickBest, BASE_CARDS, JOB_CARD } from '../ai/pawn';
+import { drawCards, pickBest, BASE_CARDS } from '../ai/pawn';
+import { JOB_CARD, JOBS } from '../defs/jobs';
 import { fulfill } from '../core/desires';
 
 // 意图执行器：mod 可注册新意图
@@ -114,6 +115,10 @@ export class BehaviorSystem implements GameSystem {
       leanOf: (e, k) => this.ctx.leanOf(e, k),
       buildQueueCount: this.ctx.buildQueue.length,
       stockpile: this.ctx.stockpile,
+      tuning: this.ctx.tuning,
+      markovBias: this.ctx.mods.markovBias,
+      jobCards: this.ctx.mods.jobCards,
+      desireOfSeries: (series) => this.ctx.mods.seriesDesire[series] ?? null,
     };
     const ctx: CardContext = { view, eid };
     const pawnLike = { dna: st.dna, slots: st.slots };
@@ -125,7 +130,7 @@ export class BehaviorSystem implements GameSystem {
         if (jobCard) pawnLike.slots = [...pawnLike.slots, jobCard];
       }
     }
-    const drawn = drawCards(pawnLike, this.ctx.rng, 3, ctx);
+    const drawn = drawCards(pawnLike, this.ctx.rng, this.ctx.tuning.card.drawCount, ctx);
     const card = pickBest(drawn, ctx);
     if (!card) return null;
     // 意图失真：违抗 roll —— 仅当"工作卡被选但存在未选的本我卡"时才可能违抗
@@ -138,7 +143,7 @@ export class BehaviorSystem implements GameSystem {
       if (idCard) {
         const n = this.ctx.readNeeds(eid);
         const lazy = st.dna.traits.includes('懒惰');
-        const moodLow = (n?.mood ?? 60) < cd.defyMoodAt;
+        const moodLow = (n?.mood ?? this.ctx.tuning.needs.initMood) < cd.defyMoodAt;
         const faithReduce = (st.faith ?? 0) * cd.faithReducePerFaith;
         const base = Math.max(0, (lazy ? cd.defyLazy : 0) + (moodLow ? cd.defyMoodLow : 0) - faithReduce);
         if (base > 0 && this.ctx.rng.next() < base) {
@@ -224,10 +229,10 @@ export class BehaviorSystem implements GameSystem {
   private execEat(c: SimContext, eid: number, st: PawnState, _intent: BehaviorIntent): void {
     const n = c.readNeeds(eid);
     if (n && c.stockpile.food > 0) {
-      c.stockpile.food--;
+      c.stockpile.food -= c.tuning.card.eatCost;
       n.food = Math.min(100, n.food + c.tuning.card.eatAmount);
       c.setNeeds(eid, n);
-      if (st.desires) fulfill(st.desires, 'gluttony', 12);
+      if (st.desires) fulfill(st.desires, 'gluttony', c.tuning.desire.fulfillGluttony);
       c.recordOutcome(eid, 'eat', c.tuning.card.eatAmount);
       c.bus.emit({ type: 'eat', eid });
     }
@@ -238,7 +243,7 @@ export class BehaviorSystem implements GameSystem {
     if (n) {
       n.rest = Math.min(100, n.rest + c.tuning.card.restAmount);
       c.setNeeds(eid, n);
-      if (st.desires) fulfill(st.desires, 'sloth', 10);
+      if (st.desires) fulfill(st.desires, 'sloth', c.tuning.desire.fulfillSloth);
       c.recordOutcome(eid, 'rest', c.tuning.card.restAmount);
       c.bus.emit({ type: 'rest', eid });
     }
@@ -275,17 +280,17 @@ export class BehaviorSystem implements GameSystem {
     if (st.urgent === 'eat' && n.food >= this.ctx.tuning.needs.urgentEatAt) { st.urgent = undefined; return; }
     if (st.urgent === 'rest' && n.rest >= this.ctx.tuning.needs.urgentRestAt) { st.urgent = undefined; return; }
     if (st.urgent === 'eat' && this.ctx.stockpile.food > 0) {
-      this.ctx.stockpile.food--;
+      this.ctx.stockpile.food -= this.ctx.tuning.card.eatCost;
       n.food = Math.min(100, n.food + this.ctx.tuning.card.eatAmountUrgent);
       this.ctx.setNeeds(eid, n);
-      if (st.desires) fulfill(st.desires, 'gluttony', 12);
+      if (st.desires) fulfill(st.desires, 'gluttony', this.ctx.tuning.desire.fulfillGluttony);
       this.ctx.recordOutcome(eid, 'eat', this.ctx.tuning.card.eatAmountUrgent);
       this.ctx.bus.emit({ type: 'eat', eid });
       st.urgent = undefined;
     } else if (st.urgent === 'rest') {
       n.rest = Math.min(100, n.rest + this.ctx.tuning.card.restAmountUrgent);
       this.ctx.setNeeds(eid, n);
-      if (st.desires) fulfill(st.desires, 'sloth', 10);
+      if (st.desires) fulfill(st.desires, 'sloth', this.ctx.tuning.desire.fulfillSloth);
       this.ctx.recordOutcome(eid, 'rest', this.ctx.tuning.card.restAmountUrgent);
       this.ctx.bus.emit({ type: 'rest', eid });
       st.urgent = undefined;
@@ -299,8 +304,9 @@ export class BehaviorSystem implements GameSystem {
     const dist = Math.hypot(dx, dy);
     const sp = this.ctx.readSpeed(eid);
     const nd = this.ctx.readNeeds(eid);
-    const moodFactor = nd ? 0.6 + (nd.mood / 100) * 0.6 : 1;
-    const move = (sp?.v ?? 4) * moodFactor * dt;
+    const pw = this.ctx.tuning.pawn;
+    const moodFactor = nd ? pw.moodSpeedBase + (nd.mood / 100) * pw.moodSpeedScale : 1;
+    const move = (sp?.v ?? pw.baseSpeed) * moodFactor * dt;
     if (dist <= move) {
       pos.x = target.x;
       pos.y = target.y;

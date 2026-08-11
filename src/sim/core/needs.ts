@@ -10,8 +10,8 @@ export interface Needs {
   san: number;  // 0-100，理智（SAN）：目睹死亡/恐怖事件 ↓，篝火/休息恢复
 }
 
-export function initNeeds(): Needs {
-  return { food: 80, rest: 90, mood: 60, san: 100 };
+export function initNeeds(t: NeedsTuning): Needs {
+  return { food: t.initFood, rest: t.initRest, mood: t.initMood, san: t.initSan };
 }
 
 // 每 tick 衰减（t = tuning.needs）

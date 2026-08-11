@@ -3,7 +3,7 @@
 //   recordOutcome(key, outcome)：A ← (1-φ)·A + φ·(outcome/scale)，φ=学习率
 // 抽卡权重倍率 = clamp(exp(β·A))（玻尔兹曼映射），β=温度
 //   收益持续为正（采到东西/吃饱）→ A↑ → 该行为权重↑；白干/受挫 → A↓ → 权重↓
-// 完全数据驱动：LEANS 表定义 scale，φ/β/钳制走 tuning.card.lean，mod 可扩展/覆盖
+// 完全数据驱动：轨道表 LEANS 在 defs/leans.ts（layer：数据），φ/β/钳制走 tuning.card.lean，mod 可扩展/覆盖
 
 export type LeanKey = string;
 
@@ -13,32 +13,22 @@ export interface LeanDef {
   scale: number;      // 结果归一化尺度：单次"典型成功结果量"，outcome/scale 进吸引力
 }
 
-export interface LeanParams {
-  learnRate: number;   // φ 学习率：新结果占记忆权重（0-1，大=反应快，小=记性好）
-  temperature: number; // β：预期收益 → 权重倍率的映射强度
-  minMul: number;      // 权重倍率下限（防彻底绝迹）
-  maxMul: number;      // 权重倍率上限
-  maxA: number;        // 吸引力钳制（防数值爆炸）
-}
-
-// 内建行为倾向（数据驱动：mod 加新行为 = 加一行；scale = 该行为一次成功的典型结果量）
-export const LEANS: Record<LeanKey, LeanDef> = {
-  chop:     { key: 'chop', label: '伐木', scale: 5 },
-  mine:     { key: 'mine', label: '采矿', scale: 3 },
-  caveMine: { key: 'caveMine', label: '矿洞采掘', scale: 3 },
-  build:    { key: 'build', label: '建造', scale: 1 },
-  eat:      { key: 'eat', label: '进食', scale: 40 },
-  rest:     { key: 'rest', label: '休息', scale: 40 },
-  pray:     { key: 'pray', label: '祈祷', scale: 1 },
-  heal:     { key: 'heal', label: '疗伤', scale: 5 },
-  fight:    { key: 'fight', label: '战斗', scale: 2 },
-  idle:     { key: 'idle', label: '闲逛', scale: 1 },
-};
+// 行为轨道表（数据在 defs/leans.ts；此处 re-export 保持旧 import 兼容）
+import { LEANS } from '../defs/leans';
+export { LEANS };
+// 学习参数（权威定义在 defs/tuning.ts；此处 re-export 保持旧 import 兼容）
+import type { LeanParams } from '../defs/tuning';
+export type { LeanParams };
 
 // 初始化吸引力（中性 0 = 无偏；权重倍率 1）
 export function initLean(rng?: { next(): number }): Record<LeanKey, number> {
+  return initLeanBy(Object.keys(LEANS), rng);
+}
+
+// 按轨道集合初始化（数据驱动：轨道来自 defs/leans.ts 表，随 registerLean 动态增长）
+export function initLeanBy(keys: Iterable<LeanKey>, rng?: { next(): number }): Record<LeanKey, number> {
   const out: Record<LeanKey, number> = {};
-  for (const k of Object.keys(LEANS)) out[k] = 0;
+  for (const k of keys) out[k] = 0;
   void rng;
   return out;
 }
