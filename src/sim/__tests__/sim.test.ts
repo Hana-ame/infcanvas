@@ -1878,3 +1878,53 @@ describe('七宗罪全途径（色欲/嫉妒满足）', () => {
     expect(c.desires!.envy).toBe(50);
   });
 });
+
+describe('流言沿社交网络传播（gossip spread）', () => {
+  it('听到的话题会被转述给下一个相遇者（TTL 内），并发出 gossip_spread 事件', () => {
+    const sim = new Sim({ seed: 51, pawnCount: 3 });
+    const [a, b, c] = [sim.pawns[0], sim.pawns[1], sim.pawns[2]];
+    const stA = sim.pawnStates.get(a)!;
+    const stB = sim.pawnStates.get(b)!;
+    const stC = sim.pawnStates.get(c)!;
+    // 直接注入：A 已听到八卦"新盖了个church"
+    stA.gossip = { text: '说新盖了个church', heardAt: sim.time };
+    // A、B、C 排排站，高心情保证正向互动
+    const pb = sim.pawnPositions.get(b)!;
+    sim.pawnPositions.set(a, { x: pb.x + 1, y: pb.y });
+    sim.setPosition(a, { x: pb.x + 1, y: pb.y });
+    sim.pawnPositions.set(c, { x: pb.x - 1, y: pb.y });
+    sim.setPosition(c, { x: pb.x - 1, y: pb.y });
+    for (const eid of [a, b, c]) sim.setNeeds(eid, { food: 100, rest: 100, mood: 95, san: 100 });
+    // 跑足够步数，直到 B 听到八卦（gossip_spread 事件出现）
+    let spread = false;
+    const off = sim.bus.on('gossip_spread' as never, () => { spread = true; });
+    for (let i = 0; i < 600 && !spread; i++) sim.step(0.1);
+    off();
+    expect(spread).toBe(true); // A 的八卦传出去了
+    expect(stB.gossip?.text).toBe('说新盖了个church'); // B 记住了
+    expect(stB.gossip?.heardAt).toBeGreaterThanOrEqual(0);
+    // B 再转述给 C（传播链路）
+    let spread2 = false;
+    const off2 = sim.bus.on('gossip_spread' as never, () => { spread2 = true; });
+    for (let i = 0; i < 600 && !spread2; i++) sim.step(0.1);
+    off2();
+    expect(spread2).toBe(true);
+    expect(stC.gossip?.text).toBe('说新盖了个church'); // C 也听到了（网络传播）
+  });
+
+  it('过期的八卦不再转述（TTL 生效）', () => {
+    const sim = new Sim({ seed: 52, pawnCount: 2 });
+    const a = sim.pawns[0];
+    const stA = sim.pawnStates.get(a)!;
+    stA.gossip = { text: '旧闻', heardAt: sim.time - 9999 }; // 早已过期
+    const pb = sim.pawnPositions.get(sim.pawns[1])!;
+    sim.pawnPositions.set(a, { x: pb.x + 1, y: pb.y });
+    sim.setPosition(a, { x: pb.x + 1, y: pb.y });
+    for (const eid of sim.pawns) sim.setNeeds(eid, { food: 100, rest: 100, mood: 95, san: 100 });
+    let oldSpread = false;
+    const off = sim.bus.on('gossip_spread' as never, (ev: { topic: string }) => { if (ev.topic === '旧闻') oldSpread = true; });
+    for (let i = 0; i < 600; i++) sim.step(0.1);
+    off();
+    expect(oldSpread).toBe(false); // 过期八卦不被转述（新话题传播属正常，不在此断言范围）
+  });
+});

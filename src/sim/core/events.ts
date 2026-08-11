@@ -15,6 +15,7 @@ export type GameEvent =
   | { type: 'rest'; eid: number }
   | { type: 'mood_changed'; eid: number; delta: number }
   | { type: 'social'; eid: number; target: number; tone: 'positive' | 'negative' | 'neutral'; topic?: string }
+  | { type: 'gossip_spread'; eid: number; topic: string; from: number } // 流言传播：A 把话题讲给 B（社交网络传播）
   | { type: 'event_happened'; eventId: string }
   | { type: 'faction_event'; kind: string; from?: string; to?: string }
   | { type: 'tile_changed'; x: number; y: number; tileId: string };

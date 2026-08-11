@@ -63,7 +63,7 @@
 | 闭合类型开放 | §7 mod 扩展 | `BehaviorCard.series`/`DesireId` 已开放为 string + `BehaviorCard.desire`(欲望关联)、`satisfies` 已有；新增 `ModRegistry.registerDesire(id,label)`（新欲望维度自动进循环：初始/衰减/匮乏/恶意/满足）；**`BehaviorIntent.action`/`UnitLevel` 已开放为 string**（`registerIntent(id, executor)` 全链路：mod 卡 decide 产出任意 action → 行为系统 Map 分派；`registerUnitLevel(id, capacity)` 新派系等级 + 记忆/看法容量，未知等级回退最小容量）；HUD 欲望显示遍历 DESIRES 表。mod 通路测试：自定义 intent 卡全链路执行 + temple 等级容量 20 |
 | 插槽保底 | §6 插槽 | ✅ **已修**：initSlots 保底 3 张基础卡（eat/rest/chop），maxSlots=2+2trait 不再"永久闲逛"（曾实测）；HUD 文案改为「卡池 n 张（槽 m）」 |
 | 丢失 chew：出生点/野营 'campfire'、派系掠夺者已数据化 | §7 | 出生建筑已读 `autobuild.starterBuilding`；`scripts.spawnWildCamp` 仍写死 'campfire'（语义上"野生营地=篝火"成立，暂留） |
-| 流言/对话完整 | §6 | 微互动已做（模板）；闲聊/深聊（引用记忆的 LLM 对话）、话题沿社交网络传播待 P1 |
+| 流言/对话完整 | §6 | 微互动已做（模板）；**话题沿社交网络传播已落地**（2026-08-12）：小人记住听到的八卦（`gossip` 字段），TTL 内（`social.gossipTtl` 60s，`gossipChance` 0.7）转述给下一个相遇者，`gossip_spread` 事件可观测，确定性模板（零 LLM）；剩余：闲聊/深聊（引用记忆的 LLM 对话）待 P1 |
 | 七宗罪欲望完整 | §3 欲望系统 | ✅ **七途径全通**（2026-08-12）：暴食(进食)/懒惰(休息)/贪婪(工作 satisfies)/暴怒(战斗+恶意槽)/傲慢(祈祷) + **色欲**（正向社交互动，`social.lustFulfillPerInteract`）+ **嫉妒**（存在更强同伴时完成劳动，`desire.envyFulfillPerWork`，skillTotal 标杆） |
 | COC 属性全用途 | §3 属性卡 | ✅ **SIZ 负重已落地**（2026-08-12）：采集一次搬回量 = `carryBase + max(0, SIZ-strBase)×carryPerSiz`（tuning.gather，默认 4/0.5），矿洞/采矿/伐木产出统一钳制（保底 1），与 STR 产出加成互补；单测 + 集成测试（`carryCapOf`/`capGainTo`） |
 | LLM 层 | §6 | ✅ **已落地**：server `LLM_ENDPOINT` 即启用（OpenAI 兼容），预取+白名单效果+降级（见上表）；剩余：真实 LLM 冒烟（本机无出网 key）、provider 频率分级（付费/免费，DESIGN §10）、LLM 叙述进"历史/记忆"而非仅 feed |

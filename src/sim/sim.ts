@@ -85,6 +85,7 @@ export interface PawnState {
   oracleBuff?: { until: number; mood: number }; // 神谕祝福（到期时间戳，心情加成）
   assignedJob?: string; // 指派职业（Q10 生产线：lumberjack/miner/farmer/crafter）
   lean?: Record<LeanKey, number>; // 行为倾向（勒沙特列反馈：按 profit 自平衡）
+  gossip?: { text: string; heardAt: number }; // 听到的八卦（社交网络传播，TTL 内可转述）
   onArriveWork?: () => void; // mod 工作的到达回执（非序列化，仅当 tick 行为态：走到点后调用）
 }
 

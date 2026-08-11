@@ -121,8 +121,13 @@ export class SocialSystem implements GameSystem {
     else if (moodA < s.toneLowAt || moodB < s.toneLowAt) tone = this.ctx.rng.next() < s.toneNegChance ? 'negative' : 'neutral';
     else tone = this.ctx.rng.next() < s.toneNeutralChance ? 'neutral' : (this.ctx.rng.next() < s.toneNeutralChance ? 'positive' : 'negative');
 
-    // 话题：从最近历史里抽一条（狗屁倒灶素材）
-    const topic = this.pickTopic();
+    // 话题：优先转述听到的八卦（传播），否则从历史抽新素材
+    const topic = this.pickTopic(a, stA);
+    // 传播：把话题讲给对方（对方记住，TTL 内继续转述）；自己的话题保留（还能再传）
+    if (topic && stB) {
+      stB.gossip = { text: topic, heardAt: this.ctx.time };
+      this.ctx.bus.emit({ type: 'gossip_spread', eid: b, topic, from: a });
+    }
 
     // 好感度变化（双向，轻微）
     const relA = stA.relationships ?? new Map<number, number>();
@@ -189,7 +194,14 @@ export class SocialSystem implements GameSystem {
   }
 
   // 从结构化历史抽最近一条作话题（狗屁倒灶素材）
-  private pickTopic(): string | null {
+  // 话题选择（流言传播层，确定性模板）：优先聊"自己听到的八卦"（社交网络传播），
+  // 否则从近期历史抽新话题；听到的八卦在 gossipTtl 内可转述给下一个相遇者
+  private pickTopic(a: number, stA: { gossip?: { text: string; heardAt: number } }): string | null {
+    const s = this.ctx.tuning.social;
+    const my = stA.gossip;
+    if (my && this.ctx.time - my.heardAt <= s.gossipTtl && this.ctx.rng.next() < s.gossipChance) {
+      return my.text; // 转述听到的八卦（传播）
+    }
     const rec = this.ctx.historyQuery?.({ limit: 8 }) ?? null;
     if (!rec || rec.length === 0) return null;
     const h = rec[Math.floor(this.ctx.rng.next() * rec.length)];

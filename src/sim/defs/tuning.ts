@@ -112,7 +112,9 @@ export interface CombatTuning {
 
 export interface SocialTuning {
   tickInterval: number;
-  lustFulfillPerInteract: number; // 色欲满足：一次成功社交互动 +此值（七宗罪全途径）    // 全系统社交节流（秒）
+  lustFulfillPerInteract: number; // 色欲满足：一次成功社交互动 +此值（七宗罪全途径）
+  gossipTtl: number;        // 话题传播有效期（秒）：听到的话题在期内可转述
+  gossipChance: number;     // 互动时聊起听到的话题的概率（其余从历史抽新话题）    // 全系统社交节流（秒）
   meetDist: number;        // 相遇距离（相邻才算）
   interactCdMin: number;   // 社交冷却下限
   interactCdMax: number;
@@ -522,6 +524,8 @@ export const TUNING: TuningConfig = {
   social: {
     tickInterval: 2,         // 全系统社交节流
     lustFulfillPerInteract: 1, // 色欲满足：一次成功社交互动 +1
+    gossipTtl: 60,           // 话题传播有效期：听到后 60s 内可转述
+    gossipChance: 0.7,       // 互动聊起听到话题的概率
     meetDist: 1.6,           // 相遇距离
     interactCdMin: 15,
     interactCdMax: 25,
