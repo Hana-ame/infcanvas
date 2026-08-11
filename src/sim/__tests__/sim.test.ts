@@ -8,6 +8,7 @@ import { findPath } from '../core/pathfinding';
 import { BUILDINGS } from '../defs';
 import type { GameSystem } from '../systems/registry';
 import { spawnWildCamp } from '../defs/events';
+import berryMod from '../../mods/demo-berry';
 import { adjustOpinion, UNIT_CAPACITY, type SocialUnit } from '../core/socialUnit';
 
 describe('SimRng', () => {
@@ -1706,5 +1707,31 @@ describe('寻路策略表（tuning.path 参数数据化）', () => {
     sim.mods.overrideTuning({ path: { heuristic: 'euclidean' } });
     sim.moveTo(eid, target.x, target.y);
     expect(sim.pawnStates.get(eid)!.path.length).toBeGreaterThan(1);
+  });
+});
+
+describe('demo mod 逻辑组件层闭环（demo-berry）', () => {
+  it('谓词 + 声明式卡 + 系统装配表全链路', () => {
+    const sim = new Sim({ seed: 9, pawnCount: 2, mods: berryMod });
+    // 卡进表：浆果盛宴（声明式 def → 工厂生成，谓词已组合进 condition）
+    const card = sim.mods.cards.get('berryFeast')!;
+    expect(card).toBeDefined();
+    // 系统按锚点插入：berrySpoil 在 autobuild 之前
+    const ids = [...sim.systemIds];
+    expect(ids.indexOf('berrySpoil')).toBeGreaterThan(-1);
+    expect(ids.indexOf('berrySpoil')).toBeLessThan(ids.indexOf('autobuild'));
+    // 谓词：浆果 <5 不可抽；≥5 可抽
+    const ctx = { eid: sim.pawns[0], view: sim } as never;
+    sim.stockpile.berry = 3;
+    // view 需 stockpile 引用——sim.stockpile 同一对象，谓词读 c.view.stockpile.berry
+    expect(card.condition!(ctx)).toBe(false);
+    sim.stockpile.berry = 5;
+    expect(card.condition!(ctx)).toBe(true);
+    // 变质系统：60s 后库存减半
+    sim.stockpile.berry = 100;
+    sim.step(60);
+    expect(sim.stockpile.berry).toBe(50);
+    sim.step(60);
+    expect(sim.stockpile.berry).toBe(25);
   });
 });

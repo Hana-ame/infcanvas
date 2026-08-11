@@ -308,3 +308,11 @@ overrideTuning(patch: DeepPartial<TuningConfig>): this  // 覆盖平衡参数（
 
 - `npm run typecheck` 0 错；`npm test` 142/142 绿
 - 新测试：系统装配表（锚点插入/尾插/替换回填）、谓词表（内置组合/mod 扩展/未注册报错）、寻路策略（默认可达/maxIter 钳制/启发式切换）
+
+### 10.5 端到端示例（demo-berry 升级）
+
+`src/mods/demo-berry.ts` 演示逻辑组件层全链路（一个 mod 同时用三项）：
+
+- `registerPredicate('stockpileBerry')` + `registerCardDef({ when: ['stockpileBerry'], ... })`：浆果 ≥5 时小人抽"浆果盛宴"休闲卡（纯声明，零函数）
+- `registerSystemDef({ before: 'autobuild', ... })`：浆果变质系统插入执行表（每 60s 库存减半）
+- 验证：`demo mod 逻辑组件层闭环` 测试（143/143 绿）——卡进表/锚点位置/谓词真假/变质减半全断言

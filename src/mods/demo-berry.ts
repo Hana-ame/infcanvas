@@ -1,9 +1,10 @@
 // 示例 mod：浆果玩法（不碰内核源码）
 // 加载：?mods=/src/mods/demo-berry.ts（dev）；build 场景内联挂载（new Sim({ mods })）
-// 演示三项数据驱动能力：
+// 演示数据驱动能力：
 //   1. 新建筑（浆果摊）自动进建造菜单，可放置、可渲染（复用 building:farm 素材）
 //   2. 新 tile（浆果丛）进世界生成采样，渲染不崩（def.color 色块 + 复用 terrain:tree 图标）
 //   3. 小人自动采集新 tile（growable + harvest 声明，无需改采集系统）
+//   4. 逻辑组件层：谓词 + 声明式卡（浆果≥5 时小人庆祝）+ 系统装配（浆果每 60s 变质减半，before 锚点插入）
 import type { ModRegistry, HookContext } from '../sim/mods/registry';
 
 export default (m: ModRegistry): void => {
@@ -40,6 +41,38 @@ export default (m: ModRegistry): void => {
     costWood: 4,
     sprite: 'building:farm',
     recipe: 'berryStandRecipe',
+  });
+
+  // 4. 逻辑组件层：卡条件谓词（浆果充足时才抽"浆果盛宴"）
+  m.registerPredicate('stockpileBerry', (c) => (c.view.stockpile.berry ?? 0) >= 5);
+  m.registerCardDef({
+    id: 'berryFeast', name: '浆果盛宴', series: 'leisure', weight: 3,
+    when: ['stockpileBerry'],
+    utilityFixed: 18,
+    action: 'idle', label: '浆果盛宴',
+    satisfies: [{ desire: 'sloth', amount: 1 }],
+  });
+
+  // 5. 逻辑组件层：系统装配表插入（浆果保质：每 60s 库存减半，before autobuild）
+  m.registerSystemDef({
+    id: 'berrySpoil', label: '浆果变质', category: 'production', before: 'autobuild',
+    ctor: (sim) => {
+      let acc = 0;
+      return {
+        id: 'berrySpoil',
+        update(dt: number): void {
+          acc += dt;
+          if (acc >= 60) {
+            acc = 0;
+            const b = sim.stockpile.berry ?? 0;
+            if (b > 0) {
+              sim.stockpile.berry = Math.max(0, Math.floor(b / 2));
+              sim.logEvent('🫐 浆果变质了一批');
+            }
+          }
+        },
+      };
+    },
   });
 
   // 开局在出生点周围撒几丛浆果（演示 mod tile 出现在世界；仅铺一次）
