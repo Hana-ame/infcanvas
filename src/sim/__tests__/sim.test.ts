@@ -1735,3 +1735,27 @@ describe('demo mod 逻辑组件层闭环（demo-berry）', () => {
     expect(sim.stockpile.berry).toBe(25);
   });
 });
+
+describe('意图执行器表（defs/executors.ts）', () => {
+  it('内置意图从表装配：饿肚子时仍会进食', () => {
+    const sim = new Sim({ seed: 11, pawnCount: 1 });
+    const eid = sim.pawns[0];
+    sim.stockpile.food = 10;
+    sim.setNeeds(eid, { food: 10, rest: 100, mood: 100, san: 100 });
+    for (let i = 0; i < 60; i++) sim.step(1);
+    const n = sim.readNeeds(eid)!;
+    expect(n.food).toBeGreaterThan(10); // 吃了饭（表装配的 eat 执行器生效）
+    expect(n.food).toBeLessThan(100); // 未吃撑（钳制生效）
+  });
+
+  it('mod 可覆盖内置意图执行器（同 id 即替换）', () => {
+    let hits = 0;
+    const sim = new Sim({ seed: 12, pawnCount: 1, mods: (m) => {
+      m.registerIntent('idle', (_c, _eid, st) => { hits++; st.job = '发呆中'; });
+    } });
+    // 反复走位至触发一次闲逛（覆盖后的 idle 执行器）
+    for (let i = 0; i < 400 && hits === 0; i++) sim.step(1);
+    expect(hits).toBeGreaterThan(0);
+    expect(sim.pawnStates.get(sim.pawns[0])!.job).toBe('发呆中');
+  });
+});

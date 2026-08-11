@@ -316,3 +316,10 @@ overrideTuning(patch: DeepPartial<TuningConfig>): this  // 覆盖平衡参数（
 - `registerPredicate('stockpileBerry')` + `registerCardDef({ when: ['stockpileBerry'], ... })`：浆果 ≥5 时小人抽"浆果盛宴"休闲卡（纯声明，零函数）
 - `registerSystemDef({ before: 'autobuild', ... })`：浆果变质系统插入执行表（每 60s 库存减半）
 - 验证：`demo mod 逻辑组件层闭环` 测试（143/143 绿）——卡进表/锚点位置/谓词真假/变质减半全断言
+
+### 10.6 意图/工作执行器表（defs/executors.ts）
+
+- `BUILTIN_INTENTS`（6 意图：id/label/kind/handler）与 `BUILTIN_WORKS`（4 工作类型）清单收敛进表
+- BehaviorSystem 从表装配（handler 指向类方法，bind 后注册）；mod 仍可 registerIntent/registerWork 扩展或**覆盖内置**（同 id 即替换）
+- `kind: 'instant' | 'ongoing'` 执行时机语义元数据（eat/rest/idle 即时，walkAndWork/heal/pray 持续）
+- 验证：表装配后进食行为不变 + 覆盖 idle 执行器生效（145/145 绿）

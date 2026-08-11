@@ -7,6 +7,7 @@ import type { PawnState } from '../sim';
 import type { BehaviorCard, CardContext, CardView, BehaviorIntent } from '../ai/pawn';
 import { drawCards, pickBest, BASE_CARDS } from '../ai/pawn';
 import { JOB_CARD, JOBS } from '../defs/jobs';
+import { BUILTIN_INTENTS, BUILTIN_WORKS } from '../defs/executors';
 import { fulfill } from '../core/desires';
 
 // 意图执行器：mod 可注册新意图
@@ -21,18 +22,15 @@ export class BehaviorSystem implements GameSystem {
   private workExecutors = new Map<string, WorkExecutor>();
 
   constructor(private ctx: SimContext) {
-    // 注册内建意图执行器
-    this.intentExecutors.set('walkAndWork', (c, eid, st, intent) => this.execWalkAndWork(c, eid, st, intent));
-    this.intentExecutors.set('eat', (c, eid, st, intent) => this.execEat(c, eid, st, intent));
-    this.intentExecutors.set('rest', (c, eid, st, intent) => this.execRest(c, eid, st, intent));
-    this.intentExecutors.set('heal', (c, eid, st, intent) => this.execHeal(c, eid, st, intent));
-    this.intentExecutors.set('pray', (c, eid, st, intent) => this.execPray(c, eid, st, intent));
-    this.intentExecutors.set('idle', (c, eid, st) => { st.job = '闲逛'; });
-    // 注册内建工作执行器（walkAndWork 的 workType 分派）
-    this.workExecutors.set('chop', (c, eid, st) => this.workChop(c, eid, st));
-    this.workExecutors.set('mine', (c, eid, st) => this.workMine(c, eid, st));
-    this.workExecutors.set('caveMine', (c, eid, st) => this.workCaveMine(c, eid, st));
-    this.workExecutors.set('build', (c, eid, st) => this.workBuild(c, eid, st));
+    // 数据驱动：内置意图/工作执行器从表（defs/executors.ts）装配，handler 指向类方法
+    for (const d of BUILTIN_INTENTS) {
+      const fn = (this as unknown as Record<string, unknown>)[d.handler] as IntentExecutor;
+      this.intentExecutors.set(d.id, fn.bind(this));
+    }
+    for (const d of BUILTIN_WORKS) {
+      const fn = (this as unknown as Record<string, unknown>)[d.handler] as WorkExecutor;
+      this.workExecutors.set(d.type, fn.bind(this));
+    }
   }
 
   // mod 入口：注册新意图执行器
@@ -169,6 +167,10 @@ export class BehaviorSystem implements GameSystem {
   }
 
   // ---- 意图执行 ----
+  private execIdle(_c: SimContext, _eid: number, st: PawnState, _intent: BehaviorIntent): void {
+    st.job = '闲逛';
+  }
+
   private execWalkAndWork(c: SimContext, eid: number, st: PawnState, intent: BehaviorIntent): void {
     const exec = intent.workType ? this.workExecutors.get(intent.workType) : undefined;
     if (exec) exec(c, eid, st, intent);
