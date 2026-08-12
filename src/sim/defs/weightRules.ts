@@ -12,6 +12,20 @@ export interface WeightRule {
   apply(w: number, card: BehaviorCard, pawn: PawnLike, ctx?: CardContext): number;
 }
 
+// 神谕目标（DESIGN §6：神谕影响目标层，不碰选择链）：
+// 神谕降旨设定的目标工作类型 → 对应卡权重放大（倍率读 tuning.card.oracleGoalMul，默认 3）
+// 小人仍自主抽卡择优（可被欲望/环境/违抗 roll 顶掉）——神谕只引导方向
+const ruleOracleGoal: WeightRule = {
+  id: 'oracleGoal',
+  label: '神谕目标',
+  apply(w, card, _pawn, ctx) {
+    const goal = ctx?.view.oracleGoal;
+    const mul = ctx?.view.tuning?.card?.oracleGoalMul;
+    if (goal && mul && card.decide(ctx).workType === goal.workType) w *= mul;
+    return w;
+  },
+};
+
 // 天赋权重倍率（表驱动：TraitDef.weightMuls[series]；mod 天赋也可声明自己的调制）
 const ruleTrait: WeightRule = {
   id: 'trait',
@@ -120,12 +134,15 @@ const ruleLean: WeightRule = {
   },
 };
 
+// 内置规则表（权重合成顺序 = 表序：天赋→欲望→环境→马尔可夫→派系优先→神谕目标→指派职业→EWA 学习，
+// 前规则输出 = 后规则输入；mod 可 registerWeightRule 在任意规则前插入、overrideWeightRule 替换同 id 规则）
 export const BUILTIN_WEIGHT_RULES: WeightRule[] = [
   ruleTrait,
   ruleDesire,
   ruleEnv,
   ruleMarkov,
   rulePriority,
+  ruleOracleGoal,
   ruleJob,
   ruleLean,
 ];

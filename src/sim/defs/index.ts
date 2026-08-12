@@ -16,6 +16,7 @@ export interface HarvestDef {
 export interface TileDef {
   id: string;
   name: string;
+  z?: number; // 地形高度（桥面=1 > 水面=0 > 深水=-1）；渲染/通行分层用
   passable: boolean; // 小人能否走过
   buildable: boolean; // 能否在上面建造
   color: string; // 渲染色（P0 用色块，后期换纹理）
@@ -41,9 +42,12 @@ export interface BuildingDef {
   workRadius?: number; // 工作半径（如灶台/工作台）
   costWood?: number; // 额外木成本（奇观，默认 = size.x*size.y*2）
   costOre?: number; // 矿石成本（奇观）
+  onWater?: boolean; // 只能建在水面（竹筏）：footprint 全水 + 邻接陆地/已有筏
+  replacesTile?: string; // 地形改造：完成后把 footprint 格替换为该 tile（修桥 = 水格变桥面）
   tags?: string[]; // 语义标签（数据驱动：mod 新建筑打标签即接入系统行为）
   recipe?: string; // 生产配方 id（引用 RECIPES，农田/工作台/矿洞）
   upgradesTo?: string; // 原地升级目标 id（如篝火→教堂；建该目标时若原地是此建筑则升级而非新建）
+  tech?: string; // 需要的科技 id（缺省无需科技；科技卡抽到后解锁建造）
   capabilities?: string[]; // 能力声明（数据驱动：'oracle' 等；替代按 defId 特判）
   emitsLight?: number; // 发光半径（>0 参与光照图，替代按 'campfire' 特判）
   aura?: {         // 光环定义（篝火/奇观），收敛 needsSystem/sanSystem 写死数值
@@ -62,12 +66,14 @@ export interface ItemDef {
   maxStack: number;
 }
 
+// 地表定义表（消费方：地图生成/寻路通行与代价/采集系统 harvest/客户端渲染；tile id 同时是存档 key）
 export const TILES: Record<string, TileDef> = {
   grass: { id: 'grass', name: '草地', passable: true, buildable: true, color: '#3a7d44' },
   dirt: { id: 'dirt', name: '泥土', passable: true, buildable: true, color: '#8b6f47' },
   sand: { id: 'sand', name: '沙滩', passable: true, buildable: true, color: '#d9c98a' },
   desert: { id: 'desert', name: '沙漠', passable: true, buildable: true, color: '#c2b280' },
-  water: { id: 'water', name: '水', passable: false, buildable: false, color: '#2a6bb0', emoji: '💧' },
+  water: { id: 'water', name: '水', z: 0, passable: false, buildable: false, color: '#2a6bb0', emoji: '💧' },
+  bridge: { id: 'bridge', name: '桥面', z: 1, passable: true, buildable: false, moveCost: 2, color: '#8a6432', emoji: '🌉' },
   stone: { id: 'stone', name: '石头', passable: true, buildable: true, color: '#8a8a8a', emoji: '🪨' },
   mountain: { id: 'mountain', name: '山地', passable: false, buildable: false, color: '#4a4a4a' },
   tree: {
@@ -82,6 +88,7 @@ export const TILES: Record<string, TileDef> = {
   },
 };
 
+// 建筑定义表（消费方：BuildSystem 建造/autobuild 规划/光环 aura/工作半径/升级 upgradesTo/科技门控 tech）
 export const BUILDINGS: Record<string, BuildingDef> = {
   campfire: { id: 'campfire', name: '篝火', size: { x: 1, y: 1 }, hp: 80, color: '#4a2a1a', emoji: '🔥', passable: true, buildTime: 1, workRadius: 3, upgradesTo: 'church', emitsLight: 4, tags: ['anchor', 'warmth', 'heal', 'pray', 'social'], aura: { radius: 6, moodPerSec: 0.5, restPerSec: 0.3 } },
   wall: { id: 'wall', name: '墙', size: { x: 1, y: 1 }, hp: 200, color: '#8a8a8a', emoji: '🧱', passable: false, buildTime: 3, tags: ['barrier'] },
@@ -92,8 +99,12 @@ export const BUILDINGS: Record<string, BuildingDef> = {
   cave: { id: 'cave', name: '矿洞', size: { x: 1, y: 1 }, hp: 500, color: '#3a2a1a', emoji: '⛰️', passable: false, buildTime: 6, workRadius: 1, tags: ['mine'], recipe: 'cave' },
   church: { id: 'church', name: '教堂', size: { x: 2, y: 2 }, hp: 600, color: '#5a3a6a', emoji: '⛪', passable: false, buildTime: 12, workRadius: 5, tags: ['faith', 'anchor', 'oracle'], capabilities: ['oracle'] },
   monument: { id: 'monument', name: '纪念碑', size: { x: 3, y: 3 }, hp: 1200, color: '#8a7a5a', emoji: '🗿', passable: false, buildTime: 40, workRadius: 6, costWood: 60, costOre: 25, tags: ['wonder'], aura: { radius: 6, moodPerSec: 0.3 } },
+  raft: { id: 'raft', name: '竹筏', size: { x: 1, y: 1 }, hp: 40, color: '#8a6a3a', emoji: '🛶', passable: true, buildTime: 2, onWater: true, recipe: 'fishing', tags: ['raft', 'water'] },
+  boat: { id: 'boat', name: '渡船', size: { x: 2, y: 2 }, hp: 120, color: '#7a5a2a', emoji: '⛵', passable: true, buildTime: 6, costWood: 12, onWater: true, tech: 'boatTech', tags: ['raft', 'water'] },
+  bridge: { id: 'bridge', name: '木桥', size: { x: 1, y: 1 }, hp: 60, color: '#8a6432', emoji: '🌉', passable: true, buildTime: 3, onWater: true, replacesTile: 'bridge', tech: 'bridgeTech', tags: ['raft', 'water'] },
 };
 
+// 物品定义表（消费方：库存/物流/堆叠与 UI 显示）
 export const ITEMS: Record<string, ItemDef> = {
   wood: { id: 'wood', name: '木头', stackable: true, maxStack: 50 },
   ore: { id: 'ore', name: '矿石', stackable: true, maxStack: 50 },

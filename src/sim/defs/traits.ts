@@ -46,6 +46,7 @@ export const TRAITS: Record<string, TraitDef> = {
     },
   },
   '热爱工作': {
+    // 纯调制天赋：卡 weight 0 → 永不被抽中（占位/可见性），作用全在 weightMuls + skillBonuses/sinMods 表驱动
     id: '热爱工作', label: '热爱工作', weight: 2,
     sinMods: { sloth: -0.3 },
     skillBonuses: { work: 1.5 },

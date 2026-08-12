@@ -28,5 +28,6 @@ export const BUILTIN_WORKS: WorkDef[] = [
   { type: 'chop',     label: '伐木', handler: 'workChop' },
   { type: 'mine',     label: '采矿', handler: 'workMine' },
   { type: 'caveMine', label: '矿洞采掘', handler: 'workCaveMine' },
+  { type: 'fish',     label: '捕鱼', handler: 'workFish' },
   { type: 'build',    label: '建造', handler: 'workBuild' },
 ];

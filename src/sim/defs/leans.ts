@@ -4,6 +4,8 @@ import type { LeanKey, LeanDef } from '../core/lean';
 
 export type { LeanKey, LeanDef } from '../core/lean';
 
+// 学习轨道表（消费方：core/lean.ts 把行为每次结果量 / scale 归一化为吸引力记忆，
+// 再经 tuning.card.lean（φ/β/钳制）合成权重倍率；卡 id 即轨道 key）
 export const LEANS: Record<LeanKey, LeanDef> = {
   chop:     { key: 'chop', label: '伐木', scale: 5 },
   mine:     { key: 'mine', label: '采矿', scale: 3 },

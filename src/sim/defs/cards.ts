@@ -8,10 +8,13 @@ import type { BehaviorCardDef, CardContext } from '../ai/pawn';
 // 机制钩子集中于此：代码只写一次，卡表纯声明 → 卡片 JSON-safe（load 还原不再依赖函数序列化）
 export const CARD_PREDICATES: Record<string, (c: CardContext) => boolean> = {
   hasCave: (c) => c.view.hasCave(),
+  hasRaft: (c) => c.view.hasRaft(),
   hasCampfire: (c) => c.view.hasCampfire(),
   buildQueue: (c) => c.view.buildQueueCount > 0,
 };
 
+// 基础卡表（消费方：pawn.initSlots 保底进池 + drawCards 抽卡；卡 id 同时是 weightRules priority 规则、
+// jobs 职业主导卡、leans 学习轨道引用的 key，改名需同步三处）
 export const BASE_CARD_DEFS: BehaviorCardDef[] = [
   {
     id: 'eat', name: '进食', series: 'physio', weight: 9,
@@ -44,6 +47,13 @@ export const BASE_CARD_DEFS: BehaviorCardDef[] = [
     utilityFixed: 28,
     when: ['hasCave'],
     action: 'walkAndWork', workType: 'caveMine', label: '矿洞采掘',
+    satisfies: [{ desire: 'greed', amount: 2 }],
+  },
+  {
+    id: 'fish', name: '捕鱼', series: 'work', weight: 5,
+    utilityFixed: 26,
+    when: ['hasRaft'],  // hasRaft 谓词：无竹筏（raft 建筑）时捕鱼卡不可用，竹筏需 raftTech 科技解锁
+    action: 'walkAndWork', workType: 'fish', label: '捕鱼',
     satisfies: [{ desire: 'greed', amount: 2 }],
   },
   {

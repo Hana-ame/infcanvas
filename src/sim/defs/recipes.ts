@@ -18,6 +18,8 @@ export interface RecipeDef {
   dc?: number;         // work：检定 DC（默认 60）
 }
 
+// 配方表（消费方：farm 类 passive 由 FarmSystem 读、workbench 类 batch 由 CraftSystem 读、
+// cave/fishing 类 work 由行为系统走位到建筑后检定产出；mod 注册新配方 = 新生产玩法）
 export const RECIPES: Record<string, RecipeDef> = {
   farm: {
     id: 'farm', name: '农田产出', kind: 'passive',
@@ -36,5 +38,13 @@ export const RECIPES: Record<string, RecipeDef> = {
     interval: 4,
     skill: 'work',
     dc: 70,
+  },
+  fishing: {
+    id: 'fishing', name: '捕鱼', kind: 'work',
+    output: { item: 'food', amount: 3 },
+    failOutput: { item: 'food', amount: 1 },
+    interval: 6,
+    skill: 'work',
+    dc: 55,
   },
 };

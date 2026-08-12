@@ -36,6 +36,7 @@ export interface SanTuning {
   fireRecover: number;     // 篝火旁 SAN 恢复
   crazyCooldownMin: number;
   crazyCooldownMax: number;
+  crazyFleeAfter: number; // 狂乱持续超过此秒数 → 本能逃向最近篝火（防永久崩溃死锁）
   powResistMid: number;    // POW 抗压公式中点（POW ≥ 此值开始减伤）
   powResistScale: number;  // POW 抗压公式分母
   shockDistFloor: number;  // 死亡冲击距离衰减下限
@@ -295,7 +296,8 @@ export interface EnvTuning {
 export interface PawnTuning {
   baseSpeed: number;       // 小人移动速度（格/秒）
   hpBase: number;          // 血量基础值（+ (con+siz)/2）
-  scanRadius: number;      // 目标搜索半径（找树/矿/建筑等）
+  scanRadius: number;      // 目标搜索半径（找树/矿/建筑等，近距快扫）
+  farScanRadius: number;   // 近距未命中后的远距回扫半径（防营地周边资源采空后停产）
   attrMin: number;         // 八属性生成下限
   attrMax: number;         // 八属性生成上限
   traitCountMin: number;   // 天赋数量下限
@@ -326,13 +328,17 @@ export interface WorldTuning {
 export type HeuristicId = 'chebyshev' | 'manhattan' | 'euclidean';
 
 export interface PathTuning {
-  maxIter: number;   // A* 迭代上限（防爆）
+  maxIter: number;        // A* 迭代上限（防爆）：无篝火中转时的基准上限
+  waypointMaxIter: number; // 有篝火中转时可放宽的上限（航点路径段短、质量好）
+  maxWaypoints: number;   // 参与中转的篝火/锚点数量上限（防全图扫描）
+  waypointRadius: number; // 锚点中转范围上限（起点/终点距锚点超此值不中转）
   darkCost: number;  // 未照亮格代价倍率（倾向走篝火照明路）
   heuristic: HeuristicId; // 启发式策略（chebyshev 对角/ manhattan / euclidean）
 }
 
 export interface CardTuning {
   commandCooldown: number; // 玩家命令后不自动决策秒数
+  oracleGoalMul: number;   // 神谕目标对应工作系列权重倍率（神谕引导强度）
   defyCd: number;          // 违抗冷却
   defyLazy: number;        // 懒惰违抗基础概率
   defyMoodLow: number;     // 心情差违抗加成
@@ -421,6 +427,7 @@ export interface TuningConfig {
   path: PathTuning; // 寻路策略表（参数数据化，算法本体保留 A* 代码）
 }
 
+// 默认平衡基线（全系统唯一数值源头；mod 经 ModRegistry.overrideTuning 部分覆盖，见 docs/DATA_DRIVEN.md §3.4）
 export const TUNING: TuningConfig = {
   needs: {
     initFood: 80,
@@ -454,6 +461,7 @@ export const TUNING: TuningConfig = {
     fireRecover: 2.5,
     crazyCooldownMin: 3,
     crazyCooldownMax: 7,
+    crazyFleeAfter: 60,
     powResistMid: 40,        // POW ≥ 此值开始抗压
     powResistScale: 100,
     shockDistFloor: 0.4,     // 死亡冲击距离衰减下限
@@ -699,6 +707,7 @@ export const TUNING: TuningConfig = {
     baseSpeed: 4,
     hpBase: 40,
     scanRadius: 15,
+    farScanRadius: 45,
     attrMin: 30,             // 八属性生成区间
     attrMax: 70,
     traitCountMin: 1,        // 天赋数量
@@ -718,15 +727,18 @@ export const TUNING: TuningConfig = {
     skillBonusDiv: 10,
   },
   world: {
-    spawnClearRadius: 2,     // 出生点清场半径（5x5）
+    spawnClearRadius: 3,     // 出生点清场半径（7x7）
     spawnTries: 24,          // 资源撒布尝试次数
     spawnDistMin: 3,         // 撒布距离环
     spawnDistRand: 5,
     spawnCounts: { tree: 4, ore: 3, stone: 3 },
   },
   path: {
-    maxIter: 20000,        // A* 迭代上限（防爆）
-    darkCost: 3,           // 未照亮格代价倍率（倾向走篝火照明路）
+    maxIter: 15000,         // 无篝火中转：迭代上限（防爆；锚点少时路径短，够用）
+    waypointMaxIter: 40000, // 有篝火中转：放宽（航点分段短，允许探更多格）
+    maxWaypoints: 8,        // 参与中转的锚点数量上限
+    waypointRadius: 60,     // 锚点中转范围上限
+    darkCost: 3,            // 未照亮格代价倍率（倾向走篝火照明路）
     heuristic: 'chebyshev', // 启发式策略（chebyshev 对角/ manhattan / euclidean）
   },
   event: {
@@ -756,6 +768,7 @@ export const TUNING: TuningConfig = {
   },
   card: {
     commandCooldown: 3,
+    oracleGoalMul: 3,
     defyCd: 30,
     defyLazy: 0.25,
     defyMoodLow: 0.3,

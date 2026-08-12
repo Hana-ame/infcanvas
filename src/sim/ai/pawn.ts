@@ -37,6 +37,7 @@ export interface CardView {
   isNight(): boolean;
   hasCampfire(): boolean;
   hasCave(): boolean;
+  hasRaft(): boolean;
   buildQueueCount: number;
   stockpile: Record<string, number>;
   desiresOf?(eid: number): Record<DesireId, number> | null;
@@ -46,6 +47,8 @@ export interface CardView {
   lastSeries?: string;
   // 派系优先级（用户 Q8：AI 按环境下达工作优先指令）：workType → 权重倍率
   factionPriority?: Record<string, number>;
+  // 神谕目标（影响目标层）：{ workType, label, until }——目标对应工作系列权重放大
+  oracleGoal?: { workType: string; label: string; until: number } | null;
   // 指派职业（Q10 生产线）：当前小人固定从事的工作
   assignedJob?: string;
   // 行为结果学习（EWA 吸引模型）：经验记忆（期望收益）→ 权重倍率（1=中性，>1 偏做，<1 回避）
@@ -90,6 +93,10 @@ export interface BehaviorCard {
   satisfies?: { desire: DesireId; amount: number }[];
   // 欲望关联声明：匮乏时升该类卡权重（缺省按系列映射：work→greed 等；mod 新欲望可用此字段直接挂钩）
   desire?: DesireId;
+  // 熟练度（P0.5 卡演化：卡=习惯的建模）：触发↑、长期不用↓，权重调制 ×(0.5+mastery/100)
+  // 注意：卡实例必须按小人独立（initSlots 克隆），否则共享单例互相污染
+  mastery?: number;
+  lastUsed?: number;
   decide(ctx: CardContext): BehaviorIntent;
 }
 
@@ -106,6 +113,7 @@ export interface BehaviorCardDef {
   action: IntentAction;    // 意图（eat/rest/pray/heal/idle/walkAndWork…）
   workType?: string;       // walkAndWork 用
   label: string;           // 显示的工作名
+  reason?: string;         // 印卡原因（LLM/反馈层填，UI 展示）
   satisfies?: { desire: DesireId; amount: number }[];
   desire?: DesireId;
   when?: string[]; // 声明式条件谓词（CARD_PREDICATES 表查，AND 组合；mod 可 registerPredicate 扩展）
@@ -146,6 +154,7 @@ export function cardFromDef(def: BehaviorCardDef): BehaviorCard {
     id: def.id, name: def.name, series: def.series, weight: def.weight,
     condition, utility,
     satisfies: def.satisfies, desire: def.desire,
+    mastery: 0, lastUsed: 0,
     decide: () => ({ action: def.action, workType: def.workType, label: def.label }),
   };
 }
@@ -242,22 +251,23 @@ export function initSlots(dna: Dna, extraCards?: BehaviorCard[], t?: CardTuningL
   const cfg = t ?? TUNING.card;
   const slots: (BehaviorCard | null)[] = [];
   // 天赋卡：从 traits 表生成（registerTrait 后新天赋自动生效 + 卡槽自动进入）
+  const clone = (c: BehaviorCard): BehaviorCard => ({ ...c }); // 每小人独立实例（mastery 不串）
   for (const id of dna.traits) {
     const tr = TRAITS[id];
-    if (tr?.card) slots.push(traitCardOf(tr));
+    if (tr?.card) slots.push(clone(traitCardOf(tr)));
   }
   // mod 卡全部进池（去重排除基础卡；即使超 maxSlots 也保留——抽卡按权重，容量不再挤出 mod 玩法）
   const extra = (extraCards ?? []).filter((c) => !BASE_CARDS.some((b) => b.id === c.id));
-  for (const ec of extra) slots.push(ec);
+  for (const ec of extra) slots.push(clone(ec));
   // 基础卡保底 guaranteedBase 张（eat/rest/chop）：maxSlots=2 且 2 trait 卡时若无保底 → 小人
   // 没有任何基础卡、永久闲逛（曾实测发生）。保底让"天赋再强也有生存底线"。
   let baseIdx = 0;
   while (baseIdx < cfg.guaranteedBase && baseIdx < BASE_CARDS.length) {
-    slots.push(BASE_CARDS[baseIdx++]);
+    slots.push(clone(BASE_CARDS[baseIdx++]));
   }
   // 空槽（maxSlots 更大）再继续填
   while (slots.length < dna.maxSlots && baseIdx < BASE_CARDS.length) {
-    slots.push(BASE_CARDS[baseIdx++]);
+    slots.push(clone(BASE_CARDS[baseIdx++]));
   }
   return slots;
 }
@@ -287,7 +297,8 @@ export function effectiveWeight(card: BehaviorCard, pawn: PawnLike, ctx?: CardCo
   // 权重合成流水线（数据驱动）：规则表（defs/weightRules.ts）按序调制，mod 可插入/替换
   let w = card.weight;
   for (const rule of weightRulesOf()) w = rule.apply(w, card, pawn, ctx);
-  return w;
+  // 熟练度（P0.5 卡演化）：越熟练越想干 → ×(0.5 + mastery/100)，上限 1.5×
+  return w * (0.5 + (card.mastery ?? 0) / 100);
 }
 
 // 挑收益最高
