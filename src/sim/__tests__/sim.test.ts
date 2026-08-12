@@ -2019,3 +2019,33 @@ describe('部落名生成表（defs/factionNames.ts + tuning.faction 覆盖）',
     for (const u of units) expect(u.name).toMatch(/[幽幻]王国/);
   });
 });
+
+describe('经济账本自动调节（用户设计：支出多 → 收益工作概率自动升，不靠伐木令）', () => {
+  it('flowRatio：收益/支出净流；净支出多 → chop 工作权重自动升高', () => {
+    const sim = new Sim({ seed: 601, pawnCount: 1 });
+    // 支出 100 木、收益 50 木 → 净支出 2 倍
+    sim.recordSpend(null, 'wood', 100);
+    sim.recordEarn(null, 'wood', 50);
+    expect(sim.flowRatio('wood')).toBe(2);
+    // 推进过 priorityTimer（10s）→ factionPriority 生效
+    for (let i = 0; i < 220; i++) sim.step(1 / 20);
+    expect(sim.factionPriority.chop).toBeGreaterThan(1); // 经济账本自动拉高伐木
+    // 建造支出也被记录（buildSystem 扣成本 → 全局流）
+    const wood0 = sim.stockpile.wood ?? 0;
+    sim.stockpile.wood = 999; sim.stockpile.ore = 999;
+    const cx = Math.floor(sim.world.width / 2);
+    sim.issueCommand({ type: 'build', x: cx + 1, y: 96, buildingId: 'wall' });
+    for (let i = 0; i < 200 && sim.buildQueue.length > 0; i++) sim.step(1 / 20);
+    expect((sim.flow.wood?.spend ?? 0)).toBeGreaterThan(100); // 建造扣木计入支出
+    void wood0;
+  });
+
+  it('账本优先：库存充足但净支出高 → 仍拉高收益工作（不依赖"伐木令"）', () => {
+    const sim = new Sim({ seed: 602, pawnCount: 1 });
+    sim.stockpile.wood = 500; // 库存充足（lowAt 40 不触发）
+    sim.recordSpend(null, 'wood', 120);
+    sim.recordEarn(null, 'wood', 40); // 净支出 3 倍
+    for (let i = 0; i < 220; i++) sim.step(1 / 20);
+    expect(sim.factionPriority.chop).toBeGreaterThan(1); // 账本驱动而非库存阈值
+  });
+});

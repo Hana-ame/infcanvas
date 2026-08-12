@@ -25,6 +25,8 @@ import { JOBS as BUILTIN_JOBS } from '../defs/jobs';
 import { LEANS as BUILTIN_LEANS, type LeanDef, type LeanKey } from '../defs/leans';
 import { CARD_PREDICATES as BUILTIN_PREDICATES } from '../defs/cards';
 import { EVENT_PREDICATES } from '../defs/events';
+import type { StrategyCardDef } from '../defs/strategyCards';
+import { STRATEGY_CARDS } from '../defs/strategyCards';
 import { BUILTIN_WEIGHT_RULES, type WeightRule } from '../defs/weightRules';
 import { SOCIAL_LINES, type SocialLineTable, type TopicTemplate } from '../defs/socialLines';
 import type { CardContext } from '../ai/pawn';
@@ -74,10 +76,12 @@ export class ModRegistry {
 
   // 默认装配（Sim 构造与服务端 mod 管理器共用：先建注册表、挂载包，再交给 Sim）
   static default(): ModRegistry {
-    return new ModRegistry({
+    const r = new ModRegistry({
       tiles: TILES, buildings: BUILDINGS, items: ITEMS, enemies: ENEMIES,
       cards: BASE_CARDS, recipes: RECIPES, tuning: TUNING, intents: [], works: [],
     });
+    for (const c of STRATEGY_CARDS) r.registerStrategyCard(c); // 内置策略卡表（神谕降旨全数据化）
+    return r;
   }
 
   constructor(seed: {
@@ -363,6 +367,17 @@ export class ModRegistry {
   overrideTuning(patch: DeepPartial<TuningConfig>): this {
     this.tuning = deepMerge(this.tuning, patch);
     return this;
+  }
+
+  // 策略卡注册（神谕降旨表全数据化：条件/蓝图副作用/权重声明式；引擎按表采样）
+  private strategyCardsMap = new Map<string, StrategyCardDef>();
+  registerStrategyCard(def: StrategyCardDef): this {
+    this.assertNew('strategyCard', def.id, this.strategyCardsMap);
+    this.strategyCardsMap.set(def.id, def);
+    return this;
+  }
+  get strategyCards(): StrategyCardDef[] {
+    return [...this.strategyCardsMap.values()];
   }
 
   // 事件谓词注册（声明式事件 DLC：defs.events 的 when 引用；SimContext 签名，与卡谓词分开）

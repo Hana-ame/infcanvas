@@ -96,9 +96,11 @@ export interface SimContext {
   rollEvent(eid: number, dc: number): { success: boolean; roll: number };
   rollEventSkill(eid: number, dc: number, skill: SkillId): { success: boolean; roll: number };
   adjustMood(eid: number, delta: number): void;
-  // 个人经济预期（用户设计：每个人心里有本账——工作赚多少、花费花多少）
-  recordEarn(eid: number, amount: number): void;
-  recordSpend(eid: number, amount: number): void;
+  // 经济账本（用户设计：收益/支出自动调节工作概率；个人预期 + 全局资源流）
+  // eid 可空：null = 公共支出（建造扣公共库存）只记全局流
+  recordEarn(eid: number | null, item: string, amount: number): void;
+  recordSpend(eid: number | null, item: string, amount: number): void;
+  flowRatio(item: string): number;
   logEvent(text: string): void;
   clearTrailCache(): void;
   // 技能（COC）：读取 + 使用后成长

@@ -35,6 +35,9 @@ export class BuildSystem implements GameSystem {
           if (b.cost.ore > 0 && (this.ctx.stockpile.ore ?? 0) < b.cost.ore) continue;
           this.ctx.stockpile.wood = Math.max(0, this.ctx.stockpile.wood - b.cost.wood);
           if (b.cost.ore) this.ctx.stockpile.ore = Math.max(0, (this.ctx.stockpile.ore ?? 0) - b.cost.ore);
+          // 经济账本：建造支出（公共库存 → 全局流；支出多 → 经济自动拉高伐木概率）
+          if (b.cost.wood > 0) this.ctx.recordSpend(null, 'wood', b.cost.wood);
+          if (b.cost.ore > 0) this.ctx.recordSpend(null, 'ore', b.cost.ore);
         }
         if (def.replacesTile) {
           // 地形改造（修桥）：把 footprint 格替换为目标 tile（water → bridge），不留建筑

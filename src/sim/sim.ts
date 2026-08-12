@@ -198,6 +198,10 @@ export class Sim implements SimContext {
   playerUnitId: string | null = null; // 玩家所属单位（Q3 团灭附身）
   // 已抽到的科技（神谕抽卡解锁；tech 未解锁的建筑不可建造）
   techs = new Set<string>();
+  // 全局资源流账本（用户 2026-08-13 经济设计：收益/支出自动调节工作概率）
+  // 伐木记收益 wood、建造记支出 wood——净支出多 → 经济系统自动拉高伐木概率、压低建造概率
+  // （factionPriority 消费：priority 规则 flowAt 判定），无需神谕降"伐木令"
+  flow: Record<string, { earn: number; spend: number }> = {};
   // 神谕目标（影响目标层，不碰选择链）：神谕降旨 → 设定一个方向，小人仍自主决策，
   // 但目标对应工作系列的抽卡权重被放大（weightRules.oracleGoal 规则），
   // 且可带蓝图副作用（垦田令 → 农田蓝图入队）——神谕只引导、不指挥
@@ -515,30 +519,52 @@ export class Sim implements SimContext {
   // ---- 个人经济预期（用户 2026-08-13 设计：每个人心里有本账）----
   // 工作产出/个人花费 各自滚动平均成预期；现实 vs 预期对比 → 情绪反馈：
   // 赚 ≥ 预期×goodMul → 满足；赚 ≤ 预期×badMul → 失望；花费同理
-  private recordExpect(eid: number, key: 'expectEarn' | 'expectSpend', amount: number, dir: 1 | -1): void {
+  // 全局资源流：收益/支出累计（经济调节输入；item 如 'wood'/'ore'/'food'）
+  private flowAdd(item: string, key: 'earn' | 'spend', amount: number): void {
+    const f = (this.flow[item] ??= { earn: 0, spend: 0 });
+    f[key] += amount;
+  }
+
+  // eid 可空：null = 公共支出（建造扣公共库存）只记全局流；否则同时记个人预期
+  recordEarn(eid: number | null, item: string, amount: number): void {
+    this.flowAdd(item, 'earn', amount);
+    if (eid === null) return;
     const st = this.pawnStates.get(eid);
     if (!st) return;
     const e = this.tuning.economy;
-    const prev = st[key] ?? amount;
-    const next = (1 - e.alpha) * prev + e.alpha * amount;
-    st[key] = next;
-    const good = dir === 1 ? amount >= prev * e.goodMul : amount <= prev * e.badMul;
-    const bad = dir === 1 ? amount <= prev * e.badMul : amount >= prev * e.goodMul;
-    if (good) {
+    const prev = st.expectEarn ?? amount;
+    st.expectEarn = (1 - e.alpha) * prev + e.alpha * amount;
+    if (amount >= prev * e.goodMul) {
       this.adjustMood(eid, e.moodGood);
-      this.logEvent(`💰 #${eid} 这次${dir === 1 ? '赚' : '花'}得划算（预期 ${Math.round(prev)}，实际 ${amount}）`);
-    } else if (bad) {
+      this.logEvent(`💰 #${eid} 这次赚得划算（预期 ${Math.round(prev)}，实际 ${amount}）`);
+    } else if (amount <= prev * e.badMul) {
       this.adjustMood(eid, e.moodBad);
-      this.logEvent(`😞 #${eid} 对这次${dir === 1 ? '收获' : '花费'}失望（预期 ${Math.round(prev)}，实际 ${amount}）`);
+      this.logEvent(`😞 #${eid} 对这次收获失望（预期 ${Math.round(prev)}，实际 ${amount}）`);
     }
   }
 
-  recordEarn(eid: number, amount: number): void {
-    this.recordExpect(eid, 'expectEarn', amount, 1);
+  recordSpend(eid: number | null, item: string, amount: number): void {
+    this.flowAdd(item, 'spend', amount);
+    if (eid === null) return;
+    const st = this.pawnStates.get(eid);
+    if (!st) return;
+    const e = this.tuning.economy;
+    const prev = st.expectSpend ?? amount;
+    st.expectSpend = (1 - e.alpha) * prev + e.alpha * amount;
+    if (amount <= prev * e.badMul) {
+      this.adjustMood(eid, e.moodGood);
+      this.logEvent(`💰 #${eid} 这次花得划算（预期 ${Math.round(prev)}，实际 ${amount}）`);
+    } else if (amount >= prev * e.goodMul) {
+      this.adjustMood(eid, e.moodBad);
+      this.logEvent(`😞 #${eid} 对这次花费失望（预期 ${Math.round(prev)}，实际 ${amount}）`);
+    }
   }
 
-  recordSpend(eid: number, amount: number): void {
-    this.recordExpect(eid, 'expectSpend', amount, -1);
+  // 资源净支出率（经济调节输入）：spend/earn（无收益时视为 Infinity = 纯支出）
+  flowRatio(item: string): number {
+    const f = this.flow[item];
+    if (!f || f.earn <= 0) return f && f.spend > 0 ? Infinity : 0;
+    return f.spend / f.earn;
   }
 
   // ---- 性能分析（内置，profiler 插件消费）----
@@ -771,12 +797,16 @@ export class Sim implements SimContext {
     this.prioTimer = this.mods.tuning.faction.priorityTimer; // 每 N 秒评估一次环境 → 派系工作优先级
     const s = this.stockpile;
     const pri: Record<string, number> = {};
-    // 基线 1.0，短缺的资源对应工作权重升高（数据驱动：规则表 tuning.card.priority）
+    // 经济账本优先：资源净支出（flow.spend > earn×flowAt）→ 对应收益工作权重升高（用户经济设计）
+    // 库存阈值兜底：短缺（lowAt）仍升权（紧急情况）
     for (const r of this.mods.tuning.card.priority) {
       let boost = 1;
-      const low = this.priorityStock(r.resource, s);
-      if (low < r.lowAt) boost = r.boost;
-      if (r.urgentAt !== undefined && low < r.urgentAt && r.urgentBoost !== undefined) boost = r.urgentBoost;
+      if (r.flowAt !== undefined && this.flowRatio(r.resource) >= r.flowAt) boost = r.boost;
+      else {
+        const low = this.priorityStock(r.resource, s);
+        if (low < r.lowAt) boost = r.boost;
+        if (r.urgentAt !== undefined && low < r.urgentAt && r.urgentBoost !== undefined) boost = r.urgentBoost;
+      }
       pri[r.cardId] = boost;
     }
     this.factionPriority = pri;

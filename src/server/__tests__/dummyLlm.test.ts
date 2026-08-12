@@ -3,6 +3,7 @@ import { describe, it, expect } from 'vitest';
 import { Sim } from '../../sim/sim';
 import { feedbackPlanner, randomPlanner, makeDummyCardPlanner } from '../dummyLlm';
 import { drawCards, effectiveWeight } from '../../sim/ai/pawn';
+import { STRATEGY_CARDS } from '../../sim/defs/strategyCards';
 
 // feedbackPlanner 最小 ctx 工厂（分支单点可控，不受默认 tuning 干扰）
 const mkCtx = (over: Record<string, unknown>) => ({
@@ -13,7 +14,9 @@ const mkCtx = (over: Record<string, unknown>) => ({
   world: { buildings: new Map() },
   socialUnits: { units: new Map() },
   techs: new Set(),
-  rng: { next: () => 0.5 } as never,
+  pawnList: [],
+  mods: { strategyCards: STRATEGY_CARDS },
+  rng: { next: () => 0.5, weightedPick: (pool: unknown[]) => pool[0] } as never,
   ...over,
 }) as never as Parameters<typeof feedbackPlanner>[0];
 
@@ -79,9 +82,10 @@ describe('sim.printCard（LLM 印卡 API：DESIGN §6 只印卡不进选择链�
 });
 
 describe('dummy planner（feedback / random）', () => {
-  it('feedback：缺木 → 伐木令；缺矿 → 采矿令；有队列 → 建造令', () => {
-    expect(feedbackPlanner(mkCtx({ stockpile: { wood: 1, ore: 100, food: 1000 } }))?.workType).toBe('chop');
-    expect(feedbackPlanner(mkCtx({ stockpile: { wood: 100, ore: 1, food: 1000 } }))?.workType).toBe('mine');
+  it('feedback：经济调节不靠降令（缺木/缺矿不干预，账本自动调）→ null；有队列 → 建造令', () => {
+    // 经济卡已从策略表移除（用户定案：伐木令退位，经济归收益/支出账本自动调节）
+    expect(feedbackPlanner(mkCtx({ stockpile: { wood: 1, ore: 100, food: 1000 } }))).toBeNull();
+    expect(feedbackPlanner(mkCtx({ stockpile: { wood: 100, ore: 1, food: 1000 } }))).toBeNull();
     expect(feedbackPlanner(mkCtx({ buildQueue: [{ x: 3, y: 3, defId: 'farm' }] }))?.workType).toBe('build');
     expect(feedbackPlanner(mkCtx({ stockpile: { wood: 100, ore: 100, food: 1 } }))?.label).toBe('垦田令');
   });
@@ -93,37 +97,36 @@ describe('dummy planner（feedback / random）', () => {
 
   it('feedback：缺粮且农田不足 → 垦田令（种植）；人丁旺木足 → 拓荒令（迁徙）', () => {
     expect(feedbackPlanner(mkCtx({ stockpile: { wood: 100, ore: 100, food: 1 } }))?.label).toBe('垦田令');
-    // 农田 ≥3 → 不再垦田，回落到缺粮伐木
-    const farms = new Map([[1, { def: { tags: ['farm'] } }], [2, { def: { tags: ['farm'] } }], [3, { def: { tags: ['farm'] } }]]);
-    expect(feedbackPlanner(mkCtx({ stockpile: { wood: 100, ore: 100, food: 1 }, world: { buildings: farms } }))?.label).toBe('伐木令');
-    // 农田不足但缺粮 → 垦田令（已在上行断言）
+    // 农田 ≥3 → 不再垦田（经济由账本调节，神谕不降"缺粮伐木令"）
+    const farms = new Map([[1, { def: { id: 'farm' } }], [2, { def: { id: 'farm' } }], [3, { def: { id: 'farm' } }]]);
+    expect(feedbackPlanner(mkCtx({ stockpile: { wood: 100, ore: 100, food: 1 }, world: { buildings: farms } }))).toBeNull();
     // 迁徙：成员 5 + 木足 + 单营地
     const camps = new Map([[10, { def: { id: 'campfire' } }]]);
     expect(feedbackPlanner(mkCtx({
       stockpile: { wood: 400, ore: 100, food: 1000 },
       socialUnits: { units: mkUnit(5) },
+      pawnList: [1, 2, 3, 4, 5],
       world: { buildings: camps },
     }))?.label).toBe('拓荒令');
     // 成员不足 → 不迁徙
     expect(feedbackPlanner(mkCtx({
       stockpile: { wood: 400, ore: 100, food: 1000 },
       socialUnits: { units: mkUnit(2) },
+      pawnList: [1, 2],
       world: { buildings: camps },
     }))).toBeNull();
   });
 
-  it('垦田令/拓荒令效用 = 34（神谕溢价高于建造令 32）', () => {
-    expect(feedbackPlanner(mkCtx({ stockpile: { wood: 100, ore: 100, food: 1 } }))!.utilityFixed).toBe(34);
-    const camps = new Map([[10, { def: { id: 'campfire' } }]]);
-    expect(feedbackPlanner(mkCtx({
-      stockpile: { wood: 400, ore: 100, food: 1000 },
-      socialUnits: { units: mkUnit(4) },
-      world: { buildings: camps },
-    }))!.utilityFixed).toBe(34);
+  it('垦田令/拓荒令蓝图副作用声明（数据驱动）', () => {
+    const till = STRATEGY_CARDS.find((c) => c.label === '垦田令')!;
+    expect(till.blueprint).toEqual({ defId: 'farm', spot: 'nearCamp' });
+    const migrate = STRATEGY_CARDS.find((c) => c.label === '拓荒令')!;
+    expect(migrate.blueprint).toEqual({ defId: 'campfire', spot: 'far' });
   });
 
   it('垦田令蓝图落点 footprint 合法（farm 2×2，与已有建筑不重叠）', () => {
     const sim = new Sim({ seed: 30, pawnCount: 2 });
+    sim.time = 60; sim.dayTime = 0.5; // 白天（dayTime 在 step 时才重算，需同步设置）
     sim.stockpile.wood = 999;
     sim.stockpile.ore = 999;
     sim.stockpile.food = 1; // 缺粮 → 垦田令
@@ -151,17 +154,18 @@ describe('dummy planner（feedback / random）', () => {
 
   it('makeDummyCardPlanner：interval 累计 → 降旨目标（不碰选择链）', () => {
     const sim = new Sim({ seed: 27, pawnCount: 2 });
-    sim.stockpile.wood = 1; // 缺木局面，feedback 稳定降"伐木"目标
+    sim.time = 60; sim.dayTime = 0.5; // 白天（dayTime 在 step 时才重算，需同步设置）
+    sim.stockpile.wood = 1; // 缺木不降令（经济账本调节）；改为缺粮垦田场景验证降旨
     const planner = makeDummyCardPlanner(sim, { mode: 'feedback', interval: 60 });
     planner.tick(59);
     expect(planner.printed).toBe(0);
     planner.tick(1); // 60s 到点
     expect(planner.printed).toBe(1);
-    // 神谕目标生效（影响目标层）……
-    expect(sim.oracleGoal?.workType).toBe('chop');
+    // 神谕目标生效（影响目标层）：缺粮 → 垦田目标
+    expect(sim.oracleGoal?.workType).toBe('build');
     // ……而非直接插卡（不碰选择链）
-    expect(sim.pawnStates.get(sim.pawns[0])!.slots.some((c) => c?.id === 'dummy:chop')
-      || sim.pawnStates.get(sim.pawns[1])!.slots.some((c) => c?.id === 'dummy:chop')).toBe(false);
+    expect(sim.pawnStates.get(sim.pawns[0])!.slots.some((c) => c?.id?.startsWith('oracle:'))
+      || sim.pawnStates.get(sim.pawns[1])!.slots.some((c) => c?.id?.startsWith('oracle:'))).toBe(false);
   });
 
   it('神谕目标放大对应工作权重（×oracleGoalMul）；到期自动清除', () => {
@@ -188,6 +192,7 @@ describe('dummy planner（feedback / random）', () => {
 
   it('垦田令副作用：农田蓝图入队（种植闭环）', () => {
     const sim = new Sim({ seed: 28, pawnCount: 2 });
+    sim.time = 60; sim.dayTime = 0.5; // 白天（dayTime 在 step 时才重算，需同步设置）
     sim.stockpile.wood = 100;
     sim.stockpile.ore = 100;
     sim.stockpile.food = 1; // 缺粮

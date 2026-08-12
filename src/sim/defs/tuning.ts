@@ -392,6 +392,7 @@ export interface PriorityRule {
   boost: number;           // 短缺时权重倍率
   urgentAt?: number;       // 库存低于此值 → urgentBoost
   urgentBoost?: number;
+  flowAt?: number;         // 经济账本：资源净支出率（spend/earn）≥ 此值 → boost（账本优先）
 }
 
 export interface EventTuning {
@@ -828,10 +829,10 @@ export const TUNING: TuningConfig = {
     envLeisureRainMul: 1.6,
     envPhysioExtremeMul: 1.3,
     priority: [
-      { cardId: 'farm', resource: 'food', lowAt: 60, boost: 1.6, urgentAt: 20, urgentBoost: 2.4 },
-      { cardId: 'chop', resource: 'wood', lowAt: 40, boost: 1.5 },
-      { cardId: 'mine', resource: 'ore', lowAt: 15, boost: 1.4 },
-      { cardId: 'caveMine', resource: 'ore', lowAt: 15, boost: 1.4 },
+      { cardId: 'farm', resource: 'food', lowAt: 60, boost: 1.6, urgentAt: 20, urgentBoost: 2.4, flowAt: 1.2 },
+      { cardId: 'chop', resource: 'wood', lowAt: 40, boost: 1.5, flowAt: 1.2 },
+      { cardId: 'mine', resource: 'ore', lowAt: 15, boost: 1.4, flowAt: 1.2 },
+      { cardId: 'caveMine', resource: 'ore', lowAt: 15, boost: 1.4, flowAt: 1.2 },
       { cardId: 'build', resource: 'queue', lowAt: 0, boost: 1.8 },
     ],
   },

@@ -1,9 +1,11 @@
-// LLM 慢决策层 dummy（用户指定：先不调真 API，用随机/反馈方式模拟 LLM 印卡）
-// 真 LLM 版将实现同一 CardPlanner 接口（生成策略卡 def → sim.printCard），
-// 这里用确定性规则/随机生成同样的输出，把「LLM 只印卡」链路先跑通。
-// 用法（server/index.ts）：LLM_DUMMY=1 启用（无 API key、零成本、可离线）
+// 神谕慢决策层（策略卡全数据化——用户 2026-08-13 定案："真的全部数据化"）
+// 策略卡表 = defs/strategyCards.ts（条件/蓝图副作用/权重全声明式，mod 可 registerStrategyCard / defs.strategyCards）
+// 引擎只做两件事：feedback = 条件过滤后按 weight 加权采样；random = 全表加权随机采样
+// 印卡 → setOracleGoal（目标层）+ blueprint 副作用（数据驱动落点）
 import type { BehaviorCardDef } from '../sim/ai/pawn';
 import type { SimContext } from '../sim/systems/context';
+import { STRATEGY_CARDS, evalStrategyCondition } from '../sim/defs/strategyCards';
+import type { StrategyCardDef } from '../sim/defs/strategyCards';
 
 // 印卡接口（未来 LLM 版同签名）：
 // planner 输入当前局面，输出一张策略卡 def（null = 本次不印）
@@ -16,88 +18,40 @@ export interface DummyPlannerOpts {
   onPrint?: (def: BehaviorCardDef) => void; // 印卡回调（UI 通知等）
 }
 
-// 策略卡模板池（系列：work 进决策；label 显示）
-// 垦田令/拓荒令 = 种植/迁徙行为：印卡时 tick 侧把对应蓝图放入建造队列
-// （垦田令 → farm 蓝图 → 小人建造 → farm 被动产粮 = 种植；
-//  拓荒令 → 远处 campfire 蓝图 → 建成 → socialUnit 自动形成新派系 = 迁徙）
-const WORK_CARDS = [
-  { workType: 'chop', label: '伐木令', series: 'work' },
-  { workType: 'mine', label: '采矿令', series: 'work' },
-  { workType: 'caveMine', label: '矿洞令', series: 'work' },
-  { workType: 'build', label: '建造令', series: 'work' },
-  { workType: 'build', label: '垦田令', series: 'work', blueprint: 'farm' },
-  { workType: 'build', label: '拓荒令', series: 'work', blueprint: 'campfire' },
-] as const;
-const LIFE_CARDS = [
-  { action: 'rest', label: '休整令', series: 'physio' },
-  { action: 'eat', label: '觅食令', series: 'physio' },
-  { action: 'pray', label: '祈祷令', series: 'religion' },
-  { action: 'idle', label: '放空令', series: 'leisure' },
-] as const;
+// 通用采样引擎：策略卡表 → 候选池 → 按 weight 加权采样
+// feedback：条件满足的卡进候选（健康局面空池 → 不干预）；random：全表
+function sampleStrategy(ctx: SimContext, cards: StrategyCardDef[], feedback: boolean): BehaviorCardDef | null {
+  // feedback：条件满足的卡进池（always 卡是 random 专用，不参与反馈判定）；
+  // random：全表（含无条件生活卡）
+  const pool = feedback ? cards.filter((c) => c.condition.kind !== 'always' && evalStrategyCondition(ctx, c.condition)) : cards;
+  if (pool.length === 0) return null;
+  const weights = pool.map((c) => c.weight);
+  const picked = ctx.rng.weightedPick(pool, weights);
+  if (!picked) return null;
+  return strategyToDef(picked);
+}
 
-// 反馈式印卡：读库存/队列/时段，印"当下最需要"的生产/休整卡
+// 策略卡 def → 神谕目标 def（BehaviorCardDef 形式：横幅/测试兼容）
+function strategyToDef(c: StrategyCardDef): BehaviorCardDef {
+  return {
+    id: c.id, name: c.label, series: c.series ?? 'work', weight: c.weight,
+    utilityFixed: 20,
+    action: c.action, workType: c.workType, label: c.label, reason: c.reason,
+    satisfies: [{ desire: 'greed', amount: 1 }],
+  } as BehaviorCardDef;
+}
+
+// feedback 模式：条件过滤 + 加权采样（垦田 weight 10 > 缺粮伐木 7 → 农田不足时优先垦田）
 export function feedbackPlanner(ctx: SimContext): BehaviorCardDef | null {
-  const t = ctx.tuning;
-  const s = ctx.stockpile;
-  const wood = s.wood ?? 0;
-  const ore = s.ore ?? 0;
-  const food = s.food ?? 0;
-  const queue = ctx.buildQueue?.length ?? 0;
-  const thr = t.population.foodThreshold; // 共用库存门槛（数据驱动铁律：阈值读 tuning）
-  if (wood < thr) return workDef('chop', { note: '缺木' });
-  if (ore < thr / 2) return workDef('mine', { note: '缺矿' });
-  if (queue > 0) return workDef('build', { note: '有建造队列' });
-  // 种植：缺粮且农田不足 → 垦田令（建造农田，被动产粮闭环）；农田够 → 仍伐木换粮
-  if (food < thr) {
-    const farms = [...ctx.world.buildings.values()].filter((b) => b.def.tags?.includes('farm')).length;
-    if (farms < 3) return workDef('build', { note: '缺粮垦田', label: '垦田令' });
-    return workDef('chop', { note: '缺粮' });
-  }
-  // 迁徙：人丁兴旺 + 木足 + 尚无第二营地 → 拓荒令（远处建新营地，形成新派系）
-  const memberCount = [...ctx.socialUnits.units.values()].reduce((n, u) => n + u.members.length, 0);
-  const camps = [...ctx.world.buildings.values()].filter((b) => b.def.id === 'campfire').length;
-  if (wood > thr * 4 && memberCount >= 4 && camps < 2) return workDef('build', { note: '人丁兴旺拓荒', label: '拓荒令' });
-  if (ctx.isNight()) return lifeDef('rest', '入夜休整');
-  return null; // 局面健康 → 不干预（保持小人自主）
+  return sampleStrategy(ctx, ctx.mods.strategyCards, true);
 }
 
+// random 模式：全表加权随机采样（含无条件卡：觅食/祈祷/放空）
 export function randomPlanner(ctx: SimContext): BehaviorCardDef | null {
-  const rng = Math.random;
-  if (rng() < 0.6) {
-    const w = WORK_CARDS[Math.floor(rng() * WORK_CARDS.length)];
-    return workDef(w.workType, { note: '随机策略', label: 'blueprint' in w ? w.label : undefined });
-  }
-  const l = LIFE_CARDS[Math.floor(rng() * LIFE_CARDS.length)];
-  return lifeDef(l.action, '随机策略');
+  return sampleStrategy(ctx, ctx.mods.strategyCards, false);
 }
 
-// 神谕策略卡效用 = 基础卡基准 + 神谕溢价（策略卡在对应需求存在时必须能赢过基础卡）
-// 基础工作卡 utilityFixed：伐木 30 / 采矿 25 / 建造 28；基础休息卡 utilityBase 50（需 rest<40）
-const WORK_UTILITY: Record<string, number> = { chop: 34, mine: 31, caveMine: 34, build: 32, till: 34, migrate: 34 };
-const LIFE_UTILITY: Record<string, number> = { rest: 25, eat: 25, pray: 12, idle: 12 };
 
-// workDef(workType, opts)：opts.label 覆盖默认（垦田令/拓荒令），id 由 label 派生
-function workDef(workType: string, opts: { note: string; label?: string }): BehaviorCardDef {
-  const tpl = WORK_CARDS.find((w) => w.workType === workType) ?? WORK_CARDS[0];
-  const label = opts.label ?? tpl.label;
-  const baseId = label === '垦田令' ? 'till' : label === '拓荒令' ? 'migrate' : workType;
-  return {
-    id: `dummy:${baseId}`, name: label, series: tpl.series, weight: 9,
-    utilityFixed: WORK_UTILITY[baseId] ?? WORK_UTILITY[workType] ?? 30,
-    action: 'walkAndWork', workType, label, reason: opts.note,
-    satisfies: [{ desire: 'greed', amount: 2 }],
-  } as BehaviorCardDef;
-}
-
-function lifeDef(action: 'rest' | 'eat' | 'pray' | 'idle', note: string): BehaviorCardDef {
-  const tpl = LIFE_CARDS.find((l) => l.action === action) ?? LIFE_CARDS[0];
-  return {
-    id: `dummy:${action}`, name: tpl.label, series: tpl.series, weight: 6,
-    utilityFixed: LIFE_UTILITY[action] ?? 12,
-    action, label: tpl.label, reason: note,
-    satisfies: [{ desire: 'sloth', amount: 1 }],
-  } as BehaviorCardDef;
-}
 
 // 定时印卡器：挂到 sim 每 tick 检查（interval 秒印一张，目标随机）
 export function makeDummyCardPlanner(sim: SimContext, opts: DummyPlannerOpts = {}): {
@@ -138,13 +92,14 @@ export function makeDummyCardPlanner(sim: SimContext, opts: DummyPlannerOpts = {
   };
 }
 
-// 蓝图副作用：按策略卡 id 决定模板与落点
-//  - dummy:till：营地（首个 campfire）附近空地放农田蓝图 → 种植闭环（farm 被动产粮）
-//  - dummy:migrate：营地外环远处空地放 campfire 蓝图 → 迁徙闭环（建成自动形成新派系）
+// 蓝图副作用（数据驱动）：查策略卡表 blueprint 声明（defId/spot），按 spot 规则找落点
+//  - nearCamp：营地（首个 campfire）旁环扫 → 种植闭环（垦田令→farm）
+//  - far：营地外环远处 → 迁徙闭环（拓荒令→campfire，建成自动形成新派系）
 function applyBlueprint(sim: SimContext, cardId: string): void {
-  const blueprint: 'farm' | 'campfire' | null =
-    cardId === 'dummy:till' ? 'farm' : cardId === 'dummy:migrate' ? 'campfire' : null;
-  if (!blueprint) return;
+  const card = sim.mods.strategyCards.find((c) => c.id === cardId);
+  const bp = card?.blueprint;
+  if (!bp) return;
+  const blueprint = bp.defId;
   const cmd = sim as unknown as {
     issueCommand(c: { type: 'build'; x: number; y: number; buildingId?: string }): void;
     world: {
@@ -180,7 +135,7 @@ function applyBlueprint(sim: SimContext, cardId: string): void {
     return null;
   };
   // 半径由近及远回退（营地旁挤满 → 稍远，保证垦田/拓荒不因落点失效而白印）
-  const chain = blueprint === 'farm' ? [3, 4, 5] : [12, 10, 8];
+  const chain = bp.spot === 'nearCamp' ? [3, 4, 5] : [12, 10, 8];
   for (const r of chain) {
     const spot = findEmpty(r);
     if (spot) {

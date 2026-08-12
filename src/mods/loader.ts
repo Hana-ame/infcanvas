@@ -14,6 +14,7 @@ import { ModRegistry } from '../sim/mods/registry';
 import type { ItemDef } from '../sim/defs';
 import { declaredEventToScripted } from '../sim/defs/events';
 import type { DeclaredEvent } from '../sim/defs/events';
+import type { StrategyCardDef } from '../sim/defs/strategyCards';
 import type { LeanDef } from '../sim/core/lean';
 
 
@@ -43,6 +44,7 @@ export interface ModDefsJson {
   lines?: { category: 'greet' | 'positive' | 'negative'; text: string }[];
   topics?: { event: string; template: string }[];
   events?: DeclaredEvent[]; // 声明式事件（DLC：when 谓词 + effects 效果表）
+  strategyCards?: StrategyCardDef[]; // 策略卡（神谕降旨：条件/蓝图/权重声明式）
 }
 
 export interface ModPackage {
@@ -109,7 +111,7 @@ function validateDefsJson(id: string, raw: unknown): ModDefsJson {
   for (const key of Object.keys(d)) {
     if (key === 'tuning') {
       if (typeof d[key] !== 'object' || d[key] === null) throw new Error(`mod "${id}" defs.tuning 必须是对象`);
-    } else if (key === 'cards' || key === 'items' || key === 'tiles' || key === 'buildings' || key === 'recipes' || key === 'enemies' || key === 'jobs' || key === 'leans' || key === 'markov' || key === 'seriesDesires' || key === 'lines' || key === 'topics' || key === 'events') {
+    } else if (key === 'cards' || key === 'items' || key === 'tiles' || key === 'buildings' || key === 'recipes' || key === 'enemies' || key === 'jobs' || key === 'leans' || key === 'markov' || key === 'seriesDesires' || key === 'lines' || key === 'topics' || key === 'events' || key === 'strategyCards') {
       if (!Array.isArray(d[key])) throw new Error(`mod "${id}" defs.${key} 必须是数组`);
     } else {
       throw new Error(`mod "${id}" defs.${key} 未知字段（打包器只支持白名单字段）`);
@@ -181,6 +183,10 @@ function mountDefs(m: ModRegistry, pkg: ModPackage): void {
   // 声明式事件（DLC 形态）：when 谓词 + effects 效果表 → 函数式 ScriptedEvent
   for (const ev of d.events ?? []) {
     guard(`events.${ev.id}`, () => m.registerEvent(declaredEventToScripted(ev)));
+  }
+  // 策略卡（神谕降旨全数据化）：条件/蓝图/权重声明式，引擎按表采样
+  for (const sc of d.strategyCards ?? []) {
+    guard(`strategyCards.${sc.id}`, () => m.registerStrategyCard(sc));
   }
   for (const t of d.topics ?? []) {
     // {key} 模板 → text 函数（占位符替换）
