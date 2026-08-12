@@ -124,7 +124,6 @@ export class GatherSystem implements GameSystem {
           // 心情微调（写死 +3/-4，未进 tuning：采到富矿更开心、失败更沮丧）
           this.ctx.adjustMood(eid, ev.success ? 3 : -4);
           this.ctx.logEvent(ev.success ? '采到富矿！' : '采矿一无所获');
-          this.ctx.clearTrailCache();
           st.mining = undefined;
         }
       }
@@ -147,7 +146,6 @@ export class GatherSystem implements GameSystem {
           this.ctx.bus.emit({ type: 'work_completed', eid, work: 'chop', success: ev.success, x, y });
           // 心情微调（写死 +2/-3，未进 tuning：与采矿档位刻意有差）
           this.ctx.adjustMood(eid, ev.success ? 2 : -3);
-          this.ctx.clearTrailCache();
           st.chopXY = undefined;
           st.chopProgress = undefined;
         }

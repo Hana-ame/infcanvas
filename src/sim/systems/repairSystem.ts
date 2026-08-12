@@ -52,20 +52,14 @@ export class RepairSystem implements GameSystem {
     }
   }
 
-  // 扫 radius 内最近的受损建筑（修理优先级 = 距离最近）
+  // 扫 radius 内最近的受损建筑（修理优先级 = 距离最近；chunk 分区查询）
   private findDamaged(pos: { x: number; y: number }, radius: number): { x: number; y: number } | null {
     const w = this.ctx.world;
     let best: { x: number; y: number } | null = null;
     let bestD = Infinity;
-    for (let dy = -radius; dy <= radius; dy++) {
-      for (let dx = -radius; dx <= radius; dx++) {
-        const x = Math.round(pos.x) + dx;
-        const y = Math.round(pos.y) + dy;
-        if (!w.inBounds(x, y)) continue;
-        if (!w.isBuildingDamaged(x, y)) continue;
-        const d = dx * dx + dy * dy;
-        if (d < bestD) { bestD = d; best = { x, y }; }
-      }
+    for (const b of w.queryBuildingsNear(Math.round(pos.x), Math.round(pos.y), radius)) {
+      if (b.hp >= b.def.hp) continue;
+      if (b.dist < bestD) { bestD = b.dist; best = { x: b.key % w.width, y: Math.floor(b.key / w.width) }; }
     }
     return best;
   }

@@ -7,6 +7,8 @@ import { DESIRES } from '../../sim/core/desires';
 import {
   parseModPackage, buildModMount, mountModPackage, packModPackage, CORE_VERSION,
 } from '../loader';
+import { declaredEventToScripted } from '../../sim/defs/events';
+import { ModRegistry } from '../../sim/mods/registry';
 
 const pkgJson = readFileSync(join(process.cwd(), 'src/mods/packages/demo-berry.mod.json'), 'utf-8');
 const pkg = parseModPackage(pkgJson);
@@ -116,5 +118,69 @@ describe('mountModPackage 与 Sim 的集成路径', () => {
     expect(sim.mods.cards.get('berryFeast')).toBeDefined();
     expect(sim.mods.tilesMap.get('berryBush')).toBeDefined();
     sim.step(10); // 不崩
+  });
+});
+
+describe('声明式事件 DLC（defs.events：when 谓词 + effects 效果表）', () => {
+  it('declaredEventToScripted：when AND 组合 + effects 白名单执行（mood/resource/log）', () => {
+    const sim = new Sim({ seed: 501, pawnCount: 2, mods: (m) => {
+      m.registerBuilding({ id: 'totem', name: '图腾', size: { x: 1, y: 1 }, hp: 300, color: '#7a4a6a', passable: false, buildTime: 6, costWood: 10, tags: ['totem'], aura: { radius: 5, moodPerSec: 0.4 } });
+      m.registerEventPredicate('hasTotem', (ctx) => ctx.world.hasBuildingWithTag('totem'));
+      m.registerEvent(declaredEventToScripted({
+        id: 't1', name: '祭典', weight: 9,
+        when: ['hasTotem', 'moodLow'],
+        effects: [
+          { kind: 'mood', amount: 8, text: '祭典振奋' },
+          { kind: 'resource', item: 'wood', amount: 10, text: '祭典贡木' },
+        ],
+      }));
+    } });
+    // 无图腾 → 谓词不满足
+    expect(sim.mods.events.find((e) => e.id === 't1')!.condition!(sim)).toBe(false);
+    // 放图腾 + 压低心情 → 满足
+    const w = sim.world;
+    let spot: { x: number; y: number } | null = null;
+    for (let r = 3; r < 10 && !spot; r++) for (let dy = -r; dy <= r && !spot; dy++) for (let dx = -r; dx <= r && !spot; dx++) {
+      if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+      const x = 96 + dx, y = 96 + dy;
+      if (w.canBuildFootprint(x, y, sim.mods.buildings.totem)) spot = { x, y };
+    }
+    expect(spot).not.toBeNull();
+    w.placeBuilding(spot!.x, spot!.y, 'totem', 'auto');
+    for (const eid of sim.pawns) sim.adjustMood(eid, -60); // 心情压低 → moodLow
+    expect(sim.mods.events.find((e) => e.id === 't1')!.condition!(sim)).toBe(true);
+    // 执行效果：全员心情 +8、木头 +10
+    const mood0 = sim.readNeeds(sim.pawns[0])!.mood;
+    const wood0 = sim.stockpile.wood ?? 0;
+    sim.mods.events.find((e) => e.id === 't1')!.run(sim);
+    expect(sim.readNeeds(sim.pawns[0])!.mood).toBe(mood0 + 8);
+    expect(sim.readNeeds(sim.pawns[1])!.mood).toBe(mood0 + 8);
+    expect(sim.stockpile.wood ?? 0).toBe(wood0 + 10);
+  });
+
+  it('totem.mod.json 整包端到端：白名单校验 + 挂载（图腾可建、祭典进池、祈愿卡可用）', () => {
+    const registry = ModRegistry.default();
+    const raw = require('node:fs').readFileSync('mods/totem.mod.json', 'utf-8');
+    const pkg = parseModPackage(raw);
+    const mount = buildModMount(pkg);
+    mount(registry);
+    const sim = new Sim({ seed: 502, pawnCount: 2, registry });
+    // 图腾建筑注册（defs.buildings）
+    expect(sim.mods.buildings.totem).toBeDefined();
+    expect(sim.mods.buildings.totem.aura?.moodPerSec).toBe(0.4);
+    // 祭典事件进池（defs.events 声明式）
+    expect(sim.mods.events.some((e) => e.id === 'totem_festival')).toBe(true);
+    // 祈愿卡注册（defs.cards，when hasTotem 谓词 → 有图腾时可用）
+    expect(sim.mods.cards.has('totemPray')).toBe(true);
+    // 开局 hook 铺图腾（step 后）
+    sim.step(1);
+    expect([...sim.world.buildings.values()].some((b) => b.def.id === 'totem')).toBe(true);
+    // 图腾 aura 生效（站在图腾旁心情回升）
+    const totem = [...sim.world.buildings.entries()].find(([, b]) => b.def.id === 'totem')![0];
+    const tx = totem % sim.world.width;
+    const ty = Math.floor(totem / sim.world.width);
+    sim.pawnPositions.set(sim.pawns[0], { x: tx + 1, y: ty });
+    sim.step(1);
+    expect(sim.readNeeds(sim.pawns[0])!.mood).toBeGreaterThanOrEqual(0);
   });
 });

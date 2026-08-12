@@ -23,6 +23,17 @@ export class SocialUnitSystem implements GameSystem {
   constructor(private ctx: SimContext) {}
 
   init(bus: EventBus): void {
+    // 核心建筑（篝火/教堂）被摧毁 → 派系解散（防幽灵派系残留：
+    // 曾实测狼反复拆篝火 → units 只增不减，16+ 空壳派系挂在世界里）
+    bus.on('building_destroyed', (ev) => {
+      const d = ev as Extract<import('../core/events').GameEvent, { type: 'building_destroyed' }>;
+      const unit = this.unitAtKey(this.ctx.world.buildKey(d.x, d.y));
+      if (!unit) return;
+      for (const eid of unit.members) this.membership.delete(eid);
+      this.units.delete(unit.id);
+      if (this.ctx.playerUnitId === unit.id) this.ctx.playerUnitId = null; // step 尾部 checkPossession 转移视角
+      this.ctx.logEvent(`💔 ${unit.name} 的营地被摧毁，派系散落`);
+    });
     // 成员死亡 → 记入部落记忆
     bus.on('pawn_died', (ev) => {
       const e = ev as Extract<import('../core/events').GameEvent, { type: 'pawn_died' }>;
@@ -106,10 +117,21 @@ export class SocialUnitSystem implements GameSystem {
   }
 
   // 成员归属
-  assignPawn(eid: number): void {
+  // 成员归属：pawn 归入最近单位
+  // 门槛：新归属距离必须比旧归属**明显更近**（距差 > reassignMargin 格）才切换
+  //（曾踩坑：出生 4 人触发行 autobuild 第二个篝火建在出生圈内 → 重算全量划走
+  //  初始派系成员 → 开局 1s 假团灭附身；margin 保证近距离新营不洗牌、
+  //  只有远走迁徙者（距新营地显著更近）才改归属）
+  assignPawn(eid: number, margin?: number): void {
     const pos = this.ctx.pawnPositions.get(eid);
     if (!pos) return;
+    const m = margin ?? this.ctx.tuning.faction?.unitReassignMargin ?? 4;
     // 先解除旧归属（迁徙/重算时保持单一派系，避免成员同时挂在两个单位）
+    const oldId = this.membership.get(eid);
+    const oldUnit = oldId ? this.units.get(oldId) : null;
+    const oldD = oldUnit
+      ? (pos.x - (oldUnit.key % this.ctx.world.width)) ** 2 + (pos.y - Math.floor(oldUnit.key / this.ctx.world.width)) ** 2
+      : Infinity;
     this.unassignPawn(eid);
     let best: SocialUnit | null = null;
     let bestD = Infinity;
@@ -119,9 +141,14 @@ export class SocialUnitSystem implements GameSystem {
       const d = (pos.x - x) ** 2 + (pos.y - y) ** 2;
       if (d < bestD) { bestD = d; best = u; }
     }
-    if (best) {
+    // 门槛判定：最近单位必须是"明显更近"（旧距离 - 新距离 ≥ margin 格²的平方根阈值）
+    if (best && bestD + m * m <= oldD) {
       if (!best.members.includes(eid)) best.members.push(eid);
       this.membership.set(eid, best.id);
+    } else if (oldUnit && !oldUnit.members.includes(eid)) {
+      // 未能切换 → 保持原归属（重新挂回，防止重算时被解聘后无归属）
+      oldUnit.members.push(eid);
+      this.membership.set(eid, oldUnit.id);
     }
   }
 

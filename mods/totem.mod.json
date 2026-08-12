@@ -1,0 +1,14 @@
+{
+  "manifest": {
+    "id": "totem",
+    "name": "图腾信仰",
+    "version": "1.0.0",
+    "description": "玩法插件示例（证明框架插入插件即加功能）：新建筑「图腾」（心情光环）+ 祈愿卡 + 祭典事件——事件走 defs.events 纯声明（DLC 形态，when 谓词 + effects 效果表），零代码",
+    "author": "infcanvas",
+    "requires": {
+      "coreVersion": "0.1.0"
+    }
+  },
+  "defs": "{\"buildings\": [{\"id\": \"totem\", \"name\": \"图腾\", \"size\": {\"x\": 1, \"y\": 1}, \"hp\": 300, \"color\": \"#7a4a6a\", \"emoji\": \"🗿\", \"passable\": false, \"buildTime\": 6, \"costWood\": 10, \"tags\": [\"totem\", \"faith\"], \"aura\": {\"radius\": 5, \"moodPerSec\": 0.4}, \"sprite\": \"building:monument\"}], \"events\": [{\"id\": \"totem_festival\", \"name\": \"图腾祭典\", \"weight\": 3, \"cooldown\": 240, \"minTime\": 120, \"when\": [\"hasTotem\", \"moodLow\"], \"effects\": [{\"kind\": \"mood\", \"amount\": 8, \"text\": \"🗿 图腾祭典举行，全营地心神振奋\"}]}], \"cards\": [{\"id\": \"totemPray\", \"name\": \"图腾祈愿\", \"series\": \"religion\", \"weight\": 4, \"when\": [\"hasTotem\"], \"utilityFixed\": 15, \"action\": \"idle\", \"label\": \"图腾祈愿\", \"satisfies\": [{\"desire\": \"pride\", \"amount\": 1}]}]}",
+  "scripts": "// 图腾信仰 scripts（函数式扩展：事件谓词 + 开局图腾）\n// 沙箱执行：new Function('m', 'console', src)——只能调用注入的 m/console\n// 祭典事件本身在 defs.events 纯声明（DLC 形态：when 谓词 + effects 效果表）\n// 卡谓词（CardContext，卡 when 引用）：有图腾才抽得到祈愿卡\nm.registerPredicate('hasTotem', (c) => c.view.hasBuildingWithTag?.('totem') ?? false);\n// 事件谓词（SimContext，defs.events when 引用）：祭典只在有图腾时进候选池\nm.registerEventPredicate('hasTotem', (ctx) => ctx.world.hasBuildingWithTag('totem'));\n\n// 开局在营地旁放一座图腾（演示 mod 建筑出现在世界；仅铺一次）\nlet seeded = false;\nm.registerHook('step:after', ({ sim }) => {\n  if (seeded) return;\n  seeded = true;\n  const cx = Math.floor(sim.world.width / 2);\n  const w = sim.world;\n  for (let r = 3; r < 8; r++) {\n    for (let dy = -r; dy <= r; dy++) {\n      for (let dx = -r; dx <= r; dx++) {\n        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;\n        const x = cx + dx;\n        const y = Math.floor(sim.world.height / 2) + dy;\n        if (w.canBuildFootprint(x, y, sim.mods.buildings.totem)) {\n          w.placeBuilding(x, y, 'totem', 'auto');\n          sim.logEvent('🗿 一座图腾矗立在营地旁');\n          return;\n        }\n      }\n    }\n  }\n});"
+}

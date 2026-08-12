@@ -222,6 +222,7 @@ export interface FactionTuning {
   trustMeetDist: number;   // 跨单位成员协作相遇距离
   unitCapChurch: number;   // 教堂单位成员上限（客户端 UI 也读它）
   unitCapCampfire: number; // 篝火单位成员上限
+  unitReassignMargin: number;   // 成员归属切换门槛：新单位比旧归属明显更近（格）才切换（防开局假团灭）
 }
 
 export interface PopulationTuning {
@@ -518,14 +519,14 @@ export const TUNING: TuningConfig = {
     wolfLootItem: 'ore',
     wolfLootAmount: 2,
     pawnDmg: 8,
-    initialRaidDelay: 60,
+    initialRaidDelay: 90,
     baseInterval: 75,
     pressureCap: 2,
     pressureScale: 3,
     raidCountBase: 2,
-    raidCountPerPawn: 0.5,
+    raidCountPerPawn: 0.35,
     meleeRange: 5,
-    buildingDmg: 15,
+    buildingDmg: 6,   // 建筑抗拆：篝火 80HP ≈ 13s 拆（原 15/s 五秒拆火 → 无火 SAN 崩 → 死亡循环）
     buildingRadius: 6,
     minDodge: 0.05,
     dodgeBase: 30,
@@ -636,6 +637,9 @@ export const TUNING: TuningConfig = {
     trustMeetDist: 4,        // 跨单位成员协作相遇距离
     unitCapChurch: 10,
     unitCapCampfire: 3,
+    unitReassignMargin: 10,  // 成员归属切换门槛：新单位比旧归属明显更近（格）才切换
+    //（防开局假团灭 + 防误伤：小人日常工作走开 10 格 + 邻居营地建成 → 不能算迁徙；
+    //  必须 > autobuild 营间距上限（spotRingMax 6）的平方差；真迁徙者站在新营地旁必切）
     opinionMsgFriendly: 1,   // 友善传话看法增量
     tradeFoodScarceAt: 40,   // 缺粮判定库存阈值
   },

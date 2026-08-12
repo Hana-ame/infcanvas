@@ -81,6 +81,32 @@
 | server 默认抽卡 | ✅ | `src/server/index.ts`：不再需要 LLM_DUMMY 环境变量——**随机抽卡默认启用**（feedback 策略卡 + 科技卡）；LLM_ENDPOINT 仅为可选增强；启动日志明确标注 |
 | 卡熟练度（P0.5 卡演化） | ✅ | 见上表 2026-08-12 补充（mastery+1 / 600s 惰性衰减 / 权重 ×(0.5+m/100) / 克隆防串 / 存档 {id,m,u} / HUD `卡名×熟练度`） |
 
+## 2026-08-12 性能优化 + 内置 profiler 插件
+
+| 项 | 状态 | 说明 |
+|---|---|---|
+| 建筑 chunk 空间分区 | ✅ | World 8×8 chunk 索引建筑 footprint 格；`queryBuildingsNear` 半径查询只扫覆盖 chunk（原 O(r²) 全格扫描 × pawn × tick = san/needs 60%+ 耗时）；sanSystem/needsSystem/repairSystem/raidSystem 四处替换，前段提速 3-6 倍 |
+| 采集不再清寻路缓存 | ✅ | 树/矿 → grass/dirt 只会让路径更好走，旧缓存仍可达；全清缓存 = 每次采集全小人路径重算（性能杀手）；缓存失效只依赖建筑变化 |
+| 成员归属切换门槛 | ✅ | `faction.unitReassignMargin`（10 格）：开局 autobuild 近距第二篝火不再洗牌掏空初始派系（曾 1s 假团灭附身）；真迁徙者（距新营地显著更近）正常划入 |
+| **内置性能分析 + 火焰图（插件形态）** | ✅ | `registry.enableProfiling` 内置逐系统计时（默认关零开销）；**`src/mods/profiler.ts` 插件**：registerHook('step:after') 自动开启计时 → 周期性 console 表格 + **SVG 火焰图 HTML**（x 轴=耗时占比、悬停 tooltip 累计/调用/均值/峰值）→ 验证"不改内核、纯 mod 挂载即得火焰图"的插件扩展性；实测定位：长局 behavior 均值 0.05→0.53ms/次（10 倍退化，trailCache 被墙拆建反复清空） |
+
+## 2026-08-12 事件组 DLC 化（声明式事件 + 插件形态演示）
+
+| 项 | 状态 | 说明 |
+|---|---|---|
+| 声明式事件（defs.events） | ✅ | 事件组 = .mod.json 纯声明（DLC 形态，零代码）：`when`（事件谓词 id，AND 组合）+ `effects`（白名单效果表：mood 全体心情 / resource 库存 / log 叙事）→ loader 挂载时 `declaredEventToScripted` 转函数式 ScriptedEvent（与内置同接口）；内置事件谓词表 `EVENT_PREDICATES`（hasWarmth/hasFarm/hasCave/hasChurch/hasWonder/hasRaft/moodLow/moodHigh/foodPlenty/populationAtLeast4）+ `registerEventPredicate`（SimContext 签名，与卡谓词 CardContext 分开注册） |
+| 插件即功能（两种形态演示） | ✅ | ① `src/mods/profiler.ts`（ESM 源码插件）：内置性能分析消费端，registerHook 挂载 → console 表格 + SVG 火焰图 HTML；② `mods/totem.mod.json`（.mod.json 包，server MODS_DIR 自动挂载 ✓ 冒烟 `mods=[demo-berry, totem]`）：新建筑图腾（aura 心情光环）+ 祈愿卡（hasTotem 谓词门控）+ 祭典事件（defs.events 纯声明）——**证明：插入一个文件 = 加一组玩法** |
+| CardView 通用世界查询口 | ✅ | `view.hasBuildingWithTag(tag)`：mod 卡谓词可查任意建筑 tag（框架性扩展，注册口更通用） |
+
+## 2026-08-13 自玩剧情验证 + 平衡/缺陷修复
+
+| 项 | 状态 | 说明 |
+|---|---|---|
+| 行为系统退化修复 | ✅ | ① 空闲小人 findNearest miss 后 5s 冷却内完全跳过扫描（原每 tick 15 半径 706 格环扫 = 长局行为系统 10 倍退化主因，profiler 火焰图定位）；② registry `get leans` 缓存（原每抽卡每卡 Object.fromEntries 全表重建 = 16% 热点）；长局 150s 段 13s→3.6s/30s 游戏（1x-3x 全实时，总提速 ~3.6 倍） |
+| 袭击平衡 | ✅ | buildingDmg 15→6（篝火 80HP 从 5s 拆到 13s，原开局 60s 5 狼拆火 → 无火 SAN 崩 → 死亡循环）；initialRaidDelay 60→90（开局喘息）；raidCountPerPawn 0.5→0.35 |
+| 幽灵派系清理 | ✅ | anchor 建筑（篝火/教堂）被摧毁 → `building_destroyed` 事件 → 派系解散（成员释放、unit 移除、playerUnitId 交还 checkPossession 转移）；原狼反复拆篝火 → units 只增不减 16+ 空壳派系 |
+| 剧情长局（100 分钟游戏） | ✅ | 修复后：0 团灭、人口 4→14、派系 16→4、主派系 8 成员、食物盈余 500、袭击 4→6→7 只渐进、贸易/矿脉/游商/瘟疫/丰收/野营/拓荒令事件流完整 |
+
 ## 待办 / 差距
 
 > 旧条目若已在上表 ✅ 则移除；以下为当前真实差距（按优先级排序，2026-08-10 核）。

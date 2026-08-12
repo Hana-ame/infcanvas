@@ -200,6 +200,7 @@ export class World {
     this.buildings.clear();
     this.gridToBuilding.clear();
     this.buildingFootprint.clear();
+    this.buildingChunks.clear();
     for (const d of data) {
       const def = this.buildingsDefs[d.defId];
       if (!def) continue;
@@ -210,6 +211,7 @@ export class World {
       const footprint = this.footprintKeys(x, y, def);
       this.buildingFootprint.set(mainKey, footprint);
       for (const fk of footprint) this.gridToBuilding.set(fk, mainKey);
+      this.indexBuilding(mainKey);
     }
     this.buildingVersion++;
     this.recomputeLight();
@@ -310,6 +312,7 @@ export class World {
       this.buildings.delete(main);
       this.buildingFootprint.delete(main);
       for (const fk of footprint) this.gridToBuilding.delete(fk);
+      this.unindexBuilding(main);
       this.buildingVersion++;
       this.recomputeLight();
       return { destroyed: true, building: b };
@@ -339,6 +342,64 @@ export class World {
   }
 
   // 检查整个 footprint 是否可建（多格）
+  // ---- 建筑空间分区（chunk 索引）----
+  // 性能：篝火光环/修理/袭击等"半径找建筑"原为 O(r²) 全格扫描 × 每小人 × 每 tick
+  //（实测 san/needs 占模拟耗时 60%+）；改为按 8×8 chunk 登记建筑 footprint 格，
+  // 半径查询只扫覆盖的 3×3 chunk，命中后按 footprint 最近格精确判距
+  private static CHUNK = 8;
+  private buildingChunks = new Map<number, Set<number>>(); // chunkKey -> mainKey 集合
+
+  private chunkKeyOf(key: number): number {
+    const gx = key % this.width;
+    const gy = Math.floor(key / this.width);
+    return Math.floor(gx / World.CHUNK) + Math.floor(gy / World.CHUNK) * 1000;
+  }
+
+  // footprint 每个格登记到所在 chunk（2×2 跨 chunk 的建筑两边都能查到）
+  private indexBuilding(mainKey: number): void {
+    for (const fk of this.buildingFootprint.get(mainKey) ?? [mainKey]) {
+      const ck = this.chunkKeyOf(fk);
+      let cell = this.buildingChunks.get(ck);
+      if (!cell) { cell = new Set(); this.buildingChunks.set(ck, cell); }
+      cell.add(mainKey);
+    }
+  }
+
+  private unindexBuilding(mainKey: number): void {
+    for (const cell of this.buildingChunks.values()) cell.delete(mainKey);
+  }
+
+  // 半径内建筑查询（O(覆盖 chunk 数 + 命中数)；距离按 footprint 最近格）
+  queryBuildingsNear(x: number, y: number, radius: number): { key: number; def: (typeof BUILDINGS)[string]; hp: number; faction: string; dist: number }[] {
+    const r2 = radius * radius;
+    const out: { key: number; def: (typeof BUILDINGS)[string]; hp: number; faction: string; dist: number }[] = [];
+    const seen = new Set<number>();
+    const c0x = Math.floor((x - radius) / World.CHUNK);
+    const c1x = Math.floor((x + radius) / World.CHUNK);
+    const c0y = Math.floor((y - radius) / World.CHUNK);
+    const c1y = Math.floor((y + radius) / World.CHUNK);
+    for (let cy = c0y; cy <= c1y; cy++) {
+      for (let cx = c0x; cx <= c1x; cx++) {
+        const cell = this.buildingChunks.get(cx + cy * 1000);
+        if (!cell) continue;
+        for (const mk of cell) {
+          if (seen.has(mk)) continue;
+          seen.add(mk);
+          let minD = Infinity;
+          for (const fk of this.buildingFootprint.get(mk) ?? [mk]) {
+            const d = ((fk % this.width) - x) ** 2 + (Math.floor(fk / this.width) - y) ** 2;
+            if (d < minD) minD = d;
+          }
+          if (minD <= r2) {
+            const b = this.buildings.get(mk)!;
+            out.push({ key: mk, def: b.def, hp: b.hp, faction: b.faction, dist: Math.sqrt(minD) });
+          }
+        }
+      }
+    }
+    return out;
+  }
+
   canBuildFootprint(x: number, y: number, def: (typeof BUILDINGS)[string]): boolean {
     // 水上建筑（竹筏/渡船/木桥）：footprint 全为水面 + 至少一格邻接陆地或已有水上建筑
     //（从岸边/筏链逐步铺 → 渡水玩法闭环；孤水中央不可凭空建）
@@ -390,6 +451,7 @@ export class World {
     const footprint = this.footprintKeys(x, y, def);
     this.buildingFootprint.set(mainKey, footprint);
     for (const fk of footprint) this.gridToBuilding.set(fk, mainKey);
+    this.indexBuilding(mainKey);
     this.buildingVersion++;
     this.recomputeLight();
     return true;
@@ -411,6 +473,8 @@ export class World {
     const footprint = this.footprintKeys(x0, y0, def);
     this.buildingFootprint.set(main, footprint);
     for (const fk of footprint) this.gridToBuilding.set(fk, main);
+    this.unindexBuilding(main);
+    this.indexBuilding(main);
     this.buildingVersion++;
     this.recomputeLight();
     return true;

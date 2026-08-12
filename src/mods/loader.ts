@@ -12,6 +12,8 @@
 
 import { ModRegistry } from '../sim/mods/registry';
 import type { ItemDef } from '../sim/defs';
+import { declaredEventToScripted } from '../sim/defs/events';
+import type { DeclaredEvent } from '../sim/defs/events';
 import type { LeanDef } from '../sim/core/lean';
 
 
@@ -40,6 +42,7 @@ export interface ModDefsJson {
   seriesDesires?: { series: string; desire: string }[];
   lines?: { category: 'greet' | 'positive' | 'negative'; text: string }[];
   topics?: { event: string; template: string }[];
+  events?: DeclaredEvent[]; // 声明式事件（DLC：when 谓词 + effects 效果表）
 }
 
 export interface ModPackage {
@@ -106,7 +109,7 @@ function validateDefsJson(id: string, raw: unknown): ModDefsJson {
   for (const key of Object.keys(d)) {
     if (key === 'tuning') {
       if (typeof d[key] !== 'object' || d[key] === null) throw new Error(`mod "${id}" defs.tuning 必须是对象`);
-    } else if (key === 'cards' || key === 'items' || key === 'tiles' || key === 'buildings' || key === 'recipes' || key === 'enemies' || key === 'jobs' || key === 'leans' || key === 'markov' || key === 'seriesDesires' || key === 'lines' || key === 'topics') {
+    } else if (key === 'cards' || key === 'items' || key === 'tiles' || key === 'buildings' || key === 'recipes' || key === 'enemies' || key === 'jobs' || key === 'leans' || key === 'markov' || key === 'seriesDesires' || key === 'lines' || key === 'topics' || key === 'events') {
       if (!Array.isArray(d[key])) throw new Error(`mod "${id}" defs.${key} 必须是数组`);
     } else {
       throw new Error(`mod "${id}" defs.${key} 未知字段（打包器只支持白名单字段）`);
@@ -175,6 +178,10 @@ function mountDefs(m: ModRegistry, pkg: ModPackage): void {
   for (const mk of d.markov ?? []) guard(`markov.${mk.fromSeries}`, () => m.registerMarkovBias(mk.fromSeries, mk.toMuls));
   for (const sd of d.seriesDesires ?? []) guard(`seriesDesires.${sd.series}`, () => m.registerSeriesDesire(sd.series, sd.desire as never));
   for (const l of d.lines ?? []) guard(`lines.${l.category}`, () => m.registerLine(l.category, l.text));
+  // 声明式事件（DLC 形态）：when 谓词 + effects 效果表 → 函数式 ScriptedEvent
+  for (const ev of d.events ?? []) {
+    guard(`events.${ev.id}`, () => m.registerEvent(declaredEventToScripted(ev)));
+  }
   for (const t of d.topics ?? []) {
     // {key} 模板 → text 函数（占位符替换）
     guard(`topics.${t.event}`, () => m.registerTopicTemplate({

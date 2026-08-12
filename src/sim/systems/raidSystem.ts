@@ -151,15 +151,9 @@ export class RaidSystem implements GameSystem {
     const w = this.ctx.world;
     let best: { x: number; y: number } | null = null;
     let bestD = Infinity;
-    for (let dy = -radius; dy <= radius; dy++) {
-      for (let dx = -radius; dx <= radius; dx++) {
-        const x = Math.round(h.x) + dx;
-        const y = Math.round(h.y) + dy;
-        if (!w.inBounds(x, y)) continue;
-        if (!w.getBuilding(x, y)) continue;
-        const d = dx * dx + dy * dy;
-        if (d < bestD) { bestD = d; best = { x, y }; }
-      }
+    // chunk 空间分区查询（原 O(r²) 全格扫描 × hostile × tick）
+    for (const b of w.queryBuildingsNear(Math.round(h.x), Math.round(h.y), radius)) {
+      if (b.dist < bestD) { bestD = b.dist; best = { x: b.key % w.width, y: Math.floor(b.key / w.width) }; }
     }
     return best;
   }

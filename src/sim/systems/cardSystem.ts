@@ -111,6 +111,7 @@ export class BehaviorSystem implements GameSystem {
       hasCampfire: () => this.ctx.world.hasBuildingWithTag('warmth'),
       hasCave: () => this.ctx.world.hasBuildingWithTag('mine'),
       hasRaft: () => this.ctx.world.hasBuildingWithTag('raft'),
+      hasBuildingWithTag: (tag: string) => this.ctx.world.hasBuildingWithTag(tag),
       desiresOf: (e) => this.ctx.pawnStates.get(e)?.desires ?? null,
       env: this.ctx.env,
       lastSeries: st.lastSeries,
@@ -238,11 +239,12 @@ export class BehaviorSystem implements GameSystem {
   }
 
   // 近距快扫 miss → 远距回扫（营地周边资源采空后仍能远行工作，防长期停产）
-  // miss 后进入 5s 冷却：避免每 tick 全环大半径扫描（45² 格 × 多小人 = 性能拖垮）
+  // miss 后 5s 冷却内完全跳过扫描：空闲小人（找不到目标）每 tick 都做
+  // 15 半径环扫（706 格）是长局行为系统 10 倍退化的主因（profiler 火焰图定位）
   private findNearFar(c: SimContext, eid: number, st: PawnState, pos: PositionData, cond: (x: number, y: number) => boolean): { x: number; y: number } | null {
+    if ((st.farScanCd ?? 0) > 0) return null;
     const near = c.findNearest(pos, cond, true);
     if (near) return near;
-    if ((st.farScanCd ?? 0) > 0) return null;
     const far = c.findNearest(pos, cond, true, c.tuning.pawn.farScanRadius);
     if (!far) st.farScanCd = 5;
     return far;

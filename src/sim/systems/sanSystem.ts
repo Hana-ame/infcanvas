@@ -72,27 +72,19 @@ export class SanSystem implements GameSystem {
   }
 
   // 篝火光环理智恢复：aura.sanPerSec 优先，否则 tuning.san.fireRecover
+  //（chunk 空间分区查询：原 O(r²) 全格扫描 → 只查覆盖 chunk，性能热点之一）
   private fireRecoverAt(x: number, y: number, fallback: number): number {
     const w = this.ctx.world;
-    for (let dy = -1; dy <= 1; dy++) {
-      for (let dx = -1; dx <= 1; dx++) {
-        const b = w.getBuilding(Math.round(x) + dx, Math.round(y) + dy);
-        if (b && b.def.aura?.sanPerSec !== undefined) return b.def.aura.sanPerSec;
-      }
+    for (const b of w.queryBuildingsNear(Math.round(x), Math.round(y), 1)) {
+      if (b.def.aura?.sanPerSec !== undefined) return b.def.aura.sanPerSec;
     }
     return fallback;
   }
 
   private nearCampfire(x: number, y: number, radius: number): boolean {
     const w = this.ctx.world;
-    for (let dy = -radius; dy <= radius; dy++) {
-      for (let dx = -radius; dx <= radius; dx++) {
-        const bx = Math.round(x) + dx;
-        const by = Math.round(y) + dy;
-        if (!w.inBounds(bx, by)) continue;
-        const b = w.getBuilding(bx, by);
-        if (b && b.def.tags?.includes('warmth')) return true;
-      }
+    for (const b of w.queryBuildingsNear(Math.round(x), Math.round(y), radius)) {
+      if (b.def.tags?.includes('warmth')) return true;
     }
     return false;
   }

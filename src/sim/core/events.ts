@@ -8,6 +8,7 @@ export type GameEvent =
   | { type: 'work_completed'; eid: number; work: string; success: boolean; x: number; y: number }
   | { type: 'resource_gained'; eid: number; item: string; amount: number }
   | { type: 'building_built'; x: number; y: number; defId: string }
+  | { type: 'building_destroyed'; x: number; y: number; defId: string }
   | { type: 'raid_started'; count: number }
   | { type: 'raid_ended'; survivors: number }
   | { type: 'pawn_recruited'; eid: number }

@@ -88,17 +88,11 @@ export class NeedsSystem implements GameSystem {
     const R = this.ctx.tuning.needs.auraScanRadius; // 扫描半径（tuning；生效距离由 def.aura.radius 决定）
     let best: { moodPerSec?: number; restPerSec?: number } | null = null;
     let bestD = Infinity;
-    for (let dy = -R; dy <= R; dy++) {
-      for (let dx = -R; dx <= R; dx++) {
-        const bx = Math.round(pos.x) + dx;
-        const by = Math.round(pos.y) + dy;
-        if (!w.inBounds(bx, by)) continue;
-        const b = w.getBuilding(bx, by);
-        if (b && b.def.aura) {
-          const d = dx * dx + dy * dy;
-          const radius = b.def.aura.radius ?? R; // mod 可调各建筑光环半径
-          if (d <= radius * radius && d < bestD) { bestD = d; best = b.def.aura; }
-        }
+    // chunk 空间分区查询（原 O(r²) 全格扫描 × pawn × tick = 性能热点）
+    for (const b of w.queryBuildingsNear(Math.round(pos.x), Math.round(pos.y), R)) {
+      if (b.def.aura) {
+        const radius = b.def.aura.radius ?? R; // mod 可调各建筑光环半径
+        if (b.dist <= radius && b.dist < bestD) { bestD = b.dist; best = b.def.aura; }
       }
     }
     return best;

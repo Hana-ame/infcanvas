@@ -24,6 +24,7 @@ import { MARKOV_BIAS as BUILTIN_MARKOV, SERIES_TO_DESIRE as BUILTIN_SERIES } fro
 import { JOBS as BUILTIN_JOBS } from '../defs/jobs';
 import { LEANS as BUILTIN_LEANS, type LeanDef, type LeanKey } from '../defs/leans';
 import { CARD_PREDICATES as BUILTIN_PREDICATES } from '../defs/cards';
+import { EVENT_PREDICATES } from '../defs/events';
 import { BUILTIN_WEIGHT_RULES, type WeightRule } from '../defs/weightRules';
 import { SOCIAL_LINES, type SocialLineTable, type TopicTemplate } from '../defs/socialLines';
 import type { CardContext } from '../ai/pawn';
@@ -119,8 +120,17 @@ export class ModRegistry {
   }
 
   // 行为结果学习表（EWA）：只读 Record 视图，供 Sim.leanDefOf 查询
+  // 缓存：leanOf 在抽卡决策里高频调用（每卡 × 每 pawn × 每 tick），
+  // 每次 Object.fromEntries 全表重建是行为系统 16% 热点（cpu profile 定位）
+  private leansCache: Record<string, LeanDef> | null = null;
+  private leansCacheV = -1;
   get leans(): Record<string, LeanDef> {
-    return Object.fromEntries(ModRegistry.leanStore);
+    const v = ModRegistry.leanStore.size;
+    if (!this.leansCache || this.leansCacheV !== v) {
+      this.leansCache = Object.fromEntries(ModRegistry.leanStore);
+      this.leansCacheV = v;
+    }
+    return this.leansCache;
   }
 
   // 敌人定义查询：按 id 查（缺省用 tuning.combat.raidEnemy），查不到回退第一项
@@ -221,6 +231,7 @@ export class ModRegistry {
   // 新行为学习轨道：mod 新工作卡配一个 lean key（scale = 该工作一次成功的典型结果量）。
   // 同 key 幂等覆盖（不同定义尺寸保留旧值同字段），与 DESIRES 一致跨实例共享。
   registerLean(def: LeanDef): this {
+    this.leansCache = null;
     const old = ModRegistry.leanStore.get(def.key);
     if (old && old.scale !== def.scale) throw new Error(`mod: lean "${def.key}" 冲突（已定义 scale=${old.scale}）`);
     ModRegistry.leanStore.set(def.key, { ...old, ...def });
@@ -290,6 +301,7 @@ export class ModRegistry {
 
   // 覆盖行为学习参数（mod 可调 scale 归一化尺度）
   overrideLean(key: string, patch: Partial<LeanDef>): this {
+    this.leansCache = null;
     const old = ModRegistry.leanStore.get(key);
     if (!old) throw new Error(`mod: 覆盖目标 lean "${key}" 不存在，请先 registerLean`);
     ModRegistry.leanStore.set(key, { ...old, ...patch });
@@ -350,6 +362,12 @@ export class ModRegistry {
   // 覆盖平衡参数（深合并，只改覆盖字段）
   overrideTuning(patch: DeepPartial<TuningConfig>): this {
     this.tuning = deepMerge(this.tuning, patch);
+    return this;
+  }
+
+  // 事件谓词注册（声明式事件 DLC：defs.events 的 when 引用；SimContext 签名，与卡谓词分开）
+  registerEventPredicate(id: string, fn: (ctx: import('../systems/context').SimContext) => boolean): this {
+    EVENT_PREDICATES[id] = fn;
     return this;
   }
 

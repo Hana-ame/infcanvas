@@ -510,6 +510,15 @@ export class Sim implements SimContext {
     this.trailCache.clear();
   }
 
+  // ---- 性能分析（内置，profiler 插件消费）----
+  enableProfiling(on = true): void {
+    this.registry.enableProfiling(on);
+  }
+
+  get profileStats(): ReadonlyMap<string, { totalMs: number; count: number; maxMs: number; lastMs: number }> {
+    return this.registry.profileStats;
+  }
+
   private getPath(sx: number, sy: number, ex: number, ey: number): { x: number; y: number }[] {
     const key = `${sx},${sy}->${ex},${ey}`;
     const cached = this.trailCache.get(key);

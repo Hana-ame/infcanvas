@@ -38,6 +38,8 @@ export interface CardView {
   hasCampfire(): boolean;
   hasCave(): boolean;
   hasRaft(): boolean;
+  // 通用建筑 tag 查询（mod 谓词注册口：registerPredicate 里可查任意建筑 tag）
+  hasBuildingWithTag?(tag: string): boolean;
   buildQueueCount: number;
   stockpile: Record<string, number>;
   desiresOf?(eid: number): Record<DesireId, number> | null;

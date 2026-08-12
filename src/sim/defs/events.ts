@@ -3,6 +3,72 @@
 // 函数合法（表 = TS 模块）；mod 可 registerEvent 追加、overrideEvent 覆盖
 import type { SimContext } from '../systems/context';
 import type { ScriptedEvent } from '../systems/eventSystem';
+// ---- 声明式事件（DLC 形态：事件组 = .mod.json 纯声明，零代码）----
+// 当事件组以 DLC 包加入时：defs.events 声明 when（事件谓词 id）+ effects（效果表），
+// loader 挂载时经 declaredEventToScripted 转成函数式 ScriptedEvent（与内置事件同接口）。
+// 效果白名单执行器（与 LLM 层同一哲学：数值钳制、不碰选择链）。
+export type DeclaredEffect =
+  | { kind: 'mood'; amount: number; text: string }      // 全体心情 ±
+  | { kind: 'resource'; item: string; amount: number; text: string } // 库存增减
+  | { kind: 'log'; text: string };                       // 纯叙事
+
+export interface DeclaredEvent {
+  id: string;
+  name: string;
+  weight: number;
+  cooldown?: number;
+  minTime?: number;
+  when?: string[];        // 事件谓词 id（AND 组合；缺省 = 无状况约束）
+  effects: DeclaredEffect[];
+}
+
+// 事件谓词表（SimContext 签名；与卡谓词 CardContext 表分开，事件按世界状况匹配）
+// mod 可用 registerEventPredicate 扩展（totem 插件示例：hasTotem）
+export const EVENT_PREDICATES: Record<string, (ctx: SimContext) => boolean> = {
+  hasWarmth: (ctx) => hasBuildingTag(ctx, 'warmth'),
+  hasFarm: (ctx) => hasBuildingTag(ctx, 'farm'),
+  hasCave: (ctx) => hasBuildingTag(ctx, 'mine'),
+  hasChurch: (ctx) => hasBuildingTag(ctx, 'church'),
+  hasWonder: (ctx) => hasBuildingTag(ctx, 'wonder'),
+  hasRaft: (ctx) => hasBuildingTag(ctx, 'raft'),
+  moodLow: (ctx) => avgMood(ctx) < 50,
+  moodHigh: (ctx) => avgMood(ctx) > 70,
+  foodPlenty: (ctx) => (ctx.stockpile.food ?? 0) > ctx.tuning.event.wandererFoodAt * 2,
+  populationAtLeast4: (ctx) => ctx.pawnList.length >= 4,
+};
+
+export function eventPredicateOf(id: string): (ctx: SimContext) => boolean {
+  const fn = EVENT_PREDICATES[id];
+  if (!fn) throw new Error(`事件谓词 "${id}" 未注册（registerEventPredicate 或内置表）`);
+  return fn;
+}
+
+// 声明式事件 → 函数式 ScriptedEvent（when → condition AND 组合；effects → run 白名单执行）
+export function declaredEventToScripted(ev: DeclaredEvent): ScriptedEvent {
+  return {
+    id: ev.id,
+    name: ev.name,
+    weight: ev.weight,
+    cooldown: ev.cooldown,
+    minTime: ev.minTime,
+    condition: ev.when?.length
+      ? (ctx) => ev.when!.every((pid) => eventPredicateOf(pid)(ctx))
+      : undefined,
+    run(ctx) {
+      for (const eff of ev.effects) {
+        if (eff.kind === 'mood') {
+          for (const eid of ctx.pawnList) ctx.adjustMood(eid, eff.amount);
+          ctx.logEvent(eff.text);
+        } else if (eff.kind === 'resource') {
+          ctx.stockpile[eff.item] = (ctx.stockpile[eff.item] ?? 0) + eff.amount;
+          ctx.logEvent(eff.text);
+        } else {
+          ctx.logEvent(eff.text);
+        }
+      }
+    },
+  };
+}
 
 // 是否已存在带某标签的建筑（condition 用的查询）
 function hasBuildingTag(ctx: SimContext, tag: string): boolean {
