@@ -42,6 +42,8 @@ export interface SimViewUnit {
 export interface SimViewBuilding { def: BuildingDef; defId: string; hp: number; maxHp: number; faction: string }
 
 export interface SimView {
+  techs?: ReadonlySet<string>; // 已解锁科技（单机有；远端缺省 undefined → 全部可见）
+  techsMap?: Record<string, { name: string; desc: string }>; // 科技表（单机有；远端可选）
   stockpile: Record<string, number>;
   hostiles: SimViewHostile[];
   paused: boolean; speed: number; time: number; dayLength: number; tickHz: number;
@@ -285,6 +287,7 @@ export class RemoteSim {
     if (this.destroyed) return;
     this.reconnectAttempt++;
     this.setStatus('reconnecting');
+    // 指数退避：1s → 2s → 4s…封顶 15s（server 重启风暴时避免客户端同时重连轰炸）
     const delay = Math.min(15000, 1000 * 2 ** (this.reconnectAttempt - 1));
     this.hint(`⚠ 与服务器断开，${Math.round(delay / 1000)} 秒后自动重连（第 ${this.reconnectAttempt} 次）`);
     this.reconnectTimer = setTimeout(() => this.openSocket(), delay);
@@ -367,7 +370,7 @@ export class RemoteSim {
           this.bus.emit(g);
         } else if (ev.kind === 'feed' && ev.text) {
           this.events.push({ time: m.t, text: ev.text });
-          if (this.events.length > 30) this.events.splice(0, this.events.length - 30);
+          if (this.events.length > 30) this.events.splice(0, this.events.length - 30); // feed 本地只留最近 30 条（HUD 只用 5 条，防无限增长）
         }
       }
     }
@@ -508,6 +511,7 @@ export class RemoteSim {
   ensureCamp(): void {}
 }
 
+// 未知建筑 id 兜底 def：server 升级新增建筑而 client 欢迎表未含时，HUD/渲染不崩（只显示 id）
 function fallbackDef(id: string): BuildingDef {
   return { id, name: id, size: { x: 1, y: 1 }, hp: 50, color: '#888', passable: true, buildTime: 3 };
 }

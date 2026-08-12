@@ -20,6 +20,7 @@ export class SvgAssets {
       try {
         const ctx = await Assets.load({
           src: svgDataUri(e.svg),
+          // parseAsGraphicsContext：SVG 直接解析为可共享的 GraphicsContext（任意缩放矢量清晰，非位图）
           data: { parseAsGraphicsContext: true },
         });
         this.textures.set(e.id, ctx);

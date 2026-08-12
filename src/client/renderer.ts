@@ -1,8 +1,11 @@
 // Pixi 渲染器 —— SVG 图标: 地形/建筑/小人 + 相机
+// 性能背景：地表一次绘制固定；建筑层按 buildingVersion 版本号增量重绘（不每帧全量）；
+// 位置插值平滑远程 500ms 一跳的消息（本地模式同样生效）；实体层按世界 y 排序实现 2.5D 前后遮挡
 import { Application, Container, Graphics, Rectangle, Text, TextStyle } from 'pixi.js';
 import type { SimView } from './remote';
 import type { TileDef } from '../sim/defs';
 import { SvgAssets } from './svgLoader';
+import { pawnAssetIdFor } from './svgAssets';
 
 const TILE = 32;
 
@@ -43,6 +46,9 @@ export class Renderer {
   // 蓝图层（排队中的建造）
   private blueprintLayer: Graphics;
   private lastBuildQueueVersion = -1;
+  // 移动目标标记（右键移动后短暂显示）
+  private markerLayer: Graphics;
+  private markerLife = 0;
   // 飘字反馈（资源获得等）
   private floaters: { text: Text; life: number; vy: number }[] = [];
 
@@ -59,9 +65,12 @@ export class Renderer {
     this.ghost.eventMode = 'none';
     this.blueprintLayer = new Graphics();
     this.blueprintLayer.eventMode = 'none';
+    this.markerLayer = new Graphics();
+    this.markerLayer.eventMode = 'none';
     this.worldContainer.addChild(this.terrainLayer);
     this.worldContainer.addChild(this.entityLayer);
     this.worldContainer.addChild(this.blueprintLayer);
+    this.worldContainer.addChild(this.markerLayer);
     this.worldContainer.addChild(this.pawnLayer); // 飘字等屏幕上层
     this.worldContainer.addChild(this.ghost);
   }
@@ -136,7 +145,7 @@ export class Renderer {
     this.sim.bus.on('resource_gained', (ev) => {
       if (ev.type !== 'resource_gained') return;
       const pos = this.sim.pawnPositions.get(ev.eid) ?? { x: 0, y: 0 };
-      this.spawnFloater(pos.x, pos.y, `+${ev.amount}`, ev.item === 'ore' ? '#ffd966' : '#aed581');
+      this.spawnFloater(pos.x, pos.y, `+${ev.amount}`, ev.item === 'ore' ? '#ffd966' : '#aed581'); // 飘字颜色：矿=金色，其余=浅绿
     });
   }
 
@@ -147,7 +156,14 @@ export class Renderer {
     t.anchor.set(0.5);
     t.position.set(wx * TILE, wy * TILE);
     this.pawnLayer.addChild(t);
-    this.floaters.push({ text: t, life: 1.2, vy: -30 });
+    this.floaters.push({ text: t, life: 1.2, vy: -30 }); // 飘字 1.2s 寿命、每秒上飘 30px（淡出按 life/1.2 比例）
+  }
+
+  private updateMarker(dt: number): void {
+    if (this.markerLife <= 0) return;
+    this.markerLife -= dt;
+    this.markerLayer.alpha = Math.max(0, this.markerLife / 1.2);
+    if (this.markerLife <= 0) this.markerLayer.clear();
   }
 
   private updateFloaters(dt: number): void {
@@ -258,6 +274,7 @@ export class Renderer {
     this.sortEntities();
     this.renderGhost();
     this.updateFloaters(dt);
+    this.updateMarker(dt);
     // 夜晚遮罩跟随屏幕大小 + 夜色
     this.nightOverlay.clear();
     this.nightOverlay.rect(0, 0, this.app.screen.width, this.app.screen.height);
@@ -324,7 +341,7 @@ export class Renderer {
         this.entityLayer.addChild(g);
         this.pawnSprites.set(eid, g);
         g.eventMode = 'static';
-        g.hitArea = new Rectangle(-14, -14, 28, 28);
+        g.hitArea = new Rectangle(-14, -14, 28, 28); // 点击热区 28×28（比图标略大，点选友好）
         g.on('pointerdown', (e) => {
           e.stopPropagation();
           this.selectPawn(eid);
@@ -417,17 +434,23 @@ export class Renderer {
     this.sim.selected = [];
   }
 
-  // 根据 DNA 天赋选不同的鼠 SVG
+  // 根据 DNA 天赋选不同的鼠 SVG（与 HUD 共用同一映射）
   private pawnAssetId(eid: number): string {
     const p = this.sim.pawnProfile(eid);
-    if (!p) return 'pawn:mouse';
-    const t = p.dna.traits;
-    if (t.includes('强壮')) return 'pawn:strong';
-    if (t.includes('虔诚')) return 'pawn:devout';
-    if (t.includes('懒惰')) return 'pawn:lazy';
-    if (t.includes('热爱工作')) return 'pawn:workaholic';
-    if (t.includes('夜猫子')) return 'pawn:owl';
-    return 'pawn:mouse';
+    return p ? pawnAssetIdFor(p.dna.traits) : 'pawn:mouse';
+  }
+
+  // 移动目标标记（右键/触摸移动后显示，1.2s 淡出）
+  showMoveMarker(wx: number, wy: number): void {
+    this.markerLayer.clear();
+    const gx = wx * TILE + TILE / 2;
+    const gy = wy * TILE + TILE / 2;
+    this.markerLayer.circle(gx, gy, TILE * 0.45);
+    this.markerLayer.stroke({ color: 0x4cf, width: 3, alpha: 0.9 });
+    this.markerLayer.circle(gx, gy, 3);
+    this.markerLayer.fill(0x4cf);
+    this.markerLayer.alpha = 1;
+    this.markerLife = 1.2;
   }
 
   // 建造幽灵预览
@@ -475,8 +498,19 @@ export class Renderer {
     this.camera.y -= dy / (TILE * this.camera.zoom);
   }
 
+  // 缩放钳制 0.3x~4x（zoomBy/zoomAt 共用）：下限防地图翻转、上限防过度放大（可玩性边界）
   zoomBy(factor: number): void {
     this.camera.zoom = Math.max(0.3, Math.min(4, this.camera.zoom * factor));
+  }
+
+  // 以屏幕点 (sx,sy) 为中心缩放：该点下的世界格缩放前后屏幕位置不变（滚轮不漂）
+  zoomAt(sx: number, sy: number, factor: number): void {
+    const cam = this.camera;
+    const wx = cam.x + (sx - this.app.screen.width / 2) / (TILE * cam.zoom);
+    const wy = cam.y + (sy - this.app.screen.height / 2) / (TILE * cam.zoom);
+    cam.zoom = Math.max(0.3, Math.min(4, cam.zoom * factor));
+    cam.x = wx - (sx - this.app.screen.width / 2) / (TILE * cam.zoom);
+    cam.y = wy - (sy - this.app.screen.height / 2) / (TILE * cam.zoom);
   }
 
   screenToWorld(sx: number, sy: number): { x: number; y: number } {

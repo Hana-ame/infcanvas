@@ -1,307 +1,20 @@
 // infcanvas 入口 —— P0 单机可玩版 + HUD 菜单；?remote=ws://... 连 P1 server（权威在远端）
 import { Sim } from '../sim/sim';
 import type { ModRegistry } from '../sim/mods/registry';
+import type { SimContext } from '../sim/systems/context';
 import { Renderer } from './renderer';
 import { RemoteSim } from './remote';
 import type { SimView } from './remote';
 import { SvgAssets } from './svgLoader';
-import { weatherLabel } from '../sim/core/env';
 import { parseModPackage, buildModMount } from '../mods/loader';
-import { DESIRES } from '../sim/core/desires';
-import { JOBS, jobLabelOf } from '../sim/defs/jobs';
 import { loadSave, writeSave } from './storage';
+import { createHud } from './hud';
+import type { HudApi } from './hud';
+import { makeDummyCardPlanner } from '../server/dummyLlm';
+import { keybindings } from './keybindings';
 
-const nf = (v: number | undefined): string => (v === undefined ? '-' : Math.round(v).toString());
-
-// 当前选中的建筑（模块级，HUD 可读）
-let selectedBuilding: { x: number; y: number } | null = null;
-
-function createHud(sim: SimView, onSelectBuild: (id: string | null) => void, onZoom?: (factor: number) => void, onViewMode?: (mode: 'top' | 'iso') => void): { update: (bm: string | null) => void; hint: HTMLElement } {
-  const root = document.createElement('div');
-  root.style.cssText = 'position:fixed;inset:0;z-index:10;pointer-events:none;font:13px system-ui;color:#eee;';
-
-  // 顶部资源条
-  const stock = document.createElement('div');
-  stock.style.cssText = 'position:absolute;top:0;left:0;right:0;padding:8px 14px;background:rgba(0,0,0,.6);display:flex;gap:18px;align-items:center;font-weight:600;';
-  root.appendChild(stock);
-
-  // 底部建造菜单
-  const buildMenu = document.createElement('div');
-  buildMenu.style.cssText = 'position:absolute;bottom:12px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.72);border:1px solid #444;border-radius:10px;padding:8px;display:flex;gap:6px;pointer-events:auto;flex-wrap:wrap;justify-content:center;max-width:96%;';
-  root.appendChild(buildMenu);
-
-  // 速度控制条（左下角）
-  const speedBar = document.createElement('div');
-  speedBar.style.cssText = 'position:absolute;bottom:12px;left:12px;background:rgba(0,0,0,.72);border:1px solid #444;border-radius:10px;padding:6px;display:flex;gap:4px;pointer-events:auto;';
-  root.appendChild(speedBar);
-  const speeds = [0, 1, 2, 3];
-  speedBar.textContent = '';
-  for (const sp of speeds) {
-    const b = document.createElement('button');
-    b.textContent = sp === 0 ? '⏸' : `${sp}x`;
-    b.dataset.speed = String(sp);
-    b.style.cssText = 'border:1px solid #555;background:#333;color:#eee;border-radius:6px;padding:3px 9px;cursor:pointer;font:12px system-ui;';
-    b.addEventListener('click', () => {
-      sim.paused = sp === 0;
-      sim.speed = sp === 0 ? 1 : sp;
-      refreshSpeed();
-    });
-    speedBar.appendChild(b);
-  }
-  const refreshSpeed = () => {
-    const cur = sim.paused ? 0 : sim.speed;
-    for (const b of speedBar.querySelectorAll('button')) {
-      b.style.borderColor = Number(b.dataset.speed) === cur ? '#4cf' : '#555';
-      b.style.background = Number(b.dataset.speed) === cur ? 'rgba(68,204,255,.25)' : '#333';
-    }
-  };
-  refreshSpeed();
-
-  // 缩放按钮（右下角，+/-）
-  if (onZoom) {
-    const zoomBar = document.createElement('div');
-    zoomBar.style.cssText = 'position:absolute;bottom:12px;right:240px;background:rgba(0,0,0,.72);border:1px solid #444;border-radius:10px;padding:6px;display:flex;gap:4px;pointer-events:auto;';
-    root.appendChild(zoomBar);
-    const mk = (label: string, factor: number) => {
-      const b = document.createElement('button');
-      b.textContent = label;
-      b.style.cssText = 'border:1px solid #555;background:#333;color:#eee;border-radius:6px;padding:3px 10px;cursor:pointer;font:14px system-ui;';
-      b.addEventListener('click', () => onZoom(factor));
-      zoomBar.appendChild(b);
-    };
-    mk('＋', 1.2);
-    mk('－', 0.8);
-  }
-
-  // 视角切换按钮（2D 俯视 / 2.5D 同轴）
-  if (onViewMode) {
-    const viewBar = document.createElement('div');
-    viewBar.style.cssText = 'position:absolute;bottom:12px;right:12px;background:rgba(0,0,0,.72);border:1px solid #444;border-radius:10px;padding:6px;display:flex;gap:4px;pointer-events:auto;';
-    root.appendChild(viewBar);
-    let mode: 'top' | 'iso' = 'top';
-    const btn = document.createElement('button');
-    btn.style.cssText = 'border:1px solid #555;background:#333;color:#eee;border-radius:6px;padding:3px 10px;cursor:pointer;font:12px system-ui;';
-    const refresh = () => { btn.textContent = mode === 'top' ? '2D 俯视' : '2.5D 同轴'; };
-    btn.addEventListener('click', () => {
-      mode = mode === 'top' ? 'iso' : 'top';
-      refresh();
-      onViewMode(mode);
-    });
-    refresh();
-    viewBar.appendChild(btn);
-  }
-
-  // 选中面板
-  const selPanel = document.createElement('div');
-  selPanel.style.cssText = 'position:absolute;top:54px;left:12px;background:rgba(0,0,0,.55);border-radius:8px;padding:8px 12px;min-width:170px;display:none;line-height:1.6;pointer-events:auto;';
-  root.appendChild(selPanel);
-
-  // 提示条
-  const hint = document.createElement('div');
-  hint.style.cssText = 'position:absolute;top:54px;right:12px;background:rgba(0,0,0,.5);border-radius:6px;padding:6px 10px;font-size:12px;text-align:right;';
-  root.appendChild(hint);
-
-  // 事件日志 feed（右下角，最近 6 条）——避开视角切换按钮（也在右下角）
-  const feed = document.createElement('div');
-  feed.style.cssText = 'position:absolute;bottom:12px;right:96px;background:rgba(0,0,0,.45);border-radius:8px;padding:6px 10px;font-size:11px;line-height:1.5;max-width:220px;text-align:right;';
-  root.appendChild(feed);
-
-  // 帮助按钮 + 面板
-  const helpBtn = document.createElement('button');
-  helpBtn.textContent = '❓ 操作帮助';
-  helpBtn.style.cssText = 'position:absolute;top:54px;left:50%;transform:translateX(-50%);border:1px solid #555;background:rgba(0,0,0,.6);color:#eee;border-radius:8px;padding:5px 12px;cursor:pointer;font:12px system-ui;pointer-events:auto;';
-  const helpPanel = document.createElement('div');
-  helpPanel.style.cssText = 'position:absolute;top:88px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.85);border:1px solid #444;border-radius:10px;padding:14px 18px;font-size:12px;line-height:1.8;max-width:420px;display:none;';
-  helpPanel.innerHTML =
-    `<b>🐭 infcanvas · 殖民地模拟</b><br>` +
-    `👆 <b>鼠标</b>：左键选中小人/建筑 · 右键移动 · 左键拖空白平移 · 滚轮缩放 · 边缘滚动<br>` +
-    `📱 <b>触摸</b>：点选 · 长按移动 · 双指拖动/缩放<br>` +
-    `⌨️ <b>键盘</b>：空格暂停 · 1/2/3 调速 · B 建造墙<br>` +
-    `👁 <b>视角</b>：右下角按钮切换 2D 俯视 / 2.5D 同轴（前后遮挡）<br>` +
-    `🏗 <b>建造菜单</b>：下方选建筑 → 地图点击放置（绿=可建，红=不可）<br>` +
-    `🧠 <b>小人自主</b>：小人自己伐木/采矿/建造/祈祷/疗伤，心情差会违抗安排<br>` +
-    `📋 <b>指派职业</b>：选中小人 → 面板按钮指派伐木工/矿工/农民/工匠（或自由）<br>` +
-    `🏕 <b>派系</b>：有篝火=独立派系；篝火间会贸易/传话/袭击/吞并；🌍 面板看世界派系<br>` +
-    `⛪ <b>神谕</b>：信仰高时 AI 建教堂；选教堂点"发布神谕"祝福信众<br>` +
-    `⚔ <b>威胁</b>：野狼会袭击！建墙保护，受伤要治疗；团灭后神谕会附身他派系`;
-  root.appendChild(helpBtn);
-  root.appendChild(helpPanel);
-  helpBtn.addEventListener('click', () => {
-    helpPanel.style.display = helpPanel.style.display === 'block' ? 'none' : 'block';
-  });
-
-  // 📜 历史面板（结构化仿真日志，DESIGN §3）
-  const histBtn = document.createElement('button');
-  histBtn.textContent = '📜 历史';
-  histBtn.style.cssText = 'position:absolute;top:54px;left:calc(50% + 90px);border:1px solid #555;background:rgba(0,0,0,.6);color:#eee;border-radius:8px;padding:5px 12px;cursor:pointer;font:12px system-ui;pointer-events:auto;';
-  const histPanel = document.createElement('div');
-  histPanel.style.cssText = 'position:absolute;top:88px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.88);border:1px solid #444;border-radius:10px;padding:12px 14px;font-size:11px;line-height:1.7;max-width:480px;max-height:60vh;overflow:auto;display:none;';
-  root.appendChild(histBtn);
-  root.appendChild(histPanel);
-  histBtn.addEventListener('click', () => {
-    histPanel.style.display = histPanel.style.display === 'block' ? 'none' : 'block';
-  });
-
-  // 🌍 派系概览（Q9 观察模拟器核心）
-  const facBtn = document.createElement('button');
-  facBtn.textContent = '🌍 派系';
-  facBtn.style.cssText = 'position:absolute;top:54px;left:calc(50% + 140px);border:1px solid #555;background:rgba(0,0,0,.6);color:#eee;border-radius:8px;padding:5px 12px;cursor:pointer;font:12px system-ui;pointer-events:auto;';
-  const facPanel = document.createElement('div');
-  facPanel.style.cssText = 'position:absolute;top:88px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.88);border:1px solid #444;border-radius:10px;padding:12px 14px;font-size:11px;line-height:1.7;max-width:520px;max-height:60vh;overflow:auto;display:none;';
-  root.appendChild(facBtn);
-  root.appendChild(facPanel);
-  facBtn.addEventListener('click', () => {
-    facPanel.style.display = facPanel.style.display === 'block' ? 'none' : 'block';
-  });
-
-  const update = (bm: string | null): void => {
-    // 资源条
-    const s = sim.stockpile;
-    const foodLow = sim.tuning.needs?.foodMoodLow ?? 30;
-    const foodWarn = s.food < foodLow ? ` <span style="color:#f66">⚠食物告急!</span>` : '';
-    const raidWarn = sim.hostiles.length > 0 ? ` <span style="color:#f66">⚔ 袭击！${sim.hostiles.length}${sim.hostiles[0]?.faction === 'unit' ? ' 名掠夺者' : ' 只野狼'}</span>` : '';
-    const dayIcon = sim.isNight() ? '🌙' : '☀️';
-    const pauseMark = sim.paused ? ' ⏸暂停' : ` ${sim.speed}x`;
-    const parts = [
-      `${dayIcon} ${Math.floor(sim.time / 60)}分${pauseMark}`,
-      weatherLabel(sim.env, sim.tuning.env),
-      `🌲木头 ${s.wood}`, `🪨矿 ${s.ore}`, `🍖食物 ${s.food}`,
-      `🛠️ ${s.tools ?? 0}`, `👥 ${sim.pawns.length}人`,
-    ];
-    stock.innerHTML = parts.join('  ·  ') + foodWarn + raidWarn;
-
-    // 选中建筑信息（优先于小人）
-    if (selectedBuilding) {
-      const b = sim.buildingAt(selectedBuilding.x, selectedBuilding.y);
-      if (b) {
-        const def = b.def;
-        // 篝火/教堂 = 派系单位：显示部落记忆 + 对邻近单位的看法
-        const unit = sim.unitAt(selectedBuilding.x, selectedBuilding.y);
-        const unitHtml = unit
-          ? `<br>🏕 <b>${unit.name}</b>（${unit.level === 'church' ? '教堂' : '篝火'}）成员 ${unit.members.length} 人<br>` +
-            `库存：🌲${nf(unit.resources.wood)} 🪨${nf(unit.resources.ore)} 🍖${nf(unit.resources.food)} 🛠️${nf(unit.resources.tools)}<br>` +
-            `记忆：${unit.memory.slice(-2).map((m) => m.text).join(' / ') || '暂无'}<br>` +
-            (unit.opinions.size > 0
-              ? `看法：${[...unit.opinions.entries()].map(([id, op]) => {
-                  const u = sim.socialUnits.units.get(id);
-                  return `${u?.name ?? id} ${op.value > 0 ? '+' : ''}${Math.round(op.value)}`;
-                }).join('、')}`
-              : `看法：暂无邻近势力`)
-          : '';
-        selPanel.style.display = 'block';
-        selPanel.innerHTML =
-          `<b>${def?.emoji ?? '🏗'} ${def?.name ?? b.defId}</b> (${selectedBuilding.x},${selectedBuilding.y})<br>` +
-          `耐久 ${nf(b.hp)}/${b.maxHp}<br>派系：${b.faction}${unitHtml}` +
-          (b.def.capabilities?.includes('oracle')
-            ? `<br><button id="oracleBtn" style="pointer-events:auto;border:1px solid #a07ac0;background:#5a3a6a;color:#eee;border-radius:6px;padding:4px 10px;cursor:pointer;font:12px system-ui;margin-top:6px;">✨ 发布神谕</button>`
-            : '');
-        const ob = document.getElementById('oracleBtn');
-        if (ob) {
-          ob.onclick = () => {
-            sim.issueCommand({ type: 'oracle', x: selectedBuilding!.x, y: selectedBuilding!.y });
-          };
-        }
-        return;
-      } else {
-        selectedBuilding = null;
-      }
-    }
-
-    // 选中
-    const sel = sim.selectedIds;
-    if (sel.length > 0) {
-      const eid = sel[0];
-      const p = sim.pawnProfile(eid);
-      if (p) {
-        selPanel.style.display = 'block';
-        const nd = p.needs;
-        const hk = p.health;
-        const slotCards = p.slots.filter((c) => c !== null).map((c) => c!.name).join('、') || '无';
-        const dec = p.lastDecision ? `闪念：[${p.lastDecision.drawn.join(' | ')}] → 选了【${p.lastDecision.picked}】` : '';
-        selPanel.innerHTML =
-          `<b>🐭 小人 ${eid}</b> (${Math.round(p.pos.x)},${Math.round(p.pos.y)})<br>` +
-          `<span style="color:#4cf">工作：${p.job || '闲逛'}</span>` +
-          (p.assignedJob ? `<br><span style="color:#9cf">指派：${jobLabelOf(p.assignedJob)}</span>` : '') +
-          `<br><button data-job="" style="pointer-events:auto;border:1px solid #555;background:#333;color:#eee;border-radius:5px;padding:2px 7px;cursor:pointer;font:11px system-ui;">自由</button>` +
-          `${Object.entries(JOBS).map(([id, j]) => `<button data-job="${id}" style="pointer-events:auto;border:1px solid #555;background:#333;color:#eee;border-radius:5px;padding:2px 7px;cursor:pointer;font:11px system-ui;">${j.label}</button>`).join('')}<br>` +
-          `HP ${nf(hk?.hp)}/${nf(hk?.maxHp)} · 信仰 ${nf(p.faith)}<br>` +
-          `STR ${p.dna.str} · CON ${p.dna.con} · SIZ ${p.dna.siz} · DEX ${p.dna.dex}<br>` +
-          `INT ${p.dna.int} · POW ${p.dna.pow} · APP ${p.dna.app} · EDU ${p.dna.edu}<br>` +
-          `天赋：${p.dna.traits.join('、') || '无'}<br>` +
-          `卡池 ${p.slots.filter((c) => c !== null).length} 张（槽 ${p.dna.maxSlots}，trait/mod 卡不占约束）：${slotCards}<br>` +
-          `技能：工作 ${p.skills.work ?? 0} · 战斗 ${p.skills.fight ?? 0} · 手艺 ${p.skills.craft ?? 0} · 社交 ${p.skills.social ?? 0} · 信仰 ${p.skills.faith ?? 0}<br>` +
-          `欲望：${Object.entries(DESIRES).map(([k, { label }]) => `${label}${nf(p.desires[k])}`).join(' ')}<br>` +
-          (dec ? `<span style="color:#caa">${dec}</span><br>` : '') +
-          (nd ? `饥饿 ${nf(nd.food)} · 精力 ${nf(nd.rest)} · 心情 ${nf(nd.mood)} · 理智 ${nf(nd.san)}` : '') +
-          (p.oracleBuff && p.oracleBuff.until > sim.time ? `<br><span style="color:#e0b0ff">✨ 受神谕祝福</span>` : '');
-        // 指派职业按钮（Q10 生产线）。带 pawnId：远程模式 server 无 selected 镜像，显式指定
-        selPanel.querySelectorAll<HTMLButtonElement>('button[data-job]').forEach((btn) => {
-          btn.onclick = () => {
-            sim.selected = [eid];
-            sim.issueCommand({ type: 'assign', x: 0, y: 0, job: btn.dataset.job || '', pawnId: eid });
-          };
-        });
-      } else {
-        selPanel.style.display = 'none';
-      }
-    } else {
-      selPanel.style.display = 'none';
-    }
-
-    // 提示
-    hint.textContent = bm ? `建造【${sim.buildingDef(bm)?.name ?? bm}】——在地图点击放置` : '点击建造菜单选择，点地图放置';
-
-    // 事件日志 feed（最近 5 条）
-    const recent = sim.events.slice(-5).map((e) => `${Math.floor(e.time)}s ${e.text}`);
-    feed.innerHTML = recent.map((t) => `<div>${t}</div>`).join('');
-
-    // 结构化历史（DESIGN §3 仿真日志）
-    if (histPanel.style.display === 'block') {
-      const rows = sim.historyRecent.map((h) => {
-        const where = h.x !== undefined ? `@(${h.x},${h.y})` : '';
-        const who = h.eid !== undefined ? `#${h.eid}` : '';
-        const detail = h.data ? ' ' + Object.entries(h.data).map(([k, v]) => `${k}=${v}`).join(' ') : '';
-        const cause = h.cause ? ` [${h.cause}]` : '';
-        return `<div>D${h.day} ${h.time}s · ${h.type} ${who}${where}${cause}${detail}</div>`;
-      });
-      histPanel.innerHTML = `<b>📜 结构化历史（仿真日志）</b><br>` + rows.join('');
-    }
-
-    // 🌍 派系概览（Q9 观察模拟器）
-    if (facPanel.style.display === 'block') {
-      const units = [...sim.socialUnits.units.values()];
-      const rows = units.map((u) => {
-        const cap = u.level === 'church' ? (sim.tuning.faction?.unitCapChurch ?? 10) : (sim.tuning.faction?.unitCapCampfire ?? 3);
-        const opinions = [...u.opinions.entries()].map(([id, op]) => {
-          const other = sim.socialUnits.units.get(id);
-          return `${other?.name ?? id} ${op.value > 0 ? '+' : ''}${Math.round(op.value)}`;
-        }).join('、') || '无';
-        const mem = u.memory.slice(-2).map((m) => m.text).join(' / ') || '无';
-        const badge = u.id === sim.playerUnitId ? '👁' : '';
-        return `<div><b>${badge} ${u.name}</b>（${u.level === 'church' ? '教堂' : '篝火'}，记忆${cap}）成员${u.members.length} · 库存🌲${nf(u.resources.wood)}🪨${nf(u.resources.ore)}🍖${nf(u.resources.food)}<br>` +
-          `<span style="color:#aaa">看法：${opinions}<br>记忆：${mem}</span></div>`;
-      }).join('<hr>');
-      facPanel.innerHTML = `<b>🌍 世界派系（${units.length}）</b><br>` + (rows || '暂无');
-    }
-  };
-
-  // 建造菜单按钮
-  function mkBtn(emoji: string | undefined, label: string, id: string | null): HTMLElement {
-    const b = document.createElement('button');
-    b.textContent = `${emoji ?? '▪'} ${label}`;
-    b.style.cssText = 'border:1px solid #555;background:#333;color:#eee;border-radius:6px;padding:5px 9px;cursor:pointer;font:12px system-ui;';
-    b.addEventListener('click', () => onSelectBuild(id));
-    return b;
-  }
-  buildMenu.appendChild(mkBtn('🚫', '取消', null));
-  for (const id of Object.keys(sim.mods.buildings)) {
-    const d = sim.mods.buildings[id];
-    buildMenu.appendChild(mkBtn(d.emoji, d.name, id));
-  }
-
-  document.body.appendChild(root);
-  return { update, hint };
-}
+// 全局 HUD 句柄（attachScene 创建后赋值，供 planner 印卡时通知横幅）
+let hudApi: HudApi | null = null;
 
 async function main(): Promise<void> {
   const container = document.getElementById('app')!;
@@ -344,6 +57,7 @@ async function main(): Promise<void> {
     }
   }
 
+  // 固定种子 + 4 小人开局（与 scripts/play.ts、server 默认值一致，保证可复现/可对比）
   const sim = new Sim({
     seed: 20260803,
     pawnCount: 4,
@@ -374,22 +88,33 @@ async function main(): Promise<void> {
     } catch { /* 忽略写失败 */ }
   }, 30000);
 
-  attachScene(sim, renderer, isTouch);
+  // 单机模式也挂 LLM 慢决策层（feedback 印卡）：神谕每 90s 评估局面印一张策略卡
+  const planner = makeDummyCardPlanner(sim as unknown as SimContext, {
+    mode: 'feedback', interval: 90,
+    onPrint: (def) => hudApi?.notifyCard(def),
+  });
+  attachScene(sim, renderer, isTouch, planner);
 }
 
 // 共享场景：输入绑定 + 主循环（单机与远端共用；远端 sim.step 为 no-op）
-function attachScene(sim: SimView, renderer: Renderer, isTouch: boolean): void {
+function attachScene(
+  sim: SimView,
+  renderer: Renderer,
+  isTouch: boolean,
+  planner?: { tick(dt: number): void },
+): void {
   let buildMode: string | null = null;
   const hud = createHud(sim, (id) => {
     buildMode = id;
     if (!id) renderer.clearGhost();
+    hud.refreshHint(buildMode);
     hud.update(buildMode);
   }, (factor) => renderer.zoomBy(factor), (mode) => renderer.setViewMode(mode));
+  hudApi = hud;
+  hud.refreshHint(null);
 
   // ---- 输入（Pointer Events，鼠标/触摸统一） ----
   const canvas = renderer.app.canvas;
-  const uiBase = `infcanvas · ${isTouch ? '双指拖动/缩放 · 点选/长按移动' : '右键移动 · 左键选中'} · 建造菜单在下方`;
-
   type Pt = { x: number; y: number };
   const pointers = new Map<number, Pt>();
   let touchActive = false;
@@ -406,6 +131,7 @@ function attachScene(sim: SimView, renderer: Renderer, isTouch: boolean): void {
   };
   const clearLP = () => { if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; } };
 
+  // 统一"落下"语义：建造放置 / 移动命令（带目标标记反馈）
   const placeLong = (pos: Pt) => {
     const world = renderer.screenToWorld(pos.x, pos.y);
     if (buildMode) {
@@ -413,25 +139,55 @@ function attachScene(sim: SimView, renderer: Renderer, isTouch: boolean): void {
     // 移动选中 pawn。带 pawnId：远程模式 server 无 selected 镜像，显式指定
     } else if (sim.selectedIds.length > 0) {
       sim.issueCommand({ type: 'move', x: world.x, y: world.y, pawnId: sim.selectedIds[0] });
+      renderer.showMoveMarker(world.x, world.y);
     }
   };
 
-  // 鼠标左键拖动平移（PC）
+  // 取消当前交互态（ESC）：建造模式 → 退出；选中 → 取消；面板 → 关闭
+  const cancel = () => {
+    if (buildMode) {
+      buildMode = null;
+      renderer.clearGhost();
+      hud.refreshHint(null);
+    }
+    hud.selectedBuilding.current = null;
+    renderer.clearSelection();
+    hud.closePanels();
+    hud.update(null);
+  };
+
+  // 鼠标左键拖动：建造模式 → 连铺（沿途每格放置一次）；否则 → 平移（PC）
   let mouseDragging = false;
   let mouseDragStart: Pt | null = null;
+  let dragPlaced = new Set<number>(); // 本次拖拽已放置的格（去重）
+
+  const tryDragPlace = (e: { clientX: number; clientY: number }): void => {
+    if (!buildMode) return;
+    const world = renderer.screenToWorld(e.clientX, e.clientY);
+    // 格唯一 key（世界宽 <100000，x + y*100000 不会碰撞；连铺去重用）
+    const k = world.x + world.y * 100000;
+    if (dragPlaced.has(k)) return;
+    dragPlaced.add(k);
+    sim.issueCommand({ type: 'build', x: world.x, y: world.y, buildingId: buildMode });
+  };
 
   canvas.addEventListener('mousedown', (e) => {
     if (e.button === 0) {
       mouseDragStart = screenPos(e);
       mouseDragging = false;
+      dragPlaced.clear();
+      if (buildMode) tryDragPlace(e); // 按下即放第一格
     }
   });
   canvas.addEventListener('mousemove', (e) => {
     if (mouseDragStart && e.buttons & 1) {
       const cur = screenPos(e);
       const moved = dist(mouseDragStart, cur);
-      if (moved > 5) mouseDragging = true;
-      if (mouseDragging) {
+      if (moved > 5) mouseDragging = true; // 位移超 5px 才判为拖动（区分"点击"与"拖动"）
+      if (buildMode) {
+        // 建造模式：按住拖动 = 连铺（不平移）
+        tryDragPlace(e);
+      } else if (mouseDragging) {
         renderer.setCamera(e.movementX, e.movementY);
       }
     }
@@ -448,28 +204,27 @@ function attachScene(sim: SimView, renderer: Renderer, isTouch: boolean): void {
     mouseDragging = false;
   });
 
-  // 鼠标左键：选中（或放置建造）——仅在未拖动的点击时触发
+  // 鼠标左键：选中/取消（或放置建造）——仅在未拖动的点击时触发
+  // 语义：点建筑=选中；点小人=选中；点空白=取消选择（不自动就近补选，避免误选）
   canvas.addEventListener('click', (e) => {
     if (e.button !== 0 || mouseDragging) return;
     const pos = screenPos(e);
-    if (buildMode) {
-      const world = renderer.screenToWorld(pos.x, pos.y);
-      sim.issueCommand({ type: 'build', x: world.x, y: world.y, buildingId: buildMode });
-      return;
-    }
+    // 建造模式：mousedown 已放置（单击/连铺统一走 press-drag），click 不重复放置
+    if (buildMode) return;
     const world = renderer.screenToWorld(pos.x, pos.y);
     const b = sim.buildingAt(world.x, world.y);
     if (b) {
       // 选中建筑
-      selectedBuilding = { x: world.x, y: world.y };
+      hud.selectedBuilding.current = { x: world.x, y: world.y };
       sim.selected = [];
       renderer.clearSelection();
-      hud.update(buildMode);
-    } else {
-      selectedBuilding = null;
-      renderer.selectNearest(pos.x, pos.y, 26);
-      hud.update(buildMode);
+      hud.update(null);
+      return;
     }
+    // 点空白：取消选择（先清后探测，避免点空白还粘着上一个选中）
+    hud.selectedBuilding.current = null;
+    renderer.clearSelection();
+    hud.update(null);
   });
 
   canvas.addEventListener('pointerdown', (e) => {
@@ -482,7 +237,7 @@ function attachScene(sim: SimView, renderer: Renderer, isTouch: boolean): void {
       midLast = midPnt(pts);
       pinchDist = dist(pts[0], pts[1]);
     } else if (pointers.size === 1 && e.pointerType !== 'mouse') {
-      // 触摸单指：长按 = 移动
+      // 触摸单指：长按 400ms 判定为移动（短于滑动节奏，避免与拖动/点选误触）
       const start = screenPos(e);
       longPressTimer = setTimeout(() => {
         if (pointers.size === 1) {
@@ -539,20 +294,45 @@ function attachScene(sim: SimView, renderer: Renderer, isTouch: boolean): void {
   canvas.addEventListener('mouseup', (e) => { if (e.button === 1) midDrag = false; });
   canvas.addEventListener('wheel', (e) => {
     e.preventDefault();
-    renderer.zoomBy(e.deltaY > 0 ? 0.9 : 1.1);
+    renderer.zoomAt(e.clientX, e.clientY, e.deltaY > 0 ? 0.9 : 1.1);
   });
 
-  // 键盘快捷键：空格暂停，1/2/3 调速
+  // 键盘快捷键：全部走可配置键位表（hud 改键面板可改，localStorage 持久化）
   window.addEventListener('keydown', (e) => {
-    if (e.code === 'Space') {
-      e.preventDefault();
-      sim.paused = !sim.paused;
-      hud.update(buildMode);
-    } else if (e.key === '1') { sim.paused = false; sim.speed = 1; hud.update(buildMode); }
-    else if (e.key === '2') { sim.paused = false; sim.speed = 2; hud.update(buildMode); }
-    else if (e.key === '3') { sim.paused = false; sim.speed = 3; hud.update(buildMode); }
-    else if (e.key === 'PageUp' || e.key === '=') { renderer.zoomBy(1.2); }
-    else if (e.key === 'PageDown' || e.key === '-') { renderer.zoomBy(0.8); }
+    if (hud.isCapturingKey()) return; // 改键捕获中（capture 监听已拦截，双保险）
+    const act = keybindings.actionFor(e);
+    if (!act) return;
+    e.preventDefault();
+    switch (act) {
+      case 'pause':
+        sim.paused = !sim.paused;
+        break;
+      case 'speed1': sim.paused = false; sim.speed = 1; break;
+      case 'speed2': sim.paused = false; sim.speed = 2; break;
+      case 'speed3': sim.paused = false; sim.speed = 3; break;
+      case 'zoomIn': renderer.zoomBy(1.2); break;
+      case 'zoomOut': renderer.zoomBy(0.8); break;
+      case 'cancel':
+        cancel();
+        break;
+      case 'buildWall':
+        buildMode = buildMode === 'wall' ? null : 'wall';
+        if (!buildMode) renderer.clearGhost();
+        hud.refreshHint(buildMode);
+        break;
+      case 'viewToggle':
+        hud.toggleViewMode();
+        break;
+      case 'helpToggle':
+      case 'historyToggle':
+      case 'factionToggle':
+        hud.togglePanel(act);
+        break;
+      case 'menuFold':
+        hud.toggleFold();
+        break;
+    }
+    hud.update(buildMode);
   });
 
   // 相机边缘滚动（PC）
@@ -574,10 +354,12 @@ function attachScene(sim: SimView, renderer: Renderer, isTouch: boolean): void {
       sim.step(tickMs / 1000);
       acc -= tickMs;
     }
+    // 神谕慢决策层（单机模式）：按游戏时间推进印卡节奏
+    planner?.tick(dt / 1000);
     // 鼠标靠屏幕边缘时自动平移（PC 导航）
     if (mousePos && !isTouch) {
-      const m = 24; // 边缘触发距离
-      const vx = 14;
+      const m = 24; // 边缘触发距离（px）
+      const vx = 14; // 边缘滚动速度（屏幕 px/帧，随 zoom 折算到世界位移）
       if (mousePos.x < m) renderer.setCamera(-vx, 0);
       else if (mousePos.x > window.innerWidth - m) renderer.setCamera(vx, 0);
       if (mousePos.y < m) renderer.setCamera(0, -vx);

@@ -100,6 +100,26 @@ export const BUILDING_SVG: Record<string, string> = {
     <rect x="22" y="14" width="4" height="14" fill="#7a6a4a"/>
     <path d="M10 28 H22" stroke="#6a5a3a" stroke-width="3"/>
   `),
+  raft: svg(`
+    <path d="M2 22 L10 10 L26 14 L30 24 Z" fill="#a07030" stroke="#7a5220" stroke-width="1.5"/>
+    <path d="M2 22 L30 24" stroke="#8a5a2a" stroke-width="2"/>
+    <rect x="7" y="8" width="3" height="18" rx="1" fill="#c09040"/>
+    <path d="M12 14 L14 8" stroke="#c09040" stroke-width="2" stroke-linecap="round"/>
+    <path d="M12 14 Q16 12 20 15 L24 13" stroke="#d8b060" stroke-width="1.5" fill="none"/>
+  `),
+  boat: svg(`
+    <path d="M2 24 Q16 14 30 24 Z" fill="#7a5230" stroke="#5a3a1a" stroke-width="2"/>
+    <rect x="7" y="19" width="18" height="6" rx="2" fill="#a8804a"/>
+    <path d="M16 19 L22 4 L10 5 Z" fill="#e8d8b8" stroke="#a0805a" stroke-width="1.5"/>
+    <path d="M16 19 L22 4 L10 5 Z" fill="none" stroke="#a0805a" stroke-width="1"/>
+    <rect x="16" y="5" width="2" height="14" fill="#8a5a2a"/>
+  `),
+  bridge: svg(`
+    <rect x="2" y="14" width="28" height="6" rx="1" fill="#8a6432"/>
+    <rect x="2" y="14" width="28" height="2" fill="#a88048"/>
+    <path d="M5 20 L5 28 M11 20 L11 28 M21 20 L21 28 M27 20 L27 28" stroke="#6a4a22" stroke-width="2.5"/>
+    <path d="M2 12 H30 M2 18 H30" stroke="#b89858" stroke-width="1.5"/>
+  `),
 };
 
 // 小人（正面鼠）—— 按性格变体
@@ -176,7 +196,103 @@ export const PAWN_SVG: Record<string, string> = {
   `),
 };
 
-// data URI（加载给 Pixi）
+// HUD 图标（DOM 层：资源条 / 面板 / 按钮，与 Pixi 画面同一套风格）
+export const HUD_SVG: Record<string, string> = {
+  wood: svg(`
+    <ellipse cx="16" cy="22" rx="11" ry="4" fill="#6a4a28"/>
+    <circle cx="10" cy="14" r="6" fill="#a06828" stroke="#7a4a18" stroke-width="2"/>
+    <circle cx="17" cy="11" r="6" fill="#b87830" stroke="#8a5820" stroke-width="2"/>
+    <circle cx="23" cy="15" r="5" fill="#a06828" stroke="#7a4a18" stroke-width="2"/>
+    <circle cx="16" cy="8" r="4" fill="#c88840"/>
+  `),
+  ore: svg(`
+    <path d="M16 3 L29 11 V21 L16 29 L3 21 V11 Z" fill="#7d7468" stroke="#5a5248" stroke-width="1.5"/>
+    <path d="M16 3 L16 29 M3 11 L29 21 M3 21 L29 11" stroke="#5a5248" stroke-width="1"/>
+    <circle cx="11" cy="13" r="2.5" fill="#d4b94a"/>
+    <circle cx="21" cy="19" r="2.5" fill="#c9ad3f"/>
+    <circle cx="20" cy="11" r="2" fill="#e0c95a"/>
+  `),
+  food: svg(`
+    <path d="M8 14 L14 4 Q18 8 14 13 L20 20 L17 23 L11 16 Q7 20 4 16 Z" fill="#e8a23a" stroke="#b06a20" stroke-width="1.5"/>
+    <ellipse cx="16" cy="26" rx="9" ry="4" fill="#7a5a2a" opacity="0.6"/>
+    <circle cx="10" cy="12" r="2" fill="#ffd966" opacity="0.8"/>
+  `),
+  tools: svg(`
+    <rect x="10" y="14" width="13" height="8" rx="2" fill="#b0a090" transform="rotate(-20 16 18)"/>
+    <circle cx="16" cy="18" r="3" fill="#d8d0c0"/>
+    <path d="M7 23 L12 18 L15 21 L10 26 Z" fill="#8a7a6a"/>
+    <path d="M24 23 L29 18" stroke="#8a7a6a" stroke-width="3" stroke-linecap="round"/>
+  `),
+  people: svg(`
+    <circle cx="12" cy="11" r="5" fill="#d8c8b0"/>
+    <circle cx="22" cy="13" r="4" fill="#c8b898"/>
+    <path d="M3 27 Q6 19 12 19 Q18 19 21 27 Z" fill="#b8a888"/>
+    <path d="M15 27 Q18 21 22 21 Q27 21 30 27 Z" fill="#a89878"/>
+  `),
+  day: svg(`
+    <circle cx="16" cy="16" r="7" fill="#ffd94a"/>
+    <path d="M16 2 V6 M16 26 V30 M2 16 H6 M26 16 H30 M6 6 L9 9 M23 23 L26 26 M26 6 L23 9 M9 23 L6 26" stroke="#ffd94a" stroke-width="2.5" stroke-linecap="round"/>
+  `),
+  night: svg(`
+    <path d="M24 4 Q30 12 24 20 Q16 26 8 20 Q2 12 8 4 Q14 9 24 4 Z" fill="#c8c0d8"/>
+    <circle cx="20" cy="12" r="2" fill="#e8e0f0" opacity="0.8"/>
+    <circle cx="12" cy="18" r="1.4" fill="#e8e0f0" opacity="0.6"/>
+  `),
+  warn: svg(`
+    <path d="M16 3 L30 27 H2 Z" fill="#e8604a"/>
+    <rect x="14" y="11" width="4" height="8" rx="1" fill="#fff"/>
+    <circle cx="16" cy="23" r="2.2" fill="#fff"/>
+  `),
+  raid: svg(`
+    <path d="M4 4 L16 12 L28 4 L22 14 L28 28 L16 20 L4 28 L10 14 Z" fill="#c8c8d0" stroke="#8a8a94" stroke-width="1.5"/>
+    <path d="M16 12 L16 20" stroke="#8a8a94" stroke-width="1.5"/>
+  `),
+  help: svg(`
+    <circle cx="16" cy="16" r="12" fill="#3a5a7a" stroke="#2a4a6a" stroke-width="2"/>
+    <text x="16" y="22" text-anchor="middle" font-size="17" font-weight="bold" fill="#e8f0f8" font-family="system-ui">?</text>
+  `),
+  history: svg(`
+    <circle cx="16" cy="16" r="12" fill="#3a6a5a" stroke="#2a5a4a" stroke-width="2"/>
+    <path d="M16 8 V16 L21 19" stroke="#e8f0e8" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+    <circle cx="16" cy="16" r="2.5" fill="#e8f0e8"/>
+  `),
+  factions: svg(`
+    <path d="M4 8 L14 8 L16 4 L18 8 L28 8 L26 14 L28 20 L18 20 L16 24 L14 20 L4 20 L6 14 Z" fill="#8a5a3a" stroke="#6a4a2a" stroke-width="1.5"/>
+    <path d="M16 8 V20 M10 12 L22 16 M10 16 L22 12" stroke="#d8b888" stroke-width="1.5" opacity="0.7"/>
+  `),
+  keys: svg(`
+    <circle cx="11" cy="11" r="6" fill="#d8a03a" stroke="#a87a1a" stroke-width="2"/>
+    <circle cx="11" cy="11" r="2.2" fill="#a87a1a"/>
+    <path d="M16 14 L28 26 M22 20 L26 16" stroke="#a88a5a" stroke-width="2.5" stroke-linecap="round"/>
+  `),
+  card: svg(`
+    <rect x="5" y="7" width="22" height="18" rx="2" fill="#c8a0d8" stroke="#a07ac0" stroke-width="1.5"/>
+    <path d="M16 10 L18 14 L22 14.5 L19 17 L20 21 L16 19 L12 21 L13 17 L10 14.5 L14 14 Z" fill="#e8d0f0" opacity="0.9"/>
+    <rect x="8" y="21" width="8" height="1.5" fill="#a07ac0" opacity="0.6"/>
+  `),
+  cancel: svg(`
+    <circle cx="16" cy="16" r="11" fill="#4a4a52" stroke="#3a3a42" stroke-width="2"/>
+    <path d="M11 11 L21 21 M21 11 L11 21" stroke="#e8e8f0" stroke-width="3" stroke-linecap="round"/>
+  `),
+  oracle: svg(`
+    <circle cx="16" cy="16" r="11" fill="#5a3a6a" stroke="#a07ac0" stroke-width="2"/>
+    <path d="M16 8 L18 13 L23 14 L19 17 L20 22 L16 19 L12 22 L13 17 L9 14 L14 13 Z" fill="#e8d0f0"/>
+    <circle cx="16" cy="9" r="1.2" fill="#ffe08a"/>
+  `),
+};
+
+// data URI（加载给 Pixi / DOM <img> 通用）
 export function svgDataUri(s: string): string {
   return 'data:image/svg+xml;base64,' + btoa(s);
+}
+
+// 根据天赋选鼠头像变体（renderer 与 HUD 共用）
+export function pawnAssetIdFor(traits: readonly string[] | undefined): string {
+  const t = traits ?? [];
+  if (t.includes('强壮')) return 'pawn:strong';
+  if (t.includes('虔诚')) return 'pawn:devout';
+  if (t.includes('懒惰')) return 'pawn:lazy';
+  if (t.includes('热爱工作')) return 'pawn:workaholic';
+  if (t.includes('夜猫子')) return 'pawn:owl';
+  return 'pawn:mouse';
 }
