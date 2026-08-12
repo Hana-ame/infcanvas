@@ -44,25 +44,8 @@ describe('科技抽卡（神谕解锁）', () => {
     expect(sim2.techs.has('raftTech')).toBe(true);
   });
 
-  it('makeDummyCardPlanner：科技独立计时器按顺序解锁（不占小人卡槽）', () => {
-    const sim = new Sim({ seed: 46, pawnCount: 2 });
-    sim.stockpile.wood = 500; sim.stockpile.ore = 500; sim.stockpile.food = 500;
-    const planner = makeDummyCardPlanner(sim as never, { mode: 'feedback', interval: 999, techInterval: 10 });
-    // 300 秒：科技计时器触发 30 次，60% 概率 → 几乎必解锁第一张
-    let loop = 0;
-    while (sim.techs.size === 0 && loop++ < 50) planner.tick(10);
-    expect(sim.techs.size).toBeGreaterThan(0);
-    const first = [...sim.techs][0];
-    expect(TECHS[first]).toBeDefined();
-    expect(TECH_ORDER.indexOf(first)).toBe(0); // 按顺序抽第一张（raftTech）
-    // 再跑足够时间 → 第二张解锁（顺序渐进，"往后抽卡"）
-    while (sim.techs.size < 2 && loop++ < 200) planner.tick(10);
-    expect(sim.techs.size).toBeGreaterThanOrEqual(2);
-    expect(TECH_ORDER.indexOf([...sim.techs][1])).toBeGreaterThan(0);
-    // 科技卡不占小人卡槽（无 dummy:tech- 卡进 slots）
-    const slotIds = sim.pawnStates.get(sim.pawns[0])!.slots.map((c) => c?.id ?? null);
-    expect(slotIds.some((id) => id?.startsWith('dummy:tech-'))).toBe(false);
-  });
+  // 科技来源机制待与文档核对（神谕不降科技——用户 2026-08-13 定案；
+  // 原"神谕科技抽卡"测试已随机制移除，解锁/门控能力由下方测试覆盖）
 });
 
 describe('桥 = 地形改造（water → bridge tile）', () => {

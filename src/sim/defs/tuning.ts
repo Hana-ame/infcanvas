@@ -328,6 +328,12 @@ export interface WorldTuning {
 
 export type HeuristicId = 'chebyshev' | 'manhattan' | 'euclidean';
 
+export interface TechTuning {
+  researchPerEdu: number; // 每秒研究点 = 人口 EDU 均值 × 此值
+  thresholdBase: number;   // 第一项科技研究阈值
+  thresholdGrowth: number; // 每解锁一项，阈值增量（越来越贵 = "往后"）
+}
+
 export interface PathTuning {
   maxIter: number;        // A* 迭代上限（防爆）：无篝火中转时的基准上限
   waypointMaxIter: number; // 有篝火中转时可放宽的上限（航点路径段短、质量好）
@@ -426,6 +432,7 @@ export interface TuningConfig {
   event: EventTuning;
   card: CardTuning;
   path: PathTuning; // 寻路策略表（参数数据化，算法本体保留 A* 代码）
+  tech: TechTuning; // 科技研究（EDU 知识线，与神谕解耦）
 }
 
 // 默认平衡基线（全系统唯一数值源头；mod 经 ModRegistry.overrideTuning 部分覆盖，见 docs/DATA_DRIVEN.md §3.4）
@@ -736,6 +743,11 @@ export const TUNING: TuningConfig = {
     spawnDistMin: 3,         // 撒布距离环
     spawnDistRand: 5,
     spawnCounts: { tree: 4, ore: 3, stone: 3 },
+  },
+  tech: {
+    researchPerEdu: 0.02, // EDU 均值 40 → 0.8 点/s → 第一项 ~125s（配合开局喘息）
+    thresholdBase: 100,
+    thresholdGrowth: 60,
   },
   path: {
     maxIter: 15000,         // 无篝火中转：迭代上限（防爆；锚点少时路径短，够用）

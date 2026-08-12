@@ -4,7 +4,6 @@
 // 用法（server/index.ts）：LLM_DUMMY=1 启用（无 API key、零成本、可离线）
 import type { BehaviorCardDef } from '../sim/ai/pawn';
 import type { SimContext } from '../sim/systems/context';
-import { TECHS, TECH_ORDER } from '../sim/defs/techs';
 
 // 印卡接口（未来 LLM 版同签名）：
 // planner 输入当前局面，输出一张策略卡 def（null = 本次不印）
@@ -13,7 +12,6 @@ export type CardPlanner = (ctx: SimContext) => BehaviorCardDef | null;
 export interface DummyPlannerOpts {
   mode?: 'feedback' | 'random'; // feedback: 按当前最缺的生产需求印卡；random: 随机策略卡
   interval?: number;            // 印卡间隔（秒，默认 90）
-  techInterval?: number;        // 科技抽卡间隔（秒，默认 120；独立节奏渐进解锁）
   seed?: number;                // 确定性种子（测试/可复现）
   onPrint?: (def: BehaviorCardDef) => void; // 印卡回调（UI 通知等）
 }
@@ -91,17 +89,6 @@ function workDef(workType: string, opts: { note: string; label?: string }): Beha
   } as BehaviorCardDef;
 }
 
-// 科技卡：神谕抽到即解锁（series 'tech' → tick 侧走 unlockTech，不占小人卡槽）
-function techDef(techId: string): BehaviorCardDef {
-  const t = TECHS[techId];
-  return {
-    id: `dummy:tech-${techId}`, name: t?.name ?? techId, series: 'tech', weight: 9,
-    utilityFixed: 0,
-    action: 'idle', label: t?.name ?? techId, reason: t?.desc,
-    satisfies: [{ desire: 'greed', amount: 0 }],
-  } as BehaviorCardDef;
-}
-
 function lifeDef(action: 'rest' | 'eat' | 'pray' | 'idle', note: string): BehaviorCardDef {
   const tpl = LIFE_CARDS.find((l) => l.action === action) ?? LIFE_CARDS[0];
   return {
@@ -120,9 +107,7 @@ export function makeDummyCardPlanner(sim: SimContext, opts: DummyPlannerOpts = {
 } {
   const mode = opts.mode ?? 'feedback';
   const interval = opts.interval ?? 90;
-  const techInterval = opts.techInterval ?? 120; // 科技抽卡独立节奏（"往后抽卡"：时间驱动渐进解锁）
   let acc = 0;
-  let techAcc = 0;
   let count = 0;
   const planner: CardPlanner = mode === 'random' ? randomPlanner : feedbackPlanner;
 
@@ -130,20 +115,8 @@ export function makeDummyCardPlanner(sim: SimContext, opts: DummyPlannerOpts = {
     get printed(): number { return count; },
     planner,
     tick(dt: number): void {
-      // 科技抽卡：独立计时器，到点按顺序抽下一张未解锁科技（60% 概率印出）
-      techAcc += dt;
-      if (techAcc >= techInterval) {
-        techAcc = 0;
-        const next = TECH_ORDER.find((id) => !sim.techs.has(id));
-        if (next && sim.rng.next() < 0.6) { // 60% 概率印出：留空档，避免科技每周期必解锁推进过速
-          const def = techDef(next);
-          const s = sim as unknown as { unlockTech(id: string): boolean };
-          if (s.unlockTech?.(next)) {
-            count++;
-            opts.onPrint?.(def);
-          }
-        }
-      }
+      // 神谕只降目标（策略卡）；科技是另外的池子（用户 2026-08-13 定案：神谕不降科技，
+      // 科技机制另行独立，与神谕慢决策层解耦——见 docs 核对清单）
       acc += dt;
       if (acc < interval) return;
       acc = 0;
