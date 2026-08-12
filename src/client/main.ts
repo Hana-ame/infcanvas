@@ -6,6 +6,7 @@ import { RemoteSim } from './remote';
 import type { SimView } from './remote';
 import { SvgAssets } from './svgLoader';
 import { weatherLabel } from '../sim/core/env';
+import { parseModPackage, buildModMount } from '../mods/loader';
 import { DESIRES } from '../sim/core/desires';
 import { JOBS, jobLabelOf } from '../sim/defs/jobs';
 import { loadSave, writeSave } from './storage';
@@ -322,16 +323,22 @@ async function main(): Promise<void> {
   }
 
   // ---- 单机模式（P0） ----
-  // 运行时 mod 加载：?mods=url1,url2 动态 import（ESM，默认导出 mod 回调）。
-  // dev: 指向源码路径，如 ?mods=/src/mods/demo-berry.ts（vite 会 transform）
-  // build: dist 无独立模块，内联挂载（new Sim({ mods })）或自行托管 .js 于静态服务器
+  // 运行时 mod 加载：?mods=url1,url2
+  //  - .mod.json：打包格式（manifest+defs+scripts），fetch → parse → buildModMount（校验/沙箱）
+  //  - 其他：ESM 源码 mod（默认导出回调），dev 指向源码路径（vite transform）
   const modUrls = (new URLSearchParams(location.search).get('mods') ?? '').split(',').filter(Boolean);
   const modFns: ((m: ModRegistry) => void)[] = [];
   for (const u of modUrls) {
     try {
-      const m = await import(/* @vite-ignore */ u);
-      if (typeof m.default === 'function') modFns.push(m.default);
-      else console.warn(`mod ${u}: 没有 default 导出函数`);
+      if (u.endsWith('.mod.json')) {
+        const pkg = parseModPackage(await (await fetch(u)).text());
+        modFns.push(buildModMount(pkg));
+        console.log(`[mod] 已挂载包 ${pkg.manifest.id}@${pkg.manifest.version}`);
+      } else {
+        const m = await import(/* @vite-ignore */ u);
+        if (typeof m.default === 'function') modFns.push(m.default);
+        else console.warn(`mod ${u}: 没有 default 导出函数`);
+      }
     } catch (err) {
       console.error(`[mod] ${u} 加载失败`, err);
     }

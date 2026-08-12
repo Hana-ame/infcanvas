@@ -94,6 +94,7 @@ export interface SimOptions {
   pawnCount?: number;
   tickHz?: number;
   mods?: (m: ModRegistry) => void; // mod 挂载：构造时注册系统/卡/意图（DESIGN §7）
+  registry?: ModRegistry;          // 预建注册表（服务端 mod 管理器：先挂载所有包再构造 Sim）；缺省 ModRegistry.default()
   eventProvider?: () => ScriptedEvent | null; // LLM 慢决策层（P1）：替换确定性随机脚本（DESIGN §6）
 }
 
@@ -161,18 +162,8 @@ export class Sim implements SimContext {
   private registry = new SystemRegistry();
   // 结构化历史日志（仿真日志：事实来自 sim，LLM 只润色）
   history = new HistoryLog();
-  // mod 注册表（DESIGN §7 扩展性原则）
-  mods = new ModRegistry({
-    tiles: TILES,
-    buildings: BUILDINGS,
-    items: ITEMS,
-    enemies: ENEMIES,
-    cards: BASE_CARDS,
-    recipes: RECIPES,
-    tuning: TUNING,
-    intents: [],
-    works: [],
-  });
+  // mod 注册表（DESIGN §7 扩展性原则；opts.registry 提供预建表时替换）
+  mods = ModRegistry.default();
   // 平衡参数总表（mod 可覆盖）——getter 保证 mods 回调后读到覆盖后的值
   get tuning(): TuningConfig {
     return this.mods.tuning;
@@ -202,6 +193,8 @@ export class Sim implements SimContext {
     this.stockpile = { ...TUNING.population.startStockpile };
     this.env = initEnv(TUNING.env);
     this.dayLength = TUNING.env.dayLength;
+    // 预建注册表（服务端 mod 管理器先挂载包）；缺省默认装配
+    if (opts.registry) this.mods = opts.registry;
     // 应用 mod（在 world/spawn 前，可覆盖 defs/tuning/配方）——构造期回调
     opts.mods?.(this.mods);
     this._eventProvider = opts.eventProvider ?? null;

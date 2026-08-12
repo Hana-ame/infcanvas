@@ -68,7 +68,7 @@
 | COC 属性全用途 | §3 属性卡 | ✅ **SIZ 负重已落地**（2026-08-12）：采集一次搬回量 = `carryBase + max(0, SIZ-strBase)×carryPerSiz`（tuning.gather，默认 4/0.5），矿洞/采矿/伐木产出统一钳制（保底 1），与 STR 产出加成互补；单测 + 集成测试（`carryCapOf`/`capGainTo`） |
 | LLM 层 | §6 | ✅ **已落地**：server `LLM_ENDPOINT` 即启用（OpenAI 兼容），预取+白名单效果+降级（见上表）；剩余：真实 LLM 冒烟（本机无出网 key）、provider 频率分级（付费/免费，DESIGN §10）、LLM 叙述进"历史/记忆"而非仅 feed |
 | server 增量优化 | §8 | P2 继续 | ✅ **tick delta 已落地**（500ms 增量 + 5s 对账，见上表）；剩余：实体事件化推送、chunk 按需、插值、兴趣管理、客户端权威提交验证待 P2 联机 |
-| mod 打包/沙箱 | §10 待定 | 远程 JS mod 已落地（`?mods=` + ESM default 导出，见 src/mods/demo-berry.ts）；打包格式（zip/远程 URL 批量）、服务端沙箱/信任模型待定 |
+| mod 打包/沙箱 | §10 待定 | **自包含 .mod.json 包**（manifest+defs 纯 JSON 声明+scripts 函数式）✅：loader 校验/白名单沙箱/幂等挂载（166 测试）；**服务端 mod 管理器** ✅：`mods/*.mod.json` 自动挂载（坏包清晰报错拒服）、`MODS_DIR` 可配、`SimOptions.registry` 预建表；**客户端** ✅：`?mods=*.mod.json` 包或 ESM 源码双通道；CLI：`npm run mod:pack`。剩余：zip 批量/素材打包、联机 mod 同步校验 |
 | 联机 | §8 | P2：WSS 协议、多客户端同步、兴趣管理、持久化、鉴权 | ✅ 命令权威校验已提前（见上表）：形状/范围/pawnId/频率把关 + e2e 断言；剩余：多客户端、兴趣管理、持久化、鉴权 |
 
 ## 技术栈

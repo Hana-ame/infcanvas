@@ -381,3 +381,9 @@ overrideTuning(patch: DeepPartial<TuningConfig>): this  // 覆盖平衡参数（
 - 校验拒绝：非法 JSON/缺 manifest/非法 id/coreVersion 不匹配/未知 defs 字段/卡含函数字段/scripts 含 import
 - 沙箱隔离：语法错误与运行期抛错均被捕获，主 sim 可继续 step
 - 重复挂载幂等：同包挂 3 个 Sim 不冲突（166/166 绿）
+
+### 13.4 运行时闭环（打包 → 分发 → 挂载）
+
+- 打包：`npm run mod:pack [名]` → 根 `mods/*.mod.json`（分发物）
+- 服务端：`MODS_DIR`（默认 `mods/`）扫描所有 `.mod.json` → `loadModsFromDir` 挂载到 `ModRegistry.default()` → `new Sim({ registry })`（`SimOptions.registry` 预建表，卡/世界/装配表在构造期就读到 mod）；坏包报错拒服，好包不受影响
+- 客户端单机：`?mods=/mods/demo-berry.mod.json`（.mod.json 走 fetch→parse→buildModMount；其余走 ESM 源码 import，双通道共存）

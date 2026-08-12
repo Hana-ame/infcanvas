@@ -3,11 +3,15 @@
 // 注册时机：Sim 构造后立即调用（服务端加载 mod → 注册 → defs 只读下发客户端）。
 import type { Sim } from '../sim';
 import type { TileDef, BuildingDef, ItemDef } from '../defs';
+import { TILES, BUILDINGS, ITEMS } from '../defs';
+import { TUNING } from '../defs/tuning';
 import type { EnemyDef } from '../defs/enemies';
+import { ENEMIES } from '../defs/enemies';
 import type { RecipeDef } from '../defs/recipes';
+import { RECIPES } from '../defs/recipes';
 import type { TuningConfig } from '../defs/tuning';
 import type { BehaviorCard, BehaviorCardDef } from '../ai/pawn';
-import { cardFromDef } from '../ai/pawn';
+import { cardFromDef, BASE_CARDS } from '../ai/pawn';
 import type { IntentExecutor, WorkExecutor } from '../systems/cardSystem';
 import type { GameSystem } from '../systems/registry';
 import type { SystemDef } from '../defs/systems';
@@ -66,6 +70,14 @@ export class ModRegistry {
   private _systemDefs: SystemDef[] = [];
   private hooks = new Map<string, Array<(ctx: HookContext) => void>>();
   private cache = new Map<string, Record<string, unknown>>();
+
+  // 默认装配（Sim 构造与服务端 mod 管理器共用：先建注册表、挂载包，再交给 Sim）
+  static default(): ModRegistry {
+    return new ModRegistry({
+      tiles: TILES, buildings: BUILDINGS, items: ITEMS, enemies: ENEMIES,
+      cards: BASE_CARDS, recipes: RECIPES, tuning: TUNING, intents: [], works: [],
+    });
+  }
 
   constructor(seed: {
     tiles: Record<string, TileDef>;

@@ -6,6 +6,7 @@ import { join } from 'node:path';
 const srcDir = join(process.cwd(), 'src/mods/packages');
 const name = process.argv[2] ?? 'demo-berry';
 const dir = join(srcDir, name);
+const outDir = join(process.cwd(), 'mods');
 
 const modJson = join(dir, 'mod.json');
 if (!existsSync(modJson)) {
@@ -22,6 +23,7 @@ for (const part of ['defs', 'scripts']) {
   if (src) pkg[part] = readFileSync(src, 'utf-8');
 }
 
-const out = join(srcDir, `${name}.mod.json`);
+mkdirSync(outDir, { recursive: true });
+const out = join(outDir, `${name}.mod.json`);
 writeFileSync(out, JSON.stringify(pkg, null, 2));
 console.log(`已打包 ${name} → ${out}`);

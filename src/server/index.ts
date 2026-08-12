@@ -4,6 +4,8 @@
 // 客户端：?remote=ws://127.0.0.1:8080
 import { WebSocketServer, WebSocket } from 'ws';
 import { Sim } from '../sim/sim';
+import { ModRegistry } from '../sim/mods/registry';
+import { loadModsFromDir } from './modManager';
 import type { Command } from '../sim/sim';
 import { makeLlmProvider } from './llm';
 import { buildDelta } from './diff';
@@ -14,6 +16,7 @@ const PORT = Number(process.argv[2] ?? 8080);
 const SEED = Number(process.argv[3] ?? 20260803);
 const PAWNS = Number(process.argv[4] ?? 4);
 const TICK_HZ = 20;
+const MODS_DIR = process.env.MODS_DIR ?? 'mods'; // 根目录 mods/*.mod.json 包自动挂载
 const DELTA_MS = 500;        // 增量轮询
 const RECONCILE_MS = 5000;   // 全量对账间隔
 
@@ -27,11 +30,19 @@ const llmCfg = process.env.LLM_ENDPOINT
 // sim 就绪后后续请求才带真实世界摘要 —— 故 sim 用 let 声明
 let sim: Sim;
 const llm = llmCfg ? makeLlmProvider(llmCfg, () => sim ?? null) : null;
+// 服务端 mod 管理器：先挂载 mods/ 下所有包，再交给 Sim（mod 一致进入卡池/世界/装配表）
+const registry = ModRegistry.default();
+const modRes = loadModsFromDir(MODS_DIR, registry);
+if (!modRes.ok) {
+  console.error(`[server] mod 加载失败：\n${modRes.errors.join('\n')}`);
+  process.exit(1);
+}
 sim = new Sim({
   seed: SEED, pawnCount: PAWNS, tickHz: TICK_HZ,
+  registry,
   eventProvider: llm?.provider,
 });
-console.log(`[server] seed=${SEED} pawns=${PAWNS} ws://0.0.0.0:${PORT}${llmCfg ? ` llm=${llmCfg.endpoint}` : '（无 LLM，确定性事件）'}`);
+console.log(`[server] seed=${SEED} pawns=${PAWNS} ws://0.0.0.0:${PORT}${llmCfg ? ` llm=${llmCfg.endpoint}` : '（无 LLM，确定性事件）'}${modRes.mods.length ? ` mods=[${modRes.mods.join(', ')}]` : '（无 mod）'}`);
 
 const wss = new WebSocketServer({ port: PORT });
 
