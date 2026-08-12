@@ -98,7 +98,7 @@ export interface SimContext {
   adjustMood(eid: number, delta: number): void;
   // 经济账本（用户设计：收益/支出自动调节工作概率；个人预期 + 全局资源流）
   // eid 可空：null = 公共支出（建造扣公共库存）只记全局流
-  recordEarn(eid: number | null, item: string, amount: number): void;
+  recordEarn(eid: number | null, item: string, amount: number, workType?: string): void;
   recordSpend(eid: number | null, item: string, amount: number): void;
   flowRatio(item: string): number;
   logEvent(text: string): void;

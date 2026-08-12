@@ -83,6 +83,7 @@ export interface PawnState {
   farScanCd?: number;     // 远距回扫冷却（miss 后不重复大半径扫描）
   expectEarn?: number;    // 个人经济预期：工作赚多少（滚动平均）
   expectSpend?: number;   // 个人经济预期：花费花多少（滚动平均）
+  expectEarnBy?: Record<string, number>; // 按工作类型的收益预期（决策调制：赚得多的活更愿意干）
   crazyTime?: number;     // SAN 狂乱累计时长（超过阈值 → 逃向篝火）
   crazyFleeTarget?: { x: number; y: number }; // 崩溃逃向的篝火目标
   skills?: Partial<Record<SkillId, number>>; // COC 技能（百分制，越用越强）
@@ -526,7 +527,7 @@ export class Sim implements SimContext {
   }
 
   // eid 可空：null = 公共支出（建造扣公共库存）只记全局流；否则同时记个人预期
-  recordEarn(eid: number | null, item: string, amount: number): void {
+  recordEarn(eid: number | null, item: string, amount: number, workType?: string): void {
     this.flowAdd(item, 'earn', amount);
     if (eid === null) return;
     const st = this.pawnStates.get(eid);
@@ -534,6 +535,12 @@ export class Sim implements SimContext {
     const e = this.tuning.economy;
     const prev = st.expectEarn ?? amount;
     st.expectEarn = (1 - e.alpha) * prev + e.alpha * amount;
+    // 按工作类型细分预期（经济理性：哪个活赚得多，小人更愿意干）
+    if (workType) {
+      const by = (st.expectEarnBy ??= {});
+      const prevW = by[workType] ?? amount;
+      by[workType] = (1 - e.alpha) * prevW + e.alpha * amount;
+    }
     if (amount >= prev * e.goodMul) {
       this.adjustMood(eid, e.moodGood);
       this.logEvent(`💰 #${eid} 这次赚得划算（预期 ${Math.round(prev)}，实际 ${amount}）`);

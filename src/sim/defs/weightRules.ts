@@ -26,6 +26,22 @@ const ruleOracleGoal: WeightRule = {
   },
 };
 
+// 个人经济预期（用户设计：每个人心里有本账——工作会赚多少，就愿意干多少）
+// 按工作类型的预期收益 ≥ 基准 → 该工作权重升（经济理性选择）；低于基准 → 权重降
+const ruleExpectation: WeightRule = {
+  id: 'expectation',
+  label: '经济预期',
+  apply(w, card, _pawn, ctx) {
+    const e = ctx?.view.tuning?.economy;
+    const expect = ctx?.view.expectEarnOf?.(ctx.eid, card.decide(ctx).workType ?? '');
+    if (e && expect !== undefined && e.expectBase > 0) {
+      const k = (expect - e.expectBase) / e.expectBase;
+      w *= Math.max(0.5, 1 + k * e.expectMul);
+    }
+    return w;
+  },
+};
+
 // 天赋权重倍率（表驱动：TraitDef.weightMuls[series]；mod 天赋也可声明自己的调制）
 const ruleTrait: WeightRule = {
   id: 'trait',
@@ -143,6 +159,7 @@ export const BUILTIN_WEIGHT_RULES: WeightRule[] = [
   ruleMarkov,
   rulePriority,
   ruleOracleGoal,
+  ruleExpectation,
   ruleJob,
   ruleLean,
 ];

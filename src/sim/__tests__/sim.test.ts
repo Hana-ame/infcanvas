@@ -2049,3 +2049,38 @@ describe('经济账本自动调节（用户设计：支出多 → 收益工作�
     expect(sim.factionPriority.chop).toBeGreaterThan(1); // 账本驱动而非库存阈值
   });
 });
+
+describe('经济预期驱动行为（心理预期 → 工作选择）', () => {
+  it('预期收益高的工作权重升高（expectEarnBy → effectiveWeight）', () => {
+    const sim = new Sim({ seed: 603, pawnCount: 1 });
+    const eid = sim.pawns[0];
+    const st = sim.pawnStates.get(eid)!;
+    // 记录伐木收益预期 8（基准 5 之上）→ 伐木权重应升
+    sim.recordEarn(eid, 'wood', 8, 'chop');
+    expect(st.expectEarnBy?.chop).toBeCloseTo(8, 5);
+    const chop = st.slots.find((c) => c?.id === 'chop')!;
+    const ctx = {
+      view: {
+        isNight: () => false, // mod 规则残留（nightFear）需要；mock 补全
+        tuning: { economy: sim.tuning.economy },
+        expectEarnOf: (e: number, workType: string) => sim.pawnStates.get(e)?.expectEarnBy?.[workType] ?? 0,
+      },
+      eid,
+    } as never;
+    const w = effectiveWeight(chop, { dna: st.dna, slots: st.slots }, ctx);
+    expect(w).toBeGreaterThan(chop.weight); // 经济理性：预期赚得多 → 更愿意干
+  });
+
+  it('长局：预期账本按工作细分积累，决策持续受调制', () => {
+    const sim = new Sim({ seed: 604, pawnCount: 4 });
+    for (let t = 0; t < 1200; t++) {
+      for (let i = 0; i < 20; i++) sim.step(1 / 20);
+    }
+    let anyExpect = false;
+    for (const eid of sim.pawns) {
+      const st = sim.pawnStates.get(eid)!;
+      if (st.expectEarnBy && Object.keys(st.expectEarnBy).length > 0) anyExpect = true;
+    }
+    expect(anyExpect).toBe(true);
+  });
+});

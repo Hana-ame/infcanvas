@@ -334,6 +334,8 @@ export interface EconomyTuning {
   badMul: number;       // 产出 ≤ 预期 × 此值 = 失望
   moodGood: number;     // 超预期心情增量
   moodBad: number;      // 失望心情减量
+  expectBase: number;   // 预期收益基准（权重调制参照：预期 ≥ 基准 → 该工作权重升）
+  expectMul: number;    // 预期收益权重倍率上限（× (1 + (预期-基准)/基准 × expectMul)）
 }
 
 export interface TechTuning {
@@ -763,6 +765,8 @@ export const TUNING: TuningConfig = {
     badMul: 0.5,   // 赚 ≤ 预期×0.5 → 失望
     moodGood: 3,
     moodBad: -3,
+    expectBase: 5, // 预期收益基准（基准 5 木/次左右）
+    expectMul: 1.0,// 预期驱动：预期 ≥ 基准 → 权重 +（预期-基准）/基准 × mul
   },
   path: {
     maxIter: 15000,         // 无篝火中转：迭代上限（防爆；锚点少时路径短，够用）

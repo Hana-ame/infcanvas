@@ -121,6 +121,7 @@ export class BehaviorSystem implements GameSystem {
       oracleGoal: this.ctx.oracleGoal,
       assignedJob: st.assignedJob,
       leanOf: (e, k) => this.ctx.leanOf(e, k),
+      expectEarnOf: (e, workType) => this.ctx.pawnStates.get(e)?.expectEarnBy?.[workType] ?? 0,
       buildQueueCount: this.ctx.buildQueue.length,
       stockpile: this.ctx.stockpile,
       tuning: this.ctx.tuning,

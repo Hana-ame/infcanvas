@@ -55,6 +55,8 @@ export interface CardView {
   assignedJob?: string;
   // 行为结果学习（EWA 吸引模型）：经验记忆（期望收益）→ 权重倍率（1=中性，>1 偏做，<1 回避）
   leanOf?(eid: number, key: string): number;
+  // 个人经济预期（按工作类型）：这个活预期能赚多少 → 经济理性调制工作选择
+  expectEarnOf?(eid: number, workType: string): number;
   // 全量平衡参数（只读；卡组/mod 卡可读阈值/倍率做决策）
   tuning?: TuningConfig;
   // 马尔可夫偏置表（registry 替身，mod 可覆盖/扩展）

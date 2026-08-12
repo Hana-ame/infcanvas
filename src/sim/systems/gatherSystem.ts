@@ -95,7 +95,7 @@ export class GatherSystem implements GameSystem {
           const gain = capGain(Math.round((ev.success ? (recipe?.output.amount ?? this.ctx.tuning.gather.harvestYield) : (recipe?.failOutput?.amount ?? this.ctx.tuning.gather.harvestFailYield)) * toolBonus * strBonusOf(eid)), eid);
           const item = recipe?.output.item ?? this.ctx.tuning.gather.harvestItem;
           this.ctx.stockpile[item] = (this.ctx.stockpile[item] ?? 0) + gain;
-          this.ctx.recordEarn(eid, item, gain); // 经济账本：收益
+          this.ctx.recordEarn(eid, item, gain, 'caveMine'); // 经济账本：收益（矿洞）
           this.ctx.growSkill(eid, skill); this.ctx.recordOutcome(eid, 'caveMine', ev.success ? gain : -gain);
           this.ctx.bus.emit({ type: 'resource_gained', eid, item, amount: gain });
           // 心情微调（写死 ±2，未进 tuning：改动频率低，保持现状）
@@ -119,7 +119,7 @@ export class GatherSystem implements GameSystem {
           const ev = this.ctx.rollEventSkill(eid, dc, skill);
           const gain = capGain(Math.round((ev.success ? (hv?.yieldSuccess ?? this.ctx.tuning.gather.harvestYield) : (hv?.yieldFail ?? this.ctx.tuning.gather.harvestFailYield)) * toolBonus * strBonusOf(eid)), eid);
           this.ctx.stockpile.ore += gain;
-          this.ctx.recordEarn(eid, hv?.product ?? 'ore', gain); // 经济账本：收益
+          this.ctx.recordEarn(eid, hv?.product ?? 'ore', gain, 'mine'); // 经济账本：收益（采矿）
           this.ctx.growSkill(eid, skill); this.ctx.recordOutcome(eid, 'mine', ev.success ? gain : -gain);
           this.ctx.bus.emit({ type: 'resource_gained', eid, item: hv?.product ?? this.ctx.tuning.gather.harvestItem, amount: gain });
           this.ctx.bus.emit({ type: 'work_completed', eid, work: 'mine', success: ev.success, x, y });
@@ -143,7 +143,7 @@ export class GatherSystem implements GameSystem {
           const ev = this.ctx.rollEventSkill(eid, dc, skill);
           const gain = capGain(Math.round((ev.success ? (h?.yieldSuccess ?? this.ctx.tuning.gather.chopYield) : (h?.yieldFail ?? this.ctx.tuning.gather.chopFailYield)) * toolBonus * strBonusOf(eid)), eid);
           this.ctx.stockpile.wood += gain;
-          this.ctx.recordEarn(eid, h?.product ?? 'wood', gain); // 经济账本：收益
+          this.ctx.recordEarn(eid, h?.product ?? 'wood', gain, 'chop'); // 经济账本：收益（伐木）
           this.ctx.growSkill(eid, skill); this.ctx.recordOutcome(eid, 'chop', ev.success ? gain : -gain);
           this.ctx.bus.emit({ type: 'resource_gained', eid, item: h?.product ?? this.ctx.tuning.gather.chopItem, amount: gain });
           this.ctx.bus.emit({ type: 'work_completed', eid, work: 'chop', success: ev.success, x, y });
