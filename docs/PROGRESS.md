@@ -11,6 +11,7 @@
 | 设计项 | 章节 | 状态 | 说明 |
 |---|---|---|---|
 | 世界生成 | §3 空间模型 | ✅ | Minecraft-like 值噪声（fBm）：海拔+湿度双轴 → 水/沙/草/沙漠/森林/矿/山。出生点 5x5 保证草地 + **近圈资源保证**（饥荒式开局：出生点 3-8 圈确定性撒树/矿/石，开局采矿不落空） |
+> （2026-08-12 更新：出生清场扩至 **7×7**；树密度下调 + 森林稀疏化破口 + 出生连通性保证，详见下方补充表"自玩缺陷修复"） |
 | 小人自主 AI | §3/§6 | ✅ | 抽 3 选 1 卡系统（种子化不放回）+ 收益择优；基础卡 + DNA 天赋卡（夜猫子/热爱工作/好斗/虔诚/懒惰/强壮/机灵） |
 | 意图失真（简化） | §2/§6 | ✅ | 违抗 roll：仅当选中工作卡且有未选本我卡时触发，概率受懒惰/心情/信仰调制，30s 冷却防刷屏 |
 | 插槽系统 | §3 插槽/§6 | ✅ | DNA 决定槽位 + 天赋卡占槽；统一卡模型（天赋卡→技能/习惯/神谕策略卡属 P0.5） |
@@ -36,6 +37,8 @@
 | 随机事件 | §6/用户Q5 | ✅ | **预制剧本事件系统**（EventSystem + EventProvider 接口）：流浪者加入/丰收/矿脉/瘟疫/游商/庆典，**状况匹配事件列表**（每个事件带 `condition`——有农田才丰收、有余粮才收留流浪者、人多才有瘟疫…只有符合当前局面的事件进候选池，权重+冷却+minTime 调制）；**provider 可插换 = 预留 LLM 插入能力**（P0 确定性随机，P1 换 LLM provider）；事件入历史 |
 | 社会关系 | §3/用户Q8 | ✅ | **好感度驱动行为**：亲密(≥40)相邻→心情加成（协作正向反馈）；敌对(≤-20)相邻→口角、积累冲突→动手（STR 判定、掉血、负好感加深，战争萌芽）；关系由社交微互动/传教积累 |
 | 派系优先级 | §3/用户Q8 | ✅ | **AI 按环境下达工作优先指令**（RimWorld 工作优先的确定性版）：每 10s 评估资源短缺/建造队列 → 调制全营地对应工作卡权重（食<60→farm↑、木<40→chop↑、矿<15→mine↑、排队→build↑）；随环境自动转变 |
+| 纪念碑/奇观 | §3 | ✅ | **纪念碑**（3x3，木 60+矿 25，tags wonder）：`hasWonder` 全营地心情+信仰光环（`needsSystem` 消费 `def.aura`）；奇观成本 `costWood/costOre` 数据驱动 |
+| EWA 行为学习 | §6/§9 | ✅ | **lean 系统**（`core/lean.ts` + `defs/leans.ts` 10 轨道）：行为结果（成功/失败/正负反馈）经 `recordOutcome` 更新个性倾向 → `weightMulOf` 调制卡权重（越成功越倾向该行为，越失败越回避）；`registerLean/overrideLean` mod 可扩展；DATA_DRIVEN §9 |
 | 自主扩张 | §3/用户Q1/Q8 | ✅ | **AutonomousBuildSystem**：AI 评估资源与营地状态自动规划扩建（无篝火→起篝火、人多吃紧→加火、缺粮→扩农田、缺工具→工作台、矿少→矿洞、富余→围墙、**信仰高→建教堂**）；20-30s 评估一次注入 buildQueue，小人照常执行；营地自主生长（观察模拟器核心） |
 | 教堂 + 神谕 | §3/用户Q2/Q3 | ✅ | **教堂**（2x2，信仰≥35 自动建）+ **神谕影响**：玩家选中教堂→"发布神谕"按钮→祝福附近(半径6)高信仰小人（信任=信仰/100 过滤，低信仰不受影响）：30s 心情 buff + 信仰↑；教堂是神谕唯一物理接口（DESIGN §3）；神谕不直接指挥，只影响目标层 |
 | 社会单位/部落记忆 | 用户Q9+即时指令 | ✅ | **有篝火 = 独立派系**。每个篝火 = SocialUnit：部落记忆（成员/事件/看法）、名字、成员归属。**教堂 = 篝火升级**（容量：篝火记 2-3 连接、教堂 5-10）。**篝火间信任机制**：成员协作→看法增；双向友好→贸易（木换食）；双向敌对→派掠夺者攻打对方（战争）→加深仇恨；**派系 = 单位间的看法关系**（友好→贸易/伙伴、敌对→战争，无抽象联盟层）：双向敌对→派掠夺者攻打对方（战争）→加深仇恨。出生点初始篝火=首派系；野生篝火事件刷新新势力 |
@@ -51,7 +54,32 @@
 | tick delta 增量 | §8/§9 | ✅ | **快照增量（P2 第一块）**：`src/server/diff.ts` 纯函数对比相邻快照 → 只发变化（`DeltaMsg`）：pawn 按 eid 逐字段 diff（x/y/hp/job/needs/faith/skills/slots/desires…）、新 pawn 首现必带 attrs、死亡 removed+pawnList；建筑按 key(y*width+x) 对齐 diff hp、拆除 removed；hostiles/stockpile/buildQueue 整体覆盖；全局字段各自携带。server：500ms 一轮 diff 广播 + 5s 全量对账（防增量丢失/相消漂移）+ 新连接先收全量底（广播过的快照即 diff 基线）；client：`applyDelta` 合并进 pawnCache/世界（读取面零改动，HUD/Renderer 无需区分）。12s e2e 实测 delta 26 帧 vs snapshot 4 帧（带宽 -90%）。测试：diff.test.ts 7 用例 + reconnect.test.ts applyDelta 1 用例 + scripts/e2e/remote-delta.mjs（帧构成/时间/位置断言） |
 | 渲染插值 | §1/§8 | ✅ | **位置插值（渲染平滑）**：delta 500ms 一跳 → 渲染层 `interpPos`（pawn + 敌对）按 sim 时间线性插值（段起终点 + t0/t1，k 线性收敛）；`RemoteSim.renderNow()`：**播放时钟**——权威 t 锚定墙钟 + 帧间 extrapolate（speed 加权，paused 冻结），否则 time 只在消息到达时跳变、插值恒 k=1 失效；本地模式同样走插值（每 tick 段极短 ≈ 贴合真实）。顺带修复：死亡/重生 pawn 的渲染残留清理（delta 下 removed 广播后 sprite 及时移除，本地模式同受益）。e2e：scripts/e2e/remote-interp.mjs 采样 60 帧 sprite 位置出现 6-13 个渐进中间值（非 48px 跳变） |
 | LLM 慢决策层 | §6/§10 | ✅ | **`LLM_ENDPOINT` 环境变量即启用**（OpenAI 兼容 chat completions）：`src/server/llm.ts` 预取模型（后台拉取 → 事件队列 → EventSystem 同步消费，失败指数退避降级确定性）；LLM 输出 JSON schema（name/text/effects）→ 白名单执行器（resource/mood/hp/recruit，数值钳制，**不进选择链路** ✓ DESIGN §6）；世界摘要随请求携带；`SimOptions.eventProvider` 构造注入。冒烟：mock LLM → server → feed 广播 `🎁 获得 ore 10 ✨ 星陨之夜` |
+> （2026-08-12 更新：**随机抽卡完整替代 LLM 且默认启用**——server/单机均默认 `makeDummyCardPlanner`，`LLM_ENDPOINT` 仅可选增强；神谕三层分离定案见下"神谕三层分离"行） |
+| 神谕三层分离 | §6 | ✅ | **神谕影响目标层，科技是另外的池子**（2026-08-12 定案）：① **策略卡 = 神谕目标**——`sim.setOracleGoal` 降旨（对应工作系列权重 ×`tuning.card.oracleGoalMul` 默认 3，weightRules 表 `oracleGoal` 规则），**不插小人卡槽、不碰选择链**（小人仍自主抽卡/违抗）；蓝图副作用走 `applyBlueprint`（垦田令→农田、拓荒令→营地）；目标 120s 到期自动清除；② **科技 = 独立抽卡池**——`techInterval` 独立计时器（120s/60% 概率）按 `TECH_ORDER` 顺序解锁，与策略卡互不干扰；③ **printCard** 降为底层 API（未来 LLM 叙事用），策略卡不再走它 |
 | 命令权威校验 | §8/§9 | ✅ | **联机安全（P2 前置）**：server `src/server/cmdValidate.ts` 把关上行命令——类型白名单/形状/坐标越界/建筑与职业存在性/`pawnId` 存在性/令牌桶频率（30 条/s，per-client 连接级）；非法命令丢弃并记录（不踢连接）；client 的 build/oracle/assign/move 显式带 pawnId（观察模式 server 无 selected 镜像）+ sim.issueCommand 的 assign 分支支持 pawnId。测试：cmdValidate.test.ts 5 用例 + viewer e2e 9 断言（build 回显 / move 指挥位移） |
+
+## 2026-08-12 补充（自玩自测 + docs 核对）
+
+| 项 | 状态 | 说明 |
+|---|---|---|
+| 篝火航点寻路 | ✅ | 起终点各自就近锚点（篝火/教堂）中转三段合并；数量上限 8 + 范围上限 60；锚点对路径段缓存（复用 trailCache）；迭代上限双档：无篝火 15000 防爆 / 有篝火 40000 放宽（显式 maxIter 尊重钳制语义）；任一段失败直连放宽重试 |
+| 纯逻辑 CLI | ✅ | `scripts/play.ts`：`npx tsx scripts/play.ts` 无浏览器游玩（state/pawns/sel/move/build/job/oracle/map(ASCII 地形带色)/f 连续跑/speed/techs） |
+| 自玩缺陷修复 | ✅ | **理智崩溃死锁**：崩溃小人的旧 path 无人推进（cardSystem continue + SanSystem 见 path 早退）→ 永久冻结；修复：崩溃分支继续 walk + 狂乱持续 >60s 本能逃向最近篝火（SAN 恢复闭环）；**营地停产**：scanRadius 15 内资源采空 → 全员闲逛；修复：近距 miss → farScanRadius 45 远距回扫（5s miss 冷却防性能拖垮）；**A* 性能**：open 数组 O(n²) → 二叉堆 O(n log n)（192² 对角长路 48ms）；**寻路迭代上限**：20000 在 192² 复杂长路耗尽 → 双档默认值；**世界连通性**：树 55%+平滑噪声成片 → 出生点可达仅 0.1%；修复：树密度下调 + 森林稀疏化破口 + 出生清场 7×7 + 出生连通性保证（水环自动破口至 15%） |
+| 科技抽卡 | ✅ | 神谕独立科技计时器（120s，60% 概率按顺序抽下一张：竹筏工艺→桥梁工程→造船术）；`techs` 存档持久化；建筑 `def.tech` 锁（queueBuild/autobuild 拒绝 + 建造菜单 🔒 灰显，解锁即时可建） |
+| 载具/地形 | ✅ | TileDef.z（水面 0/桥面 1）；**木桥 = 地形改造**（water→bridge tile，可通行 z=1 moveCost 2）；竹筏（recipe fishing 捕鱼）、渡船（2×2）；水面建造校验（footprint 全水 + 邻接陆地/筏，可链式铺开）；渔民职业 + fish 卡（hasRaft 谓词） |
+| 卡熟练度（P0.5 卡演化） | ✅ | 选中卡 mastery+1、600s 未用惰性衰减 -2、权重调制 ×(0.5+mastery/100)（上限 1.5×）；initSlots 克隆实例防共享单例串；存档 slots 带 {id,m,u}（旧档 string 兼容）；HUD 卡池显示 `卡名×熟练度` |
+| 建造健壮性 | ✅ | buildSystem 完成时 footprint 校验（失败放弃不扣资源，此前 placeBuilding 返回值被忽略 = 资源蒸发）；wood 防负库存 |
+| UIUX 全量 | ✅ | HUD 静态骨架 + 事件委托（按钮不丢点击）；改键系统（14 动作，localStorage 持久化，冲突消除）；SVG 图标全替换（HUD_SVG 16 枚 + 建筑/小人头像）；建造菜单分组（基地/防护/生产/信仰/水路/其他）；策略卡横幅 |
+
+## 2026-08-12 二轮自测（控制单人 / 神谕 / LLM 替代定案）
+
+| 项 | 状态 | 说明 |
+|---|---|---|
+| 玩法深测（控制单人） | ✅ | 命令链路 11 项全过：移动越界不崩、桥科技锁拒绝/解锁可建、指派/恢复职业、无教堂神谕直接印卡、缺木降伐木目标、缺粮垦田农田蓝图、教堂祝福 buff（until/mood） |
+> （2026-08-12 更正：该轮自测时策略卡尚走 printCard 插卡槽；同日定案改为**神谕目标层**（`setOracleGoal`），策略卡不再进小人卡槽，见"神谕三层分离"行） |
+| 玩法深测（神谕） | ✅ | 科技独立 sim 验证顺序解锁 raftTech→bridgeTech→boatTech；30 分钟长跑无库存异常/NaN；长局人口 4→8、派系 1→17 正常演化 |
+| server 默认抽卡 | ✅ | `src/server/index.ts`：不再需要 LLM_DUMMY 环境变量——**随机抽卡默认启用**（feedback 策略卡 + 科技卡）；LLM_ENDPOINT 仅为可选增强；启动日志明确标注 |
+| 卡熟练度（P0.5 卡演化） | ✅ | 见上表 2026-08-12 补充（mastery+1 / 600s 惰性衰减 / 权重 ×(0.5+m/100) / 克隆防串 / 存档 {id,m,u} / HUD `卡名×熟练度`） |
 
 ## 待办 / 差距
 

@@ -172,6 +172,10 @@ registerIntent(id, fn): this                     // 新意图执行器（新 act
 registerWork(type, fn): this                     // 新工作类型执行器（walkAndWork 按 workType 分派，配合卡 decide）
 registerSystem(s: GameSystem): this
 registerHook(stage, fn): this                    // 生命周期钩子（已接线 step:before / step:after）
+// （2026-08-12 更新：另有扩展口 registerSystemDef / registerDesire / registerUnitLevel / registerPredicate /
+//  registerCardDef / registerTrait / overrideTrait / registerLean / overrideLean / registerMarkovBias /
+//  registerSeriesDesire / registerJob / registerWeightRule / overrideWeightRule / registerLine / registerTopicTemplate，
+//  详见 §9-§12 各表与 docs/PROGRESS.md「闭合类型开放」）
 overrideDef(kind: 'tile'|'building'|'item'|'card'|'recipe'|'enemy', id, patch): this  // 部分覆盖数值
 overrideTuning(patch: DeepPartial<TuningConfig>): this  // 覆盖平衡参数（deepMerge，只动传的键）
 ```
@@ -238,11 +242,14 @@ overrideTuning(patch: DeepPartial<TuningConfig>): this  // 覆盖平衡参数（
 
 ### 9.1 新增数据表（defs/）
 
+- `techs.ts`（2026-08-12 新增）：**科技表** `TECHS`/`TECH_ORDER`（竹筏工艺→桥梁工程→造船术）——神谕抽卡解锁，`BuildingDef.tech` 门控建造（queueBuild/autobuild 校验，HUD 🔒 灰显）；`Sim.techs`/`unlockTech`/`techsMap`，存档持久化
+
 | 表 | 内容 | mod 入口 |
 |---|---|---|
 | `defs/traits.ts` | 7 天赋：属性微调/罪孽倾向/技能加成/抽卡权重倍率/天赋卡（声明式） | `registerTrait`/`overrideTrait` |
 | `defs/jobs.ts` | 职业 → 主导工作卡 + 中文标签（Q10 生产线） | `registerJob` |
 | `defs/cards.ts` | 9 基础卡全声明式（`needAt`/`utilityBase`/`utilityFixed`/`utilityPerQueue` 由工厂生成 condition/utility） | `registerCard` |
+> （2026-08-12 更新：10 张，新增 `fish` 捕鱼卡，`when: ['hasRaft']`） |
 | `defs/leans.ts` | 行为学习 10 轨道（迁自 core/lean.ts；`LeanParams` 权威定义在 tuning） | `registerLean` |
 | `defs/behavior.ts` | `MARKOV_BIAS` 马尔可夫偏置 + `SERIES_TO_DESIRE` 系列→欲望默认映射 | `registerMarkovBias`/`registerSeriesDesire` |
 | `defs/events.ts` | 7 预制剧本事件（迁自 systems/scripts.ts，数值全读 tuning.event） | `registerEvent` |
@@ -293,6 +300,7 @@ overrideTuning(patch: DeepPartial<TuningConfig>): this  // 覆盖平衡参数（
 ### 10.2 卡条件谓词表（行为树条件节点）
 
 - `CARD_PREDICATES`（defs/cards.ts）：机制钩子集中一处（hasCave/hasCampfire/buildQueue），代码只写一次
+- （2026-08-12 更新：另有 `hasRaft` 谓词——有竹筏时捕鱼卡可用）
 - 卡表纯声明：`when: ['hasCave', ...]`（AND 组合），与 needAt 阈值/自定义 condition 合并
 - 谓词跨实例共享（与 LEANS/DESIRES 同策略）：`registerPredicate(id, fn)` 扩展，新谓词可被任意卡引用
 - 未注册谓词 → 工厂报错（拼错 id 立即暴露）
