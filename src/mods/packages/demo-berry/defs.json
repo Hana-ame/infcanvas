@@ -1,0 +1,49 @@
+{
+  "items": [
+    { "id": "berry", "name": "浆果", "stackable": true, "maxStack": 99 }
+  ],
+  "tiles": [
+    {
+      "id": "berryBush",
+      "name": "浆果丛",
+      "passable": true,
+      "buildable": true,
+      "color": "#7a4a3a",
+      "growable": true,
+      "sprite": "terrain:tree",
+      "harvest": { "product": "berry", "time": 1.5, "yieldSuccess": 4, "yieldFail": 1, "dc": 50 },
+      "harvestReplaces": "grass"
+    }
+  ],
+  "recipes": [
+    { "id": "berryStandRecipe", "name": "浆果摊", "kind": "passive", "output": { "item": "berry", "amount": 0.15 } }
+  ],
+  "buildings": [
+    {
+      "id": "berryStand",
+      "name": "浆果摊",
+      "size": { "x": 1, "y": 1 },
+      "hp": 80,
+      "color": "#a05a4a",
+      "emoji": "🫐",
+      "passable": true,
+      "buildTime": 2,
+      "costWood": 4,
+      "sprite": "building:farm",
+      "recipe": "berryStandRecipe"
+    }
+  ],
+  "cards": [
+    {
+      "id": "berryFeast",
+      "name": "浆果盛宴",
+      "series": "leisure",
+      "weight": 3,
+      "when": ["stockpileBerry"],
+      "utilityFixed": 18,
+      "action": "idle",
+      "label": "浆果盛宴",
+      "satisfies": [{ "desire": "sloth", "amount": 1 }]
+    }
+  ]
+}

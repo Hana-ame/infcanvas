@@ -1,0 +1,8 @@
+{
+  "id": "demo-berry",
+  "name": "浆果玩法",
+  "version": "1.0.0",
+  "description": "数据驱动示例：新物品/浆果丛 tile/浆果摊建筑/浆果盛宴卡（纯 defs 声明）+ 变质系统与撒种钩子（scripts）",
+  "author": "infcanvas",
+  "requires": { "coreVersion": "0.1.0" }
+}

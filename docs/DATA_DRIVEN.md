@@ -356,3 +356,28 @@ overrideTuning(patch: DeepPartial<TuningConfig>): this  // 覆盖平衡参数（
 | 文本 | socialLines + factionNames | registerLine/registerTopicTemplate/tuning.faction 名 |
 | 欲望 | DESIRES 表（七宗罪 + 注册制） | registerDesire |
 | 行为 | 卡表（声明式：weight/when/satisfies/action） | registerCard/overrideDef('card') |
+
+## 13. Mod 打包/沙箱（数据驱动第四阶段，2026-08-12）
+
+### 13.1 包格式（src/mods/loader.ts）
+
+- **自包含单文件 JSON**：`{ manifest, defs?, scripts? }`，可分发/可校验/可版本约束
+  - `manifest`：id（`[a-z0-9][a-z0-9-_.]*`）、name、version、`requires.coreVersion`（与 CORE_VERSION 严格比对）
+  - `defs`：纯 JSON 内容声明——tuning（深合并）/items/tiles/buildings/recipes/enemies/cards/jobs/leans/markov/seriesDesires/lines/topics（`{key}` 模板）；白名单字段，未知字段拒绝；卡类函数字段（condition/extraUtility/decide）必须移入 scripts
+  - `scripts`：函数式扩展（谓词/系统/事件/权重规则/钩子）——JS 字符串，打包器内联一切依赖，`import/require` 一律拒绝
+- 加载：`parseModPackage(json)`（校验）→ `buildModMount(pkg)`（= Sim mods 回调）→ `mountModPackage(pkg, reg)`（挂载失败返回 `{ok:false,error}`，不拖垮主 sim）
+- 打包 CLI：目录（mod.json + defs.json + scripts.js）→ 单文件 .mod.json（`npm run mod:pack [名]`，默认 demo-berry）
+- 悬挂顺序：scripts 先（谓词/机制注册），defs 后（内容引用谓词）
+
+### 13.2 沙箱边界（诚实声明）
+
+- 同进程信任边界：**防手滑不防恶意**（标识符解析属 JS 引擎层，同进程无法真隔离）
+- 实际防护：new Function 白名单注入（只有 `m` + 受限 `console`）无 import/require 可达；scripts 编译失败/执行抛错 → 挂载失败清晰报错，Sim 照常运行
+- 静态共享键（谓词/天赋/职业/社交文案等）注册**幂等**：同 id 重复挂载 = 保持首次定义（多 Sim 重复挂载同包安全）；内容实例表（物品/建筑/卡）冲突仍抛错
+
+### 13.3 验证
+
+- demo-berry 重构为包格式（defs.json 纯声明 + scripts.js 函数式），行为与源码 mod 等效（卡/谓词/系统锚点/变质全链路）
+- 校验拒绝：非法 JSON/缺 manifest/非法 id/coreVersion 不匹配/未知 defs 字段/卡含函数字段/scripts 含 import
+- 沙箱隔离：语法错误与运行期抛错均被捕获，主 sim 可继续 step
+- 重复挂载幂等：同包挂 3 个 Sim 不冲突（166/166 绿）

@@ -269,8 +269,10 @@ export class ModRegistry {
 
   // 新职业（Q10）：记录职业 → 主导工作卡 + 标签
   registerJob(id: string, def: { label: string; cardId: string }): this {
-    if (!(id in ModRegistry.jobStore)) ModRegistry.jobStore[id] = def;
-    else throw new Error(`mod: job "${id}" 已存在`);
+    // 同定义幂等（重复挂载同包安全）；不同定义 → 抛错
+    const old = ModRegistry.jobStore[id];
+    if (old && JSON.stringify(old) !== JSON.stringify(def)) throw new Error(`mod: job "${id}" 已存在，请用不同 id`);
+    ModRegistry.jobStore[id] = def;
     return this;
   }
 
@@ -341,7 +343,8 @@ export class ModRegistry {
 
   // 卡条件谓词注册（行为树条件节点）：卡 when: ['hasChurch'] → registerPredicate('hasChurch', ...)
   registerPredicate(id: string, fn: (c: CardContext) => boolean): this {
-    if (ModRegistry.predicateStore.has(id)) throw new Error(`mod: 谓词 "${id}" 已存在，请用不同 id`);
+    // 静态共享键：幂等（重复挂载同包安全，保持首次定义）；不同 mod 想替换用新 id
+    if (ModRegistry.predicateStore.has(id)) return this;
     ModRegistry.predicateStore.set(id, fn);
     return this;
   }
@@ -366,7 +369,8 @@ export class ModRegistry {
 
   // 社交对话模板：追加一条微互动文案（greet/positive/negative）
   registerLine(category: keyof Pick<SocialLineTable, 'greet' | 'positive' | 'negative'>, line: string): this {
-    ModRegistry.socialLinesStore[category].push(line);
+    // 静态共享键：同文案重复注册幂等
+    if (!ModRegistry.socialLinesStore[category].includes(line)) ModRegistry.socialLinesStore[category].push(line);
     return this;
   }
 
