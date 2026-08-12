@@ -6,6 +6,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { Sim } from '../sim/sim';
 import { ModRegistry } from '../sim/mods/registry';
 import { loadModsFromDir } from './modManager';
+import { makeDummyCardPlanner } from './dummyLlm';
 import type { Command } from '../sim/sim';
 import { makeLlmProvider } from './llm';
 import { buildDelta } from './diff';
@@ -20,9 +21,15 @@ const MODS_DIR = process.env.MODS_DIR ?? 'mods'; // 根目录 mods/*.mod.json �
 const DELTA_MS = 500;        // 增量轮询
 const RECONCILE_MS = 5000;   // 全量对账间隔
 
-// LLM 慢决策层（P1）：设 LLM_ENDPOINT 即启用（OpenAI 兼容 chat completions），否则确定性脚本
+// LLM 慢决策层（P1）：
+//  - LLM_ENDPOINT：真 LLM（OpenAI 兼容 chat completions）事件导演
+//  - LLM_DUMMY=1：dummy 印卡（random/反馈模式，零成本可离线，模拟 LLM 生成策略卡）
+//  - 都不设：确定性脚本事件
 const llmCfg = process.env.LLM_ENDPOINT
   ? { endpoint: process.env.LLM_ENDPOINT, apiKey: process.env.LLM_API_KEY ?? '', model: process.env.LLM_MODEL ?? 'gpt-4o-mini' }
+  : null;
+const dummyCfg = process.env.LLM_DUMMY
+  ? { mode: (process.env.LLM_DUMMY === 'random' ? 'random' : 'feedback') as 'random' | 'feedback' }
   : null;
 
 // 权威模拟（零 DOM ✓ tsx 直跑）。
@@ -42,7 +49,8 @@ sim = new Sim({
   registry,
   eventProvider: llm?.provider,
 });
-console.log(`[server] seed=${SEED} pawns=${PAWNS} ws://0.0.0.0:${PORT}${llmCfg ? ` llm=${llmCfg.endpoint}` : '（无 LLM，确定性事件）'}${modRes.mods.length ? ` mods=[${modRes.mods.join(', ')}]` : '（无 mod）'}`);
+const dummyPlanner = dummyCfg ? makeDummyCardPlanner(sim, dummyCfg) : null;
+console.log(`[server] seed=${SEED} pawns=${PAWNS} ws://0.0.0.0:${PORT}${llmCfg ? ` llm=${llmCfg.endpoint}` : dummyCfg ? ` llm=dummy(${dummyCfg.mode})` : '（无 LLM，确定性事件）'}${modRes.mods.length ? ` mods=[${modRes.mods.join(', ')}]` : '（无 mod）'}`);
 
 const wss = new WebSocketServer({ port: PORT });
 
@@ -194,6 +202,7 @@ setInterval(() => {
   acc += dt;
   while (acc >= tickMs) {
     sim.step(tickMs / 1000);
+    dummyPlanner?.tick(tickMs / 1000); // dummy 印卡（LLM 慢决策占位）
     acc -= tickMs;
   }
   if (clients.size === 0) return;

@@ -21,6 +21,7 @@ import { RECIPES } from './defs/recipes';
 import { TUNING, type TuningConfig } from './defs/tuning';
 import type { RecipeDef } from './defs/recipes';
 import { ModRegistry } from './mods/registry';
+import { cardFromDef, type BehaviorCardDef, type BehaviorCard } from './ai/pawn';
 import type { SimContext } from './systems/context';
 import { SystemRegistry } from './systems/registry';
 import type { ScriptedEvent } from './systems/eventSystem';
@@ -588,6 +589,35 @@ export class Sim implements SimContext {
   // 建筑升级（篝火→教堂）
   upgradeBuilding(x: number, y: number, defId: string, faction: string): boolean {
     return this.world.upgradeBuilding(x, y, defId, faction);
+  }
+
+  // ---- LLM 印卡（DESIGN §6：LLM 只印卡+触发事件，不进选择链路）----
+  // 生成策略卡插入目标小人槽位：槽满时替换 weight 最低的卡（神谕策略卡可顶基础卡）
+  // target: 缺省随机活人；'random' 同；eid 指定某小人
+  printCard(def: BehaviorCardDef, opts: { target?: number | 'random'; note?: string } = {}): number | null {
+    const targets = this._pawnList.filter((eid) => this.pawnStates.has(eid));
+    if (targets.length === 0) return null;
+    const target = opts.target === 'random' || opts.target === undefined
+      ? targets[Math.floor(this.rng.next() * targets.length)]
+      : opts.target;
+    const st = this.pawnStates.get(target);
+    if (!st) return null;
+    const card = cardFromDef(def);
+    // 空槽优先；无空槽 → 替换 weight 最低的卡
+    let idx = st.slots.indexOf(null);
+    if (idx < 0) {
+      let min = 0;
+      for (let i = 1; i < st.slots.length; i++) {
+        const c = st.slots[i];
+        if (!c) { min = i; break; }
+        const cur = st.slots[min] as BehaviorCard;
+        if (c.weight < cur.weight) min = i;
+      }
+      idx = min;
+    }
+    st.slots[idx] = card;
+    this.logEvent(`🃏 #${target} 收到策略卡「${card.name}」${opts.note ? `（${opts.note}）` : ''}`);
+    return target;
   }
 
   // 神谕影响（用户 Q2/Q3）：在具备 'oracle' 能力的建筑发布，祝福附近的高信仰小人  // 玩家不直接指挥 → 只影响"目标层"（心情/信仰），执行仍由小人自主
