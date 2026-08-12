@@ -96,6 +96,7 @@ export interface SimContext {
   rollEvent(eid: number, dc: number): { success: boolean; roll: number };
   rollEventSkill(eid: number, dc: number, skill: SkillId): { success: boolean; roll: number };
   adjustMood(eid: number, delta: number): void;
+  issueCommand(cmd: { type: 'build'; x: number; y: number; buildingId?: string }): void;
   // 经济账本（用户设计：收益/支出自动调节工作概率；个人预期 + 全局资源流）
   // eid 可空：null = 公共支出（建造扣公共库存）只记全局流
   recordEarn(eid: number | null, item: string, amount: number, workType?: string): void;

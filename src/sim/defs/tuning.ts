@@ -299,6 +299,7 @@ export interface PawnTuning {
   hpBase: number;          // 血量基础值（+ (con+siz)/2）
   scanRadius: number;      // 目标搜索半径（找树/矿/建筑等，近距快扫）
   farScanRadius: number;   // 近距未命中后的远距回扫半径（防营地周边资源采空后停产）
+  maxWorkDist: number;     // 工作目标最大距离（超距不寻路——寻路风暴修复，用户要求"不要太远"）
   attrMin: number;         // 八属性生成下限
   attrMax: number;         // 八属性生成上限
   traitCountMin: number;   // 天赋数量下限
@@ -344,6 +345,7 @@ export interface TechTuning {
 }
 
 export interface PathTuning {
+  pathCd: number;         // 寻路节流（秒）：小人两次寻路最小间隔（防每帧重寻路风暴）
   maxIter: number;        // A* 迭代上限（防爆）：无篝火中转时的基准上限
   waypointMaxIter: number; // 有篝火中转时可放宽的上限（航点路径段短、质量好）
   maxWaypoints: number;   // 参与中转的篝火/锚点数量上限（防全图扫描）
@@ -729,7 +731,8 @@ export const TUNING: TuningConfig = {
     baseSpeed: 4,
     hpBase: 40,
     scanRadius: 15,
-    farScanRadius: 45,
+    farScanRadius: 36, // 与 maxWorkDist 一致：远扫的目标超距会被拒，避免白扫
+    maxWorkDist: 36,
     attrMin: 30,             // 八属性生成区间
     attrMax: 70,
     traitCountMin: 1,        // 天赋数量
@@ -769,6 +772,7 @@ export const TUNING: TuningConfig = {
     expectMul: 1.0,// 预期驱动：预期 ≥ 基准 → 权重 +（预期-基准）/基准 × mul
   },
   path: {
+    pathCd: 0.5,            // 寻路节流：0.5s 内不重复寻路（寻路风暴修复）
     maxIter: 15000,         // 无篝火中转：迭代上限（防爆；锚点少时路径短，够用）
     waypointMaxIter: 40000, // 有篝火中转：放宽（航点分段短，允许探更多格）
     maxWaypoints: 8,        // 参与中转的锚点数量上限

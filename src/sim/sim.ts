@@ -81,6 +81,7 @@ export interface PawnState {
   defyCd?: number; // 违抗后的冷却时间（秒）
   crazyCooldown?: number; // 狂乱乱跑冷却
   farScanCd?: number;     // 远距回扫冷却（miss 后不重复大半径扫描）
+  pathCd?: number;        // 寻路节流冷却（两次寻路最小间隔，防每帧重寻路风暴）
   expectEarn?: number;    // 个人经济预期：工作赚多少（滚动平均）
   expectSpend?: number;   // 个人经济预期：花费花多少（滚动平均）
   expectEarnBy?: Record<string, number>; // 按工作类型的收益预期（决策调制：赚得多的活更愿意干）
@@ -348,9 +349,18 @@ export class Sim implements SimContext {
     }
   }
 
-  moveAdjacent(eid: number, tx: number, ty: number): void {
+  // 工作移动（寻路风暴修复，用户要求）：
+  //  1) 限定最大距离 maxWorkDist——超距目标不寻路（工作限距；玩家 move 命令走 moveTo 不限）
+  //  2) 寻路节流 pathCd——两次寻路最小间隔；路径缓存后按步走完（path 存在时决策层直接 walk 不重寻）
+  //  根因记录：狼袭击中 path 被频繁打断重建 → 每帧寻路风暴（findPathRaw 75%，50ms/步）；
+  //  修复后：被打断的小人在 pathCd 内不重寻，路径稳定走完，寻路频率回归常数级
+  moveAdjacent(eid: number, tx: number, ty: number): boolean {
     const pos = this.readPosition(eid);
-    if (!pos) return;
+    if (!pos) return false;
+    const maxD = this.mods.tuning.pawn.maxWorkDist;
+    if (Math.hypot(tx - pos.x, ty - pos.y) > maxD) return false; // 限定最大距离（不要太远）
+    const st = this.pawnStates.get(eid);
+    if (st && (st.pathCd ?? 0) > 0) return false; // 寻路节流
     let target: { x: number; y: number } | null = null;
     let bestD = Infinity;
     for (let dy = -1; dy <= 1; dy++) {
@@ -359,17 +369,20 @@ export class Sim implements SimContext {
         const nx = tx + dx, ny = ty + dy;
         if (!this.world.inBounds(nx, ny)) continue;
         if (!this.world.isPassable(nx, ny)) continue;
-        const d = (nx - tx) * (nx - tx) + (ny - ty) * (ny - ty);
+        const d = (nx - pos.x) * (nx - pos.x) + (ny - pos.y) * (ny - pos.y);
         if (d < bestD) { bestD = d; target = { x: nx, y: ny }; }
       }
     }
-    if (!target) return;
+    if (!target || !st) return false;
     const path = this.getPath(Math.round(pos.x), Math.round(pos.y), target.x, target.y);
-    const st = this.pawnStates.get(eid);
-    if (st) {
+    if (path.length > 0) {
       st.path = path;
       st.pathIndex = 0;
+      st.pathCd = this.mods.tuning.path.pathCd; // 寻路节流冷却
+      st.commandCooldown = this.tuning.card.commandCooldown;
+      return true;
     }
+    return false;
   }
 
   findNearest(pos: PositionData, cond: (x: number, y: number) => boolean, allowNonPassable = false, radius?: number): { x: number; y: number } | null {

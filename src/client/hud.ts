@@ -123,12 +123,13 @@ export function createHud(
   const tOre = resItem('ore', '矿');
   const tFood = resItem('food', '食物');
   const tTools = resItem('tools', '');
+  const tWater = resItem('water', '水');
   const tPeople = resItem('people', '人');
   const tWarn = document.createElement('span');
   tWarn.className = 'warn';
   tWarn.innerHTML = `${icon('warn', 14)}<b></b>`;
   const warnVal = tWarn.querySelector('b')!;
-  for (const r of [tTime, tWeather, tWood, tOre, tFood, tTools, tPeople]) stock.appendChild(r.el);
+  for (const r of [tTime, tWeather, tWood, tOre, tFood, tTools, tWater, tPeople]) stock.appendChild(r.el);
   stock.appendChild(tWarn);
   root.appendChild(stock);
 
@@ -386,6 +387,7 @@ export function createHud(
     tOre.val.textContent = String(s.ore);
     tFood.val.textContent = String(s.food);
     tTools.val.textContent = String(s.tools ?? 0);
+    tWater.val.textContent = String(s.water ?? 0);
     tPeople.val.textContent = String(sim.pawns.length);
     const warnTxt = (s.food < foodLow ? '食物告急!' : '') + (raidWarn ? ` ${raidWarn}` : '');
     warnVal.textContent = warnTxt;

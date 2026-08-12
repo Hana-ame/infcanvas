@@ -22,6 +22,7 @@ export const BUILTIN_INTENTS: IntentDef[] = [
   { id: 'heal',        label: '疗伤',     kind: 'ongoing', handler: 'execHeal' },
   { id: 'pray',        label: '祈祷',     kind: 'ongoing', handler: 'execPray' },
   { id: 'idle',        label: '闲逛',     kind: 'instant', handler: 'execIdle' },
+  { id: 'explore',     label: '探索',     kind: 'instant', handler: 'execExplore' },
 ];
 
 export const BUILTIN_WORKS: WorkDef[] = [

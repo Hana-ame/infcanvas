@@ -2084,3 +2084,33 @@ describe('经济预期驱动行为（心理预期 → 工作选择）', () => {
     expect(anyExpect).toBe(true);
   });
 });
+
+describe('探索卡机制（用户设计：科技建筑只有娱乐卡能抽到建造意图）', () => {
+  it('科技解锁后：探索卡在娱乐抽卡中触发 → 蓝图入队 → 建筑建成', () => {
+    const sim = new Sim({ seed: 701, pawnCount: 4 });
+    sim.unlockTech('toyTech');
+    // 推进：小人在娱乐抽卡时可能抽到 explore:toy → 蓝图入队 → 建造
+    let toyBuilt = false;
+    for (let i = 0; i < 6000 && !toyBuilt; i++) {
+      sim.step(1 / 20);
+      toyBuilt = [...sim.world.buildings.values()].some((b) => b.def.id === 'toy');
+    }
+    expect(toyBuilt).toBe(true); // 娱乐探索最终建成玩具
+  });
+
+  it('未解锁科技时探索卡不可抽（condition 不满足）', () => {
+    const sim = new Sim({ seed: 702, pawnCount: 1 });
+    const st = sim.pawnStates.get(sim.pawns[0])!;
+    // 卡在池中（静态注册），但 condition（hasTech-wellTech）不满足 → 抽不到
+    expect(sim.mods.cards.has('explore:well')).toBe(true);
+    const well = sim.mods.cards.get('explore:well')!;
+    const ctx = {
+      view: { techs: sim.techs, hasBuildingWithTag: (t: string) => sim.world.hasBuildingWithTag(t) },
+      eid: sim.pawns[0],
+    } as never;
+    expect(well.condition ? well.condition(ctx) : true).toBe(false);
+    // 解锁后满足
+    sim.unlockTech('wellTech');
+    expect(well.condition ? well.condition(ctx) : true).toBe(true);
+  });
+});

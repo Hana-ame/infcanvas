@@ -212,6 +212,10 @@ export const HUD_SVG: Record<string, string> = {
     <circle cx="21" cy="19" r="2.5" fill="#c9ad3f"/>
     <circle cx="20" cy="11" r="2" fill="#e0c95a"/>
   `),
+  water: svg(`
+    <path d="M16 3 Q22 9 19 13 Q24 12 23 16 Q27 15 26 19 Q22 20 21 22 Q17 23 18 27 Q13 27 14 22 Q10 21 11 19 Q8 18 9 16 Q6 15 10 12 Q7 10 12 9 Q9 6 16 3 Z" fill="#5aa8e8" stroke="#3a88c8" stroke-width="1.5"/>
+    <path d="M16 10 Q20 13 18 16 Q21 17 20 19 Q17 20 18 22 Q15 22 15 20 Q12 20 13 18 Q10 17 12 15 Q10 13 13 12 Q12 10 16 10 Z" fill="#b8e4ff" opacity="0.7"/>
+  `),
   food: svg(`
     <path d="M8 14 L14 4 Q18 8 14 13 L20 20 L17 23 L11 16 Q7 20 4 16 Z" fill="#e8a23a" stroke="#b06a20" stroke-width="1.5"/>
     <ellipse cx="16" cy="26" rx="9" ry="4" fill="#7a5a2a" opacity="0.6"/>

@@ -71,6 +71,8 @@ export class BehaviorSystem implements GameSystem {
       if ((st.commandCooldown ?? 0) > 0) st.commandCooldown = (st.commandCooldown ?? 0) - dt;
       // 远距回扫冷却递减（miss 后 5s 内不重复大半径扫描，防性能拖垮）
       if ((st.farScanCd ?? 0) > 0) st.farScanCd = (st.farScanCd ?? 0) - dt;
+      // 寻路节流冷却递减（两次寻路最小间隔）
+      if ((st.pathCd ?? 0) > 0) st.pathCd = (st.pathCd ?? 0) - dt;
 
       // 紧急需求优先
       if (st.urgent) {
@@ -119,6 +121,7 @@ export class BehaviorSystem implements GameSystem {
       // 神谕目标注入 view（策略卡 = 神谕目标，DESIGN §3 三层分离）：
       // 目标工作系列权重 ×oracleGoalMul 偏向该工作，不插小人卡槽、不碰选择链
       oracleGoal: this.ctx.oracleGoal,
+      techs: this.ctx.techs,
       assignedJob: st.assignedJob,
       leanOf: (e, k) => this.ctx.leanOf(e, k),
       expectEarnOf: (e, workType) => this.ctx.pawnStates.get(e)?.expectEarnBy?.[workType] ?? 0,
@@ -187,6 +190,41 @@ export class BehaviorSystem implements GameSystem {
 
   // ---- 意图执行 ----
   private execIdle(_c: SimContext, _eid: number, st: PawnState, _intent: BehaviorIntent): void {
+    st.job = '闲逛';
+  }
+
+  // 探索（用户设计：科技建筑只有娱乐卡能"想到"建）：娱乐时灵光一现 → 规划蓝图入队
+  // 蓝图落点：营地（首个 campfire）旁环扫可建格；目标建筑从卡 id 解析（explore:well → well）
+  private execExplore(c: SimContext, eid: number, st: PawnState, intent: BehaviorIntent): void {
+    st.job = intent.label;
+    const buildingId = intent.label.split(':')[1] ?? '';
+    const def = c.buildingDef(buildingId);
+    if (!def) { st.job = '闲逛'; return; }
+    // 已有该建筑（被别人建了）→ 不再探索
+    if (c.world.hasBuildingWithTag(buildingId)) { st.job = '闲逛'; return; }
+    // 蓝图已在队列（重复探索）→ 跳过（防蓝图堆积：垦田令同款去重）
+    if (c.buildQueue.some((b) => b.defId === buildingId)) { st.job = '闲逛'; return; }
+    // 营地位置（首个 campfire）
+    let camp: { x: number; y: number } | null = null;
+    for (const [k, b] of c.world.buildings) {
+      if (b.def.id === 'campfire') { camp = { x: k % c.world.width, y: Math.floor(k / c.world.width) }; break; }
+    }
+    if (!camp) { st.job = '闲逛'; return; }
+    // 环扫找落点（3→6 回退）
+    for (let r = 3; r <= 6; r++) {
+      for (let dy = -r; dy <= r; dy++) {
+        for (let dx = -r; dx <= r; dx++) {
+          if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+          const x = camp.x + dx;
+          const y = camp.y + dy;
+          if (c.world.canBuildFootprint(x, y, def)) {
+            c.issueCommand({ type: 'build', x, y, buildingId });
+            c.logEvent(`🎈 #${eid} 玩耍时灵光一现：在这里建${def.name}！`);
+            return;
+          }
+        }
+      }
+    }
     st.job = '闲逛';
   }
 

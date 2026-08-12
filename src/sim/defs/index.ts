@@ -100,6 +100,10 @@ export const BUILDINGS: Record<string, BuildingDef> = {
   church: { id: 'church', name: '教堂', size: { x: 2, y: 2 }, hp: 600, color: '#5a3a6a', emoji: '⛪', passable: false, buildTime: 12, workRadius: 5, tags: ['faith', 'anchor', 'oracle'], capabilities: ['oracle'] },
   monument: { id: 'monument', name: '纪念碑', size: { x: 3, y: 3 }, hp: 1200, color: '#8a7a5a', emoji: '🗿', passable: false, buildTime: 40, workRadius: 6, costWood: 60, costOre: 25, tags: ['wonder'], aura: { radius: 6, moodPerSec: 0.3 } },
   raft: { id: 'raft', name: '竹筏', size: { x: 1, y: 1 }, hp: 40, color: '#8a6a3a', emoji: '🛶', passable: true, buildTime: 2, onWater: true, recipe: 'fishing', tech: 'raftTech', tags: ['raft', 'water'] },
+  // 实验分支：四维度建筑（娱乐/取水/庇护）
+  toy: { id: 'toy', name: '玩具', size: { x: 1, y: 1 }, hp: 40, color: '#c8605a', emoji: '🧸', passable: true, buildTime: 2, costWood: 4, tech: 'toyTech', tags: ['toy', 'fun'], aura: { radius: 5, moodPerSec: 0.3 } },
+  well: { id: 'well', name: '水井', size: { x: 1, y: 1 }, hp: 80, color: '#5a7a9a', emoji: '⛲', passable: true, buildTime: 3, costWood: 6, tech: 'wellTech', recipe: 'well', tags: ['well', 'water'] },
+  house: { id: 'house', name: '木屋', size: { x: 2, y: 2 }, hp: 150, color: '#7a5a3a', emoji: '🏠', passable: true, buildTime: 6, costWood: 12, tech: 'houseTech', tags: ['house', 'shelter'], aura: { radius: 4, restPerSec: 0.5, moodPerSec: 0.2 } },
   boat: { id: 'boat', name: '渡船', size: { x: 2, y: 2 }, hp: 120, color: '#7a5a2a', emoji: '⛵', passable: true, buildTime: 6, costWood: 12, onWater: true, tech: 'boatTech', tags: ['raft', 'water'] },
   bridge: { id: 'bridge', name: '木桥', size: { x: 1, y: 1 }, hp: 60, color: '#8a6432', emoji: '🌉', passable: true, buildTime: 3, onWater: true, replacesTile: 'bridge', tech: 'bridgeTech', tags: ['raft', 'water'] },
 };
@@ -108,5 +112,6 @@ export const BUILDINGS: Record<string, BuildingDef> = {
 export const ITEMS: Record<string, ItemDef> = {
   wood: { id: 'wood', name: '木头', stackable: true, maxStack: 50 },
   ore: { id: 'ore', name: '矿石', stackable: true, maxStack: 50 },
+  water: { id: 'water', name: '水', stackable: true, maxStack: 50 },
   food: { id: 'food', name: '食物', stackable: true, maxStack: 100 },
 };

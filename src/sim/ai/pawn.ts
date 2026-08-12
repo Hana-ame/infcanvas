@@ -40,6 +40,8 @@ export interface CardView {
   hasRaft(): boolean;
   // 通用建筑 tag 查询（mod 谓词注册口：registerPredicate 里可查任意建筑 tag）
   hasBuildingWithTag?(tag: string): boolean;
+  // 已解锁科技（探索卡谓词 hasTech-xxx 用）
+  techs?: ReadonlySet<string>;
   buildQueueCount: number;
   stockpile: Record<string, number>;
   desiresOf?(eid: number): Record<DesireId, number> | null;

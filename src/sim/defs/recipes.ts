@@ -39,6 +39,10 @@ export const RECIPES: Record<string, RecipeDef> = {
     skill: 'work',
     dc: 70,
   },
+  well: {
+    id: 'well', name: '取水', kind: 'passive',
+    output: { item: 'water', amount: 0.5 },
+  },
   fishing: {
     id: 'fishing', name: '捕鱼', kind: 'work',
     output: { item: 'food', amount: 3 },

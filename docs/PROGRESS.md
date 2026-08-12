@@ -53,6 +53,50 @@
 | LLM 慢决策层 | §6/§10 | ✅ | **`LLM_ENDPOINT` 环境变量即启用**（OpenAI 兼容 chat completions）：`src/server/llm.ts` 预取模型（后台拉取 → 事件队列 → EventSystem 同步消费，失败指数退避降级确定性）；LLM 输出 JSON schema（name/text/effects）→ 白名单执行器（resource/mood/hp/recruit，数值钳制，**不进选择链路** ✓ DESIGN §6）；世界摘要随请求携带；`SimOptions.eventProvider` 构造注入。冒烟：mock LLM → server → feed 广播 `🎁 获得 ore 10 ✨ 星陨之夜` |
 | 命令权威校验 | §8/§9 | ✅ | **联机安全（P2 前置）**：server `src/server/cmdValidate.ts` 把关上行命令——类型白名单/形状/坐标越界/建筑与职业存在性/`pawnId` 存在性/令牌桶频率（30 条/s，per-client 连接级）；非法命令丢弃并记录（不踢连接）；client 的 build/oracle/assign/move 显式带 pawnId（观察模式 server 无 selected 镜像）+ sim.issueCommand 的 assign 分支支持 pawnId。测试：cmdValidate.test.ts 5 用例 + viewer e2e 9 断言（build 回显 / move 指挥位移） |
 
+## 分支实验记录（feature/colony-survival-dims，2026-08-13）
+
+### 实验目标
+四维度殖民地（取水/娱乐/食物/建材）+ 房屋/玩具建筑 + 科技初始只给娱乐（探索式开局），验证能否跑起来。
+
+### 发现并修复的问题（分析报告）
+
+**1. 探索卡蓝图无限入队**（测试超时）
+- 现象：探索卡反复触发 → 蓝图堆积 → 队列爆炸
+- 根因：探索执行器无去重（神谕垦田令有 buildQueue.some 去重，探索漏了）
+- 修复：蓝图已在队列（同 defId）→ 跳过
+- 注释：cardSystem.ts execExplore「蓝图已在队列（重复探索）→ 跳过（防蓝图堆积：垦田令同款去重）」
+
+**2. 寻路风暴（性能爆炸，217 倍修复）**
+- 现象：模拟 175s 后单步 50ms+，6000 步 99s（cpu profile：findPathRaw 58.9% + findPath 15.7% + GC 11.4%）
+- 根因：狼袭击打断小人路径 → path 反复重建 → 每帧寻路 miss（trailCache 命中率低）+ A* 堆分配 → GC 风暴
+- 修复（用户指令"寻路次数不要每帧都发生，缓存每一步走 + 限定最大距离"）：
+  - `tuning.path.pathCd`（0.5s）寻路节流：moveAdjacent 在冷却内不寻路
+  - `tuning.pawn.maxWorkDist`（36）工作目标最大距离：超距不寻路（玩家命令 moveTo 不限）
+  - farScanRadius 45→36 与 maxWorkDist 一致（远扫目标超距会被拒，避免白扫）
+- 结果：6000 步 99s → 457ms
+- 注释：sim.ts moveAdjacent 完整根因记录
+
+**3. 探索卡执行器解析失败**
+- 现象：抽到探索卡但建筑永远不建（toy=0）
+- 根因：执行器从 label 解析建筑 id，但 label 是科技名（探索·玩具工艺 ≠ 'toy'）
+- 修复：label 规范为 `探索:${buildingId}`（机器可解析），显示名走 name 字段
+
+**4. 水井产出丢失（water 恒 0）**
+- 现象：well 建成但 water 库存 0
+- 根因：FarmSystem 只处理 tags 含 'farm' 的建筑，水井（passive recipe）被跳过
+- 修复：FarmSystem 泛化——处理所有 passive recipe 建筑（农田/水井/mod 建筑通用）
+- 注释：farmSystem.ts 文件头「曾踩坑：只认 farm tag 导致水井 water 永不产出」
+
+**5. 探索卡抽不到（择优竞争）**
+- 现象：探索卡在池中但从不执行
+- 根因：utility 16 低于其他卡，pickBest 择优永远不选
+- 修复：utility 40 + weight 8（娱乐语境下的探索冲动：抽到即可执行）
+
+### 实验结果：殖民地能跑起来 ✅
+- 人口 4→10（流浪者持续加入）；toy/well/house/raft 全部通过"娱乐探索"建成
+- 科技顺序解锁：toyTech→wellTech→houseTech→raftTech→bridgeTech→boatTech
+- 终局：👥10 💧386 🍖355 🌲500，四维度全通，无团灭
+
 ## 待办 / 差距
 
 > 旧条目若已在上表 ✅ 则移除；以下为当前真实差距（按优先级排序，2026-08-10 核）。

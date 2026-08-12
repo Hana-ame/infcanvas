@@ -27,6 +27,8 @@ import { CARD_PREDICATES as BUILTIN_PREDICATES } from '../defs/cards';
 import { EVENT_PREDICATES } from '../defs/events';
 import type { StrategyCardDef } from '../defs/strategyCards';
 import { STRATEGY_CARDS } from '../defs/strategyCards';
+import { TECHS } from '../defs/techs';
+import { makeExploreCard } from '../defs/explore';
 import { BUILTIN_WEIGHT_RULES, type WeightRule } from '../defs/weightRules';
 import { SOCIAL_LINES, type SocialLineTable, type TopicTemplate } from '../defs/socialLines';
 import type { CardContext } from '../ai/pawn';
@@ -81,6 +83,16 @@ export class ModRegistry {
       cards: BASE_CARDS, recipes: RECIPES, tuning: TUNING, intents: [], works: [],
     });
     for (const c of STRATEGY_CARDS) r.registerStrategyCard(c); // 内置策略卡表（神谕降旨全数据化）
+    // 探索卡（用户设计：科技建筑只有娱乐卡能抽到建造意图）：
+    // 谓词 hasTech-xxx（科技已解锁）/ noBuilding-xxx（营地还没有该建筑）+ 探索卡进卡池
+    for (const techId of Object.keys(TECHS)) {
+      const t = TECHS[techId];
+      r.registerPredicate(`hasTech-${techId}`, (c) => c.view.techs?.has(techId) ?? false);
+      for (const b of t.unlocks) {
+        r.registerPredicate(`noBuilding-${b}`, (c) => !(c.view.hasBuildingWithTag?.(b) ?? false));
+        r.registerCardDef(makeExploreCard(b, techId));
+      }
+    }
     return r;
   }
 
