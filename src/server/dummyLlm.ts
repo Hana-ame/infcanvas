@@ -56,23 +56,28 @@ export function randomPlanner(ctx: SimContext): BehaviorCardDef | null {
   return lifeDef(l.action, '随机策略');
 }
 
+// 神谕策略卡效用 = 基础卡基准 + 神谕溢价（策略卡在对应需求存在时必须能赢过基础卡）
+// 基础工作卡 utilityFixed：伐木 30 / 采矿 25 / 建造 28；基础休息卡 utilityBase 50（需 rest<40）
+const WORK_UTILITY: Record<string, number> = { chop: 34, mine: 31, caveMine: 34, build: 32 };
+const LIFE_UTILITY: Record<string, number> = { rest: 25, eat: 25, pray: 12, idle: 12 };
+
 function workDef(workType: string, note: string): BehaviorCardDef {
   const tpl = WORK_CARDS.find((w) => w.workType === workType) ?? WORK_CARDS[0];
   return {
-    id: `dummy:${workType}`, name: tpl.label, series: tpl.series, weight: 2,
+    id: `dummy:${workType}`, name: tpl.label, series: tpl.series, weight: 9,
+    utilityFixed: WORK_UTILITY[workType] ?? 30,
     action: 'walkAndWork', workType, label: tpl.label,
-    satisfies: [{ desire: 'sloth', amount: 0.5 }],
-    note,
+    satisfies: [{ desire: 'greed', amount: 2 }],
   } as BehaviorCardDef;
 }
 
 function lifeDef(action: 'rest' | 'eat' | 'pray' | 'idle', note: string): BehaviorCardDef {
   const tpl = LIFE_CARDS.find((l) => l.action === action) ?? LIFE_CARDS[0];
   return {
-    id: `dummy:${action}`, name: tpl.label, series: tpl.series, weight: 1,
+    id: `dummy:${action}`, name: tpl.label, series: tpl.series, weight: 6,
+    utilityFixed: LIFE_UTILITY[action] ?? 12,
     action, label: tpl.label,
-    satisfies: [{ desire: 'sloth', amount: 0.5 }],
-    note,
+    satisfies: [{ desire: 'sloth', amount: 1 }],
   } as BehaviorCardDef;
 }
 
