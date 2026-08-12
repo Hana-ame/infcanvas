@@ -50,6 +50,9 @@ export class SocialUnitSystem implements GameSystem {
       }
     } else if (def.tags?.includes('anchor')) {
       this.createUnit(key, 'campfire', now);
+      // 迁徙闭环：新营地建成 → 小人们重新归属最近单位
+      //（建成处附近的拓荒者自然划入新派系；远方的旧营地成员不受影响）
+      for (const eid of this.ctx.pawnList) this.assignPawn(eid);
     }
   }
 
@@ -106,6 +109,8 @@ export class SocialUnitSystem implements GameSystem {
   assignPawn(eid: number): void {
     const pos = this.ctx.pawnPositions.get(eid);
     if (!pos) return;
+    // 先解除旧归属（迁徙/重算时保持单一派系，避免成员同时挂在两个单位）
+    this.unassignPawn(eid);
     let best: SocialUnit | null = null;
     let bestD = Infinity;
     for (const u of this.units.values()) {

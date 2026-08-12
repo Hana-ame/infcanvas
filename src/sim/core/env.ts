@@ -33,6 +33,7 @@ export function tickEnv(env: EnvState, dt: number, dayTime: number, rng: { next(
 
 export const weatherLabel = (env: EnvState, t?: EnvTuning): string => {
   const temp = Math.round(env.temperature);
+  // 兜底阈值 32/0°C 与 tuning.env 默认一致（显示用；调用方通常传 tuning 快照，未传时用默认）
   const hotAt = t?.hotAt ?? 32;
   const coldAt = t?.coldAt ?? 0;
   if (env.raining) return `🌧 雨 ${temp}°C`;

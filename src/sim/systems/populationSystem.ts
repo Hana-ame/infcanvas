@@ -1,4 +1,5 @@
 // 人口系统：食物充足时偶有新人加入
+// 数据驱动：间隔/阈值/上限/出生环读 tuning.population（mod 可调）
 import type { GameSystem } from './registry';
 import type { SimContext } from './context';
 import type { EventBus } from '../core/events';
@@ -11,6 +12,7 @@ export class PopulationSystem implements GameSystem {
 
   init(_bus: EventBus): void {}
 
+  // 定期招募：未达人口上限 + 食物充足 → 出生点向外逐环找可通行空位生成（spawnPawn 失败则继续扫）
   update(dt: number): void {
     const p = this.ctx.tuning.population;
     if (this.ctx.pawnList.length >= p.maxPawns) return;

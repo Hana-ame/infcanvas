@@ -1,4 +1,6 @@
 // 采集系统：伐木/采矿进度 → 产出资源（通过事件）
+// 数据驱动：产出走 TileDef.harvest / BuildingDef.recipe(work)，失败保底走 tuning.gather；mod 新采集物自动可采
+// 数值来源：toolBonus/strBonus/carryCap 均读 tuning.gather（COC §3 属性 → 产出/负重）
 import type { GameSystem } from './registry';
 import type { SimContext } from './context';
 import type { EventBus } from '../core/events';
@@ -82,7 +84,8 @@ export class GatherSystem implements GameSystem {
           this.ctx.logEvent('⛏ 结束了矿洞采掘');
           continue;
         }
-        const recipe = this.ctx.recipe('cave');
+        // 产出按建筑自身 recipe（矿洞→ore；竹筏→food），旧档无 buildingId → 回退矿洞
+        const recipe = this.ctx.recipe(st.caveWork.buildingId ?? 'cave');
         const interval = recipe?.interval ?? this.ctx.tuning.gather.harvestInterval;
         if (st.caveWork.progress >= interval) {
           st.caveWork.progress = 0;
@@ -90,11 +93,13 @@ export class GatherSystem implements GameSystem {
           const skill = recipe?.skill ?? this.ctx.tuning.gather.harvestSkill;
           const ev = this.ctx.rollEventSkill(eid, dc, skill);
           const gain = capGain(Math.round((ev.success ? (recipe?.output.amount ?? this.ctx.tuning.gather.harvestYield) : (recipe?.failOutput?.amount ?? this.ctx.tuning.gather.harvestFailYield)) * toolBonus * strBonusOf(eid)), eid);
-          this.ctx.stockpile.ore += gain;
+          const item = recipe?.output.item ?? this.ctx.tuning.gather.harvestItem;
+          this.ctx.stockpile[item] = (this.ctx.stockpile[item] ?? 0) + gain;
           this.ctx.growSkill(eid, skill); this.ctx.recordOutcome(eid, 'caveMine', ev.success ? gain : -gain);
-          this.ctx.bus.emit({ type: 'resource_gained', eid, item: recipe?.output.item ?? this.ctx.tuning.gather.harvestItem, amount: gain });
+          this.ctx.bus.emit({ type: 'resource_gained', eid, item, amount: gain });
+          // 心情微调（写死 ±2，未进 tuning：改动频率低，保持现状）
           this.ctx.adjustMood(eid, ev.success ? 2 : -2);
-          this.ctx.logEvent(ev.success ? '矿洞采到矿石' : '矿洞挖出废石');
+          this.ctx.logEvent(ev.success ? `在${recipe?.name ?? '建筑'}获得${item === 'ore' ? '矿石' : item}` : '一无所获');
         }
         continue;
       }
@@ -116,6 +121,7 @@ export class GatherSystem implements GameSystem {
           this.ctx.growSkill(eid, skill); this.ctx.recordOutcome(eid, 'mine', ev.success ? gain : -gain);
           this.ctx.bus.emit({ type: 'resource_gained', eid, item: hv?.product ?? this.ctx.tuning.gather.harvestItem, amount: gain });
           this.ctx.bus.emit({ type: 'work_completed', eid, work: 'mine', success: ev.success, x, y });
+          // 心情微调（写死 +3/-4，未进 tuning：采到富矿更开心、失败更沮丧）
           this.ctx.adjustMood(eid, ev.success ? 3 : -4);
           this.ctx.logEvent(ev.success ? '采到富矿！' : '采矿一无所获');
           this.ctx.clearTrailCache();
@@ -139,6 +145,7 @@ export class GatherSystem implements GameSystem {
           this.ctx.growSkill(eid, skill); this.ctx.recordOutcome(eid, 'chop', ev.success ? gain : -gain);
           this.ctx.bus.emit({ type: 'resource_gained', eid, item: h?.product ?? this.ctx.tuning.gather.chopItem, amount: gain });
           this.ctx.bus.emit({ type: 'work_completed', eid, work: 'chop', success: ev.success, x, y });
+          // 心情微调（写死 +2/-3，未进 tuning：与采矿档位刻意有差）
           this.ctx.adjustMood(eid, ev.success ? 2 : -3);
           this.ctx.clearTrailCache();
           st.chopXY = undefined;

@@ -77,6 +77,53 @@ export class World {
     }
     // 出生点近圈资源保证（饥荒式开局）：树/矿/石/水，确定性
     this.ensureSpawnResources(cx, cy);
+    // 出生点连通性保证：BFS 从出生点算可达面积，被水域/森林环围时破口为草地
+    this.ensureSpawnConnectivity(cx, cy);
+  }
+
+  // 出生点必须通向大陆（树/水不可通行 + 平滑噪声成片 → 曾实测出生点可达仅 0.1%：
+  // 全图 192² 只剩出生圈几十格可走，玩法空间被封锁）。
+  // 做法：BFS 测可达面积；不足 30% 全图时，把出生域边界的水/树改成草地，逐轮扩张。
+  private ensureSpawnConnectivity(cx: number, cy: number): void {
+    const w = this.width;
+    const minArea = this.width * this.height * 0.15; // 有船后可造船渡水，破口只需保证开局不困
+    for (let pass = 0; pass < 30; pass++) {
+      // BFS 可达面积
+      const seen = new Set<number>([cx + cy * w]);
+      const frontier = [cx + cy * w];
+      let head = 0;
+      while (head < frontier.length) {
+        const k = frontier[head++];
+        const x = k % w;
+        const y = Math.floor(k / w);
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const nx = x + dx;
+          const ny = y + dy;
+          if (!this.inBounds(nx, ny)) continue;
+          const nk = nx + ny * w;
+          if (seen.has(nk)) continue;
+          if (this.getTileDef(nx, ny).passable) {
+            seen.add(nk);
+            frontier.push(nk);
+          }
+        }
+      }
+      if (seen.size >= minArea) return;
+      // 破口：把可达域边界上的不可通行格（水/树）变草地（最近圈优先，BFS 层序即近→远）
+      for (const k of seen) {
+        const x = k % w;
+        const y = Math.floor(k / w);
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const nx = x + dx;
+          const ny = y + dy;
+          if (!this.inBounds(nx, ny)) continue;
+          const nk = nx + ny * w;
+          if (seen.has(nk)) continue;
+          const id = this.tileKeys[this.tileIndex[nk]];
+          if (id === 'water' || id === 'tree') this.setTile(nx, ny, 'grass');
+        }
+      }
+    }
   }
 
   // 出生点近圈撒资源：保证开局可采集（树、矿、石、水）—— 参数全读 world gen 表
@@ -112,6 +159,7 @@ export class World {
   }
 
   getTile(x: number, y: number): string {
+    // 越界 → mountain（不可走，防寻路/扫描越界读入空地）；未知索引 → grass 兜底（防御性）
     if (!this.inBounds(x, y)) return 'mountain';
     const id = this.tileKeys[this.tileIndex[this.idx(x, y)]];
     return id ?? 'grass';
@@ -194,7 +242,7 @@ export class World {
   }
 
   // 建筑 footprint 覆盖的格子 key 列表（从锚点展开）
-  private footprintKeys(x: number, y: number, def: (typeof BUILDINGS)[string]): number[] {
+  footprintKeys(x: number, y: number, def: (typeof BUILDINGS)[string]): number[] {
     const keys: number[] = [];
     for (let dy = 0; dy < def.size.y; dy++) {
       for (let dx = 0; dx < def.size.x; dx++) {
@@ -292,6 +340,33 @@ export class World {
 
   // 检查整个 footprint 是否可建（多格）
   canBuildFootprint(x: number, y: number, def: (typeof BUILDINGS)[string]): boolean {
+    // 水上建筑（竹筏/渡船/木桥）：footprint 全为水面 + 至少一格邻接陆地或已有水上建筑
+    //（从岸边/筏链逐步铺 → 渡水玩法闭环；孤水中央不可凭空建）
+    if (def.onWater) {
+      const keys = this.footprintKeys(x, y, def);
+      for (const key of keys) {
+        const gx = key % this.width;
+        const gy = Math.floor(key / this.width);
+        if (!this.inBounds(gx, gy)) return false;
+        if (this.getTileDef(gx, gy).id !== 'water') return false;
+        if (this.getBuilding(gx, gy)) return false;
+      }
+      for (const key of keys) {
+        const gx = key % this.width;
+        const gy = Math.floor(key / this.width);
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const nx = gx + dx;
+          const ny = gy + dy;
+          if (!this.inBounds(nx, ny)) continue;
+          const nk = nx + ny * this.width;
+          if (keys.includes(nk)) continue; // 邻居在 footprint 内不算（自身不能撑自己）
+          const nB = this.getBuilding(nx, ny);
+          if (nB && nB.def.onWater) return true;  // 邻筏
+          if (this.getTileDef(nx, ny).id !== 'water') return true; // 邻陆地
+        }
+      }
+      return false;
+    }
     for (const key of this.footprintKeys(x, y, def)) {
       const gx = key % this.width;
       const gy = Math.floor(key / this.width);
@@ -303,6 +378,9 @@ export class World {
     return true;
   }
 
+  // 落点 + footprint 写入建筑表，重算光照；返回 false = 不可建。
+  // 注意：资源扣减在 buildSystem 完成蓝图时进行——调用方必须判返回值，
+  // 否则会出现"资源已扣、建筑没建"的资源蒸发（此前 bug，见 buildSystem 注释）
   placeBuilding(x: number, y: number, defId: string, faction: string): boolean {
     const def = this.buildingsDefs[defId];
     if (!def) return false;

@@ -2,6 +2,7 @@
 // 意图执行器可注册：mod 加新意图 = 注册一个执行器
 import type { GameSystem } from './registry';
 import type { SimContext } from './context';
+import type { PositionData } from '../sim';
 import type { EventBus } from '../core/events';
 import type { PawnState } from '../sim';
 import type { BehaviorCard, CardContext, CardView, BehaviorIntent } from '../ai/pawn';
@@ -55,9 +56,11 @@ export class BehaviorSystem implements GameSystem {
       if (!pos) continue;
 
       // 理智崩溃：狂乱行为由 SanSystem 接管（发呆/乱跑），不自动决策
+      // 崩溃前遗留的路径仍推进（否则 path 走不完 + SanSystem 见 path 早退 = 永久冻结）
       const n = this.ctx.readNeeds(eid);
       if (n && n.san < this.ctx.tuning.san.crazyAt) {
         st.job = '理智崩溃';
+        if (st.path && st.pathIndex < st.path.length) this.walk(eid, st, pos, dt);
         continue;
       }
 
@@ -66,6 +69,8 @@ export class BehaviorSystem implements GameSystem {
 
       // 玩家命令冷却递减
       if ((st.commandCooldown ?? 0) > 0) st.commandCooldown = (st.commandCooldown ?? 0) - dt;
+      // 远距回扫冷却递减（miss 后 5s 内不重复大半径扫描，防性能拖垮）
+      if ((st.farScanCd ?? 0) > 0) st.farScanCd = (st.farScanCd ?? 0) - dt;
 
       // 紧急需求优先
       if (st.urgent) {
@@ -105,10 +110,14 @@ export class BehaviorSystem implements GameSystem {
       isNight: () => this.ctx.isNight(),
       hasCampfire: () => this.ctx.world.hasBuildingWithTag('warmth'),
       hasCave: () => this.ctx.world.hasBuildingWithTag('mine'),
+      hasRaft: () => this.ctx.world.hasBuildingWithTag('raft'),
       desiresOf: (e) => this.ctx.pawnStates.get(e)?.desires ?? null,
       env: this.ctx.env,
       lastSeries: st.lastSeries,
       factionPriority: this.ctx.factionPriority,
+      // 神谕目标注入 view（策略卡 = 神谕目标，DESIGN §3 三层分离）：
+      // 目标工作系列权重 ×oracleGoalMul 偏向该工作，不插小人卡槽、不碰选择链
+      oracleGoal: this.ctx.oracleGoal,
       assignedJob: st.assignedJob,
       leanOf: (e, k) => this.ctx.leanOf(e, k),
       buildQueueCount: this.ctx.buildQueue.length,
@@ -152,6 +161,14 @@ export class BehaviorSystem implements GameSystem {
       }
     }
     if (st.defyCd) st.defyCd--;
+    // 熟练度（P0.5 卡演化）：选中即熟练 +1；超过衰减窗口未用 → 回落（惰性衰减，无需定时器）
+    const MASTERY_DECAY_AFTER = 600; // 秒：超过此时间未用则回落
+    const now = this.ctx.time;
+    if (chosen.lastUsed !== undefined && now - chosen.lastUsed > MASTERY_DECAY_AFTER) {
+      chosen.mastery = Math.max(0, (chosen.mastery ?? 0) - 2);
+    }
+    chosen.lastUsed = now;
+    chosen.mastery = Math.min(100, (chosen.mastery ?? 0) + 1);
     // 记录决策（狗屁倒灶日志素材）+ 马尔可夫偏置源（DESIGN §6）
     st.lastDecision = {
       drawn: drawn.map((c) => c.name),
@@ -181,10 +198,12 @@ export class BehaviorSystem implements GameSystem {
     const pos = c.readPosition(eid);
     if (!pos) return;
     // 数据驱动目标查找：可收获（growable）且带 harvest 定义的 tile（mod 新采集物自动可采）
-    const tree = c.findNearest(pos, (x, y) => {
+    const want = (x: number, y: number): boolean => {
       const t = c.world.getTileDef(x, y);
       return !!t.growable && !!t.harvest;
-    }, true);
+    };
+    // 近距快扫 miss → 远距回扫（营地周边资源采空后仍能远行采伐，防停产）
+    const tree = this.findNearFar(c, eid, st, pos, want);
     if (tree) { st.chopTarget = tree; c.moveAdjacent(eid, tree.x, tree.y); }
     else st.job = '闲逛';
   }
@@ -193,10 +212,10 @@ export class BehaviorSystem implements GameSystem {
     const pos = c.readPosition(eid);
     if (!pos) return;
     // 数据驱动目标查找：mineral 且带 harvest 定义的 tile
-    const ore = c.findNearest(pos, (x, y) => {
+    const ore = this.findNearFar(c, eid, st, pos, (x, y) => {
       const t = c.world.getTileDef(x, y);
       return !!t.mineral && !!t.harvest;
-    }, true);
+    });
     if (ore) { st.mineTarget = ore; c.moveAdjacent(eid, ore.x, ore.y); }
     else st.job = '闲逛';
   }
@@ -204,9 +223,29 @@ export class BehaviorSystem implements GameSystem {
   private workCaveMine(c: SimContext, eid: number, st: PawnState): void {
     const pos = c.readPosition(eid);
     if (!pos) return;
-    const cave = c.findNearest(pos, (x, y) => c.world.getBuilding(x, y)?.def.tags?.includes('mine') ?? false, true);
+    const cave = this.findNearFar(c, eid, st, pos, (x, y) => c.world.getBuilding(x, y)?.def.tags?.includes('mine') ?? false);
     if (cave) { st.caveTarget = cave; c.moveAdjacent(eid, cave.x, cave.y); }
     else st.job = '闲逛';
+  }
+
+  // 捕鱼：找竹筏（站上筏 → 钓水格；产出走筏的 recipe 'fishing'）
+  private workFish(c: SimContext, eid: number, st: PawnState): void {
+    const pos = c.readPosition(eid);
+    if (!pos) return;
+    const raft = this.findNearFar(c, eid, st, pos, (x, y) => c.world.getBuilding(x, y)?.def.tags?.includes('raft') ?? false);
+    if (raft) { st.caveTarget = raft; c.moveAdjacent(eid, raft.x, raft.y); }
+    else st.job = '闲逛';
+  }
+
+  // 近距快扫 miss → 远距回扫（营地周边资源采空后仍能远行工作，防长期停产）
+  // miss 后进入 5s 冷却：避免每 tick 全环大半径扫描（45² 格 × 多小人 = 性能拖垮）
+  private findNearFar(c: SimContext, eid: number, st: PawnState, pos: PositionData, cond: (x: number, y: number) => boolean): { x: number; y: number } | null {
+    const near = c.findNearest(pos, cond, true);
+    if (near) return near;
+    if ((st.farScanCd ?? 0) > 0) return null;
+    const far = c.findNearest(pos, cond, true, c.tuning.pawn.farScanRadius);
+    if (!far) st.farScanCd = 5;
+    return far;
   }
 
   private workBuild(c: SimContext, eid: number, st: PawnState): void {
@@ -275,6 +314,7 @@ export class BehaviorSystem implements GameSystem {
     } else st.job = '闲逛';
   }
 
+  // 紧急需求处理（st.urgent 由 NeedsSystem 按阈值设定）：直接进食/休息，不抽卡、不打断
   private handleUrgent(eid: number, st: PawnState, dt: number): void {
     void dt;
     const n = this.ctx.readNeeds(eid);
@@ -299,6 +339,7 @@ export class BehaviorSystem implements GameSystem {
     }
   }
 
+  // 沿 path 逐段移动（速度 × 心情系数 moodFactor，读 tuning.pawn）；走完全程 → onArrive
   private walk(eid: number, st: PawnState, pos: { x: number; y: number }, dt: number): void {
     const target = st.path![st.pathIndex!];
     const dx = target.x - pos.x;
@@ -325,6 +366,7 @@ export class BehaviorSystem implements GameSystem {
     this.ctx.pawnPositions.set(eid, { x: pos.x, y: pos.y });
   }
 
+  // 到达终点回执：按等待中的目标类型转入对应工作态（采集/祈祷/疗伤/mod 工作）
   private onArrive(eid: number, st: PawnState): void {
     if (st.mineTarget) {
       const { x, y } = st.mineTarget;
@@ -338,7 +380,9 @@ export class BehaviorSystem implements GameSystem {
     } else if (st.caveTarget) {
       const { x, y } = st.caveTarget;
       st.caveTarget = undefined;
-      st.caveWork = { x, y, progress: 0 };
+      // 到达建筑 → 记录 recipe id（caveWork 兼容旧档：旧值无 buildingId → 产矿石）
+      const b = this.ctx.world.getBuilding(x, y);
+      st.caveWork = { x, y, progress: 0, buildingId: b?.def.recipe };
     } else if (st.prayTarget) {
       const { x, y } = st.prayTarget;
       st.prayTarget = undefined;

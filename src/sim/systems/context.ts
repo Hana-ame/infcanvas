@@ -1,4 +1,6 @@
 // 共享类型 + SimContext —— 系统访问 sim 的接口（mod 友好）
+// 设计（DESIGN §3 系统层）：所有 sim 系统只依赖此接口、不碰 Sim 本体 → 可单测、可替换；
+// 数据驱动查询（buildingDef/recipe/tuning）经此接口下发，mod 覆盖后全局生效
 import type { World } from '../core/world';
 import type { SimRng } from '../core/rng';
 import type { EventBus } from '../core/events';
@@ -53,6 +55,11 @@ export interface SimContext {
   pawnList: readonly number[];
   env: { raining: boolean; temperature: number };
   factionPriority: Record<string, number>; // 派系工作优先级（用户 Q8）
+  techs: Set<string>; // 已解锁科技（神谕抽卡）
+  unlockTech(techId: string): boolean;
+  oracleGoal: { workType: string; label: string; until: number } | null; // 神谕目标（影响目标层）
+  // 神谕设定目标（策略卡 = 神谕目标：只调制工作系列权重 ×oracleGoalMul，不插小人卡槽、不碰选择链）
+  setOracleGoal(def: { workType?: string; label: string; duration: number }): void;
   socialUnits: {
     units: Map<string, SocialUnit>;
     membership: Map<number, string>;
@@ -60,7 +67,7 @@ export interface SimContext {
     assignPawn(eid: number): void;
     unassignPawn(eid: number): void;
   };
-  playerUnitId: string | null;
+  playerUnitId: string | null; // 玩家派系 id（Q9：玩家单位 = 全局库存镜像；null = 玩家尚未建营）
   // 征服（Q9）：核心建筑被毁 → 吞并该派系
   conquestOf(coreKey: number, conquerorName: string): void;
   addProductionNear(x: number, y: number, item: string, amount: number): void;
@@ -79,7 +86,7 @@ export interface SimContext {
   // 命令/移动
   moveTo(eid: number, x: number, y: number): void;
   moveAdjacent(eid: number, tx: number, ty: number): void;
-  findNearest(pos: { x: number; y: number }, cond: (x: number, y: number) => boolean, allowNonPassable?: boolean): { x: number; y: number } | null;
+  findNearest(pos: { x: number; y: number }, cond: (x: number, y: number) => boolean, allowNonPassable?: boolean, radius?: number): { x: number; y: number } | null;
   // 实体
   spawnPawn(x: number, y: number): number;
   killPawn(eid: number): void;

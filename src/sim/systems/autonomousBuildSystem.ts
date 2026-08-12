@@ -77,6 +77,7 @@ export class AutonomousBuildSystem implements GameSystem {
     for (const plan of plans) {
       if (pushed >= maxPerEval) break; // 每次评估最多规划 N 个，防资源失控
       if (this.ctx.buildQueue.some((b) => b.defId === plan.defId)) continue; // 已有排队蓝图
+      if (this.ctx.buildingDef(plan.defId)?.tech && !this.ctx.techs.has(this.ctx.buildingDef(plan.defId)!.tech!)) continue; // 科技锁
       if (this.ctx.stockpile.wood < plan.minWood) continue;
       if (!plan.need(this.ctx)) continue;
       // 升级计划：在可升级源（def.upgradesTo === plan.defId）上原地升级；否则找空地新建
@@ -84,7 +85,7 @@ export class AutonomousBuildSystem implements GameSystem {
       if (plan.onExisting) {
         spot = this.findUpgradeSource(plan.defId);
       } else {
-        spot = this.findBuildSpot(cx, cy);
+        spot = this.findBuildSpot(cx, cy, plan.defId);
       }
       if (spot) {
         // 成本与手动队列一致（def.costWood/costOre；缺省 size²×2 木 / 0 矿）
@@ -111,16 +112,19 @@ export class AutonomousBuildSystem implements GameSystem {
     return null;
   }
 
-  private findBuildSpot(cx: number, cy: number): { x: number; y: number } | null {
+  // 找空地：用 footprint 校验（farm 2×2 / church 2×2 落点必须整块合法，
+  // 此前单格 canBuildAt 会让大建筑蓝图落到重叠格 → 建成时被 buildSystem 放弃）
+  private findBuildSpot(cx: number, cy: number, defId: string): { x: number; y: number } | null {
     const w = this.ctx.world;
     const t = this.ctx.tuning.autobuild;
+    const def = this.ctx.buildingDef(defId);
     for (let r = t.spotRingMin; r <= t.spotRingMax; r++) {
       for (let attempt = 0; attempt < t.spotAttempts; attempt++) {
         const a = this.ctx.rng.next() * Math.PI * 2;
         const x = cx + Math.round(Math.cos(a) * r);
         const y = cy + Math.round(Math.sin(a) * r);
-        if (!w.inBounds(x, y) || !w.canBuildAt(x, y)) continue;
-        return { x, y };
+        // 有 def → footprint 校验；无 def（mod 计划只注蓝图）→ 单格兼容
+        if (def ? w.canBuildFootprint(x, y, def) : (w.inBounds(x, y) && w.canBuildAt(x, y))) return { x, y };
       }
     }
     return null;

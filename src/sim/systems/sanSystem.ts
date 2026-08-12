@@ -97,11 +97,39 @@ export class SanSystem implements GameSystem {
     return false;
   }
 
-  // 狂乱：发呆或随机乱跑
+  // 狂乱：发呆或随机乱跑；持续超过 crazyFleeAfter → 本能逃向最近篝火
+  //（防"远处无火区 SAN 永不复原 → 永久崩溃"死锁：崩溃者终将寻回安全处恢复）
   private handleCrazy(eid: number, st: PawnState, n: NeedsData, dt: number, s: SanTuning): void {
     // 狂乱中不工作、不进食决策
     if (st.path && st.pathIndex < st.path.length) return; // 继续走完当前路径
     st.job = '理智崩溃';
+    st.crazyTime = (st.crazyTime ?? 0) + dt;
+    // 逃向篝火模式：寻路到最近 warmth 建筑（到达后 SAN 恢复自然解除）
+    if ((st.crazyTime ?? 0) > s.crazyFleeAfter) {
+      const pos = this.ctx.pawnPositions.get(eid);
+      if (pos && this.nearCampfire(pos.x, pos.y, s.fireComfortRadius)) {
+        st.crazyTime = 0; // 已回到安全区，重新计时（SAN 恢复中）
+        st.crazyFleeTarget = undefined;
+      } else {
+        if (!st.crazyFleeTarget) {
+          const w = this.ctx.world;
+          let best: { x: number; y: number } | null = null;
+          let bestD = Infinity;
+          for (const [k, b] of w.buildings) {
+            if (!b.def.tags?.includes('warmth')) continue;
+            const bx = k % w.width;
+            const by = Math.floor(k / w.width);
+            const d = (bx - (pos?.x ?? 0)) ** 2 + (by - (pos?.y ?? 0)) ** 2;
+            if (d < bestD) { bestD = d; best = { x: bx, y: by }; }
+          }
+          st.crazyFleeTarget = best ?? undefined;
+        }
+        if (st.crazyFleeTarget) {
+          this.ctx.moveTo(eid, st.crazyFleeTarget.x, st.crazyFleeTarget.y);
+          return;
+        }
+      }
+    }
     // 在乱跑冷却内发呆
     st.crazyCooldown = (st.crazyCooldown ?? 0) - dt;
     if ((st.crazyCooldown ?? 0) > 0) return;

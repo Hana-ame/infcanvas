@@ -106,6 +106,7 @@ describe('DNA + slots', () => {
         isNight: () => false,
         hasCampfire: () => false,
         hasCave: () => false,
+        hasRaft: () => false,
       },
       eid: 1,
     };
@@ -146,15 +147,18 @@ describe('Sim basic loop', () => {
     const sim = new Sim({ seed: 3, pawnCount: 1 });
     const eid = sim.pawns[0];
     sim.selected = [eid];
-    // 朝出生点右下移动（出生点 5x5 保证可通行）
+    // 朝出生点右侧目标移动（出生圈内保证可通行；圈内直线目标，不用穿树绕行）
     const cx = Math.floor(sim.world.width / 2);
     const cy = Math.floor(sim.world.height / 2);
     const start = sim.pawnPositions.get(eid)!;
-    sim.issueCommand({ type: 'move', x: cx + 2, y: cy + 2 });
-    for (let i = 0; i < 200; i++) sim.step(1 / 20); // 10 秒
+    // 目标 = 起点正右 1 格（出生圈内必可走；1 格内 10 秒必然抵达，不被 AI 打断）
+    const tx = Math.round(start.x) + 1;
+    const ty = Math.round(start.y);
+    sim.issueCommand({ type: 'move', x: tx, y: ty });
+    for (let i = 0; i < 40; i++) sim.step(1 / 20); // 2 秒（commandCooldown=3s 内：命令优先，不被打断）
     const pos = sim.pawnPositions.get(eid)!;
-    // 贴到目标（出生点内，可通行）
-    expect(Math.hypot(pos.x - (cx + 2), pos.y - (cy + 2))).toBeLessThan(1.5);
+    // 贴到目标
+    expect(Math.hypot(pos.x - tx, pos.y - ty)).toBeLessThan(1.5);
   });
 
   it('queues and completes a build', () => {
@@ -562,6 +566,7 @@ describe('环境系统（DESIGN §6 环境调制）', () => {
         isNight: () => false,
         hasCampfire: () => false,
         hasCave: () => false,
+    hasRaft: () => false,
         env: { raining: true, temperature: 15 },
       },
       eid: 1,
@@ -603,6 +608,7 @@ describe('马尔可夫偏置（DESIGN §6）', () => {
         isNight: () => false,
         hasCampfire: () => false,
         hasCave: () => false,
+    hasRaft: () => false,
         lastSeries,
       },
       eid: 1,
@@ -765,6 +771,7 @@ describe('派系优先级（用户 Q8：AI 按环境下达工作指令）', () =
         isNight: () => false,
         hasCampfire: () => false,
         hasCave: () => false,
+    hasRaft: () => false,
         factionPriority: prio,
       },
       eid: 1,
@@ -1545,12 +1552,57 @@ describe('mod 玩法（DATA_DRIVEN §6 验收）', () => {
   });
 });
 
+describe('卡熟练度（P0.5 卡演化：习惯建模）', () => {
+  it('小人各自独立熟练度（克隆防串）', () => {
+    const sim = new Sim({ seed: 901, pawnCount: 2 });
+    const a = sim.pawns[0];
+    const b = sim.pawns[1];
+    const cardA = sim.pawnStates.get(a)!.slots.find((c) => c?.id === 'chop')!;
+    const cardB = sim.pawnStates.get(b)!.slots.find((c) => c?.id === 'chop')!;
+    expect(cardA).not.toBe(cardB); // 克隆实例
+    cardA.mastery = 50;
+    expect(cardB.mastery).not.toBe(50); // 不串
+  });
+
+  it('选中卡熟练 +1；权重调制 (0.5+mastery/100)', () => {
+    const sim = new Sim({ seed: 902, pawnCount: 1 });
+    const eid = sim.pawns[0];
+    const st = sim.pawnStates.get(eid)!;
+    const chop = st.slots.find((c) => c?.id === 'chop')!;
+    const w0 = effectiveWeight(chop, { dna: st.dna, slots: st.slots });
+    // 手动模拟选中（等价 decide 内部逻辑）
+    chop.lastUsed = 0;
+    chop.mastery = Math.min(100, (chop.mastery ?? 0) + 1);
+    const w1 = effectiveWeight(chop, { dna: st.dna, slots: st.slots });
+    expect(w1).toBeGreaterThan(w0);
+    expect(w1).toBeCloseTo(w0 * (1 + 1 / 100 / (0.5 + (chop.mastery ?? 0) / 100)), 2);
+  });
+
+  it('熟练度随存档往返（slots 带 {id,m,u}）', () => {
+    const sim = new Sim({ seed: 903, pawnCount: 1 });
+    const eid = sim.pawns[0];
+    const st = sim.pawnStates.get(eid)!;
+    const chop = st.slots.find((c) => c?.id === 'chop')!;
+    chop.mastery = 37;
+    chop.lastUsed = 123;
+    const data = JSON.parse(JSON.stringify(sim.save()));
+    const saved = data.pawns[0].slots.find((s2: { id?: string }) => typeof s2 === 'object' && s2.id === 'chop');
+    expect(saved).toBeDefined();
+    expect(saved.m).toBe(37);
+    const sim2 = new Sim({ seed: 904, pawnCount: 1 });
+    sim2.load(data);
+    const chop2 = sim2.pawnStates.get(sim2.pawns[0])!.slots.find((c) => c?.id === 'chop')!;
+    expect(chop2.mastery).toBe(37);
+    expect(chop2.lastUsed).toBe(123);
+  });
+});
+
 describe('存档 JSON 往返（save/load 修复）', () => {
   it('slots 序列化为卡 id：JSON 往返后卡完整还原、step 不崩', () => {
     const sim = new Sim({ seed: 800, pawnCount: 2, mods: (m) => {
       m.registerWork('fish', (_c, _eid, st) => { st.job = '捕鱼中'; });
       m.registerCard({
-        id: 'fish', name: '捕鱼', series: 'work', weight: 100,
+        id: 'modFish', name: '捕鱼', series: 'work', weight: 100,
         condition: () => true, utility: () => 999,
         satisfies: [{ desire: 'greed', amount: 2 }],
         decide: () => ({ action: 'walkAndWork', workType: 'fish', label: '捕鱼' }),
@@ -1558,13 +1610,13 @@ describe('存档 JSON 往返（save/load 修复）', () => {
     } });
     const eid = sim.pawns[0];
     const idsBefore = sim.pawnStates.get(eid)!.slots.map((c) => c?.id ?? null);
-    expect(idsBefore).toContain('fish'); // mod 卡在池中
+    expect(idsBefore).toContain('modFish'); // mod 卡在池中
     // 模拟浏览器真实路径：JSON 序列化往返
     const data = JSON.parse(JSON.stringify(sim.save())) as ReturnType<Sim['save']>;
     const sim2 = new Sim({ seed: 801, pawnCount: 2, mods: (m) => {
       m.registerWork('fish', (_c, _eid, st) => { st.job = '捕鱼中'; });
       m.registerCard({
-        id: 'fish', name: '捕鱼', series: 'work', weight: 100,
+        id: 'modFish', name: '捕鱼', series: 'work', weight: 100,
         condition: () => true, utility: () => 999,
         satisfies: [{ desire: 'greed', amount: 2 }],
         decide: () => ({ action: 'walkAndWork', workType: 'fish', label: '捕鱼' }),
@@ -1598,6 +1650,7 @@ describe('卡条件谓词表（行为树条件节点，CARD_PREDICATES）', () =
   const makeView = (sim: Sim, hasCampfire = true) => ({
     hasCampfire: () => hasCampfire,
     hasCave: () => false,
+    hasRaft: () => false,
     buildQueueCount: 0,
     stockpile: sim.stockpile,
     isNight: () => false,

@@ -1,4 +1,5 @@
 // 修理系统：受损建筑由空闲小人自动修复
+// 数据驱动：workTime/searchRadius/inPlaceDist 读 tuning.repair（mod 可调）
 import type { GameSystem } from './registry';
 import type { SimContext } from './context';
 
@@ -51,6 +52,7 @@ export class RepairSystem implements GameSystem {
     }
   }
 
+  // 扫 radius 内最近的受损建筑（修理优先级 = 距离最近）
   private findDamaged(pos: { x: number; y: number }, radius: number): { x: number; y: number } | null {
     const w = this.ctx.world;
     let best: { x: number; y: number } | null = null;

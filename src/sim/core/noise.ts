@@ -50,6 +50,8 @@ export function fbm(x: number, y: number, seed: number, octaves = 4, baseScale =
 
 // 生成地形图：返回 width*height 的 TileId 数组（确定性）
 // 双轴：海拔 + 湿度 → 生物群系
+// 生物群系分段阈值（-0.25/-0.14/0.28/0.5/0.62 等）硬编码于本文件：分段表未数据化，
+// 改动阈值须同步 tiles defs（可走性/资源）与 world.ts 的出生点保证逻辑（ensureSpawn*）
 export function generateBiomeMap(width: number, height: number, seed: number): string[] {
   const rng = new SimRng(seed);
   const elevSeed = rng.int(1, 2 ** 31 - 1);
@@ -67,20 +69,18 @@ export function generateBiomeMap(width: number, height: number, seed: number): s
       const detail = valueNoise(x * 0.3, y * 0.3, detailSeed);
 
       let tile: string;
-      if (elevation < -0.32) {
-        tile = 'water'; // 深海
-      } else if (elevation < -0.2) {
-        tile = 'water'; // 浅海
+      if (elevation < -0.25) {
+        tile = 'water'; // 海洋
       } else if (elevation < -0.14) {
         tile = 'sand'; // 海滩
       } else if (elevation < 0.28) {
         // 低地平原：湿度决定草地/沙漠/森林
-        if (moisture > 0.05) tile = 'tree'; // 湿润 → 森林
+        if (moisture > 0.35) tile = 'tree'; // 湿润 → 森林
         else if (moisture < -0.35) tile = 'desert'; // 干燥 → 沙漠
-        else tile = detail > 0.15 ? 'tree' : 'grass'; // 草地稀疏点缀树
+        else tile = detail > 0.28 ? 'tree' : 'grass'; // 草地稀疏点缀树
       } else if (elevation < 0.5) {
         // 丘陵
-        if (moisture > 0.1 || detail > 0.25) tile = 'tree';
+        if (moisture > 0.35 || detail > 0.45) tile = 'tree';
         else tile = 'grass';
       } else if (elevation < 0.62) {
         // 山地边缘：石头 + 矿
@@ -88,6 +88,9 @@ export function generateBiomeMap(width: number, height: number, seed: number): s
       } else {
         tile = 'mountain'; // 高山
       }
+      // 稀疏化：成片森林随机破口（树不可通行，否则平滑噪声的树墙会碎片化世界，
+      // 实测出生点可达面积仅 0.1% —— 全图几乎无法探索）
+      if (tile === 'tree' && rng.next() < 0.25) tile = 'grass';
       out[y * width + x] = tile;
     }
   }

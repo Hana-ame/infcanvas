@@ -48,6 +48,6 @@ export class CraftSystem implements GameSystem {
       const itv = (g.recipe.interval ?? this.ctx.tuning.craft.intervalFallback) / Math.max(1, g.count);
       if (itv < next) next = itv;
     }
-    return next === Infinity ? 6 : next;
+    return next === Infinity ? 6 : next; // 兜底 6s（正常不触发：调用前已判 groups 非空）
   }
 }

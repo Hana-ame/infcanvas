@@ -1,4 +1,5 @@
 // 需求系统：衰减 / 夜晚更困 / 饥饿死亡 / 紧急需求
+// 数据驱动：衰减与阈值读 tuning.needs；光环（篝火/奇观）读 BuildingDef.aura，mod 可调
 import type { GameSystem } from './registry';
 import type { SimContext } from './context';
 import type { EventBus } from '../core/events';
@@ -32,6 +33,7 @@ export class NeedsSystem implements GameSystem {
     return this.wonderCache;
   }
 
+  // 每帧：需求衰减 + 环境/光环修正 + 饥饿死亡 + 紧急需求标记
   update(dt: number): void {
     const t = this.ctx.tuning.needs;
     for (const eid of this.ctx.pawnList) {

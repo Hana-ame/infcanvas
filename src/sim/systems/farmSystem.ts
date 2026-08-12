@@ -1,4 +1,5 @@
 // 农场系统：农田持续产出食物
+// 数据驱动：产出完全读 BuildingDef.recipe(passive)（mod 新农田带 recipe 即接入，不写死 farm）
 import type { GameSystem } from './registry';
 import type { SimContext } from './context';
 

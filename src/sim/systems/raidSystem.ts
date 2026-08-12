@@ -1,4 +1,5 @@
 // 袭击 + 战斗系统：刷狼群 → 移动 → 接敌 → 战死掉落
+// 数据驱动：数值全读 tuning.combat（mod 可覆盖）；叙事压力（DESIGN §6）：和平越久袭击越猛
 import type { GameSystem } from './registry';
 import type { SimContext } from './context';
 import type { EventBus } from '../core/events';
@@ -50,8 +51,10 @@ export class RaidSystem implements GameSystem {
     }
   }
 
+  // 刷一波袭击：从地图边缘随机边出生，直奔营地中心；规模随人口与叙事压力放大
   private spawnRaid(count: number, pressure = 1): void {
     const w = this.ctx.world;
+    // 敌人数值走 enemies 表（mods.enemyDef()，mod 可 overrideDef 调强度/掉落）
     const enemy = this.ctx.mods.enemyDef();
     const edge = Math.floor(this.ctx.rng.next() * 4);
     const cx = Math.floor(w.width / 2);
@@ -128,7 +131,7 @@ export class RaidSystem implements GameSystem {
           const dna = this.ctx.dnaOf(nearest);
           const dodgeChance = dna ? Math.max(t.minDodge, (dna.dex - t.dodgeBase) * t.dodgePerPoint) : 0;
           const dodge = dna && this.ctx.rng.next() < dodgeChance;
-          const dmg = dodge ? 0 : Math.min(hk.hp, (h.dmgPerSec ?? 5) * dt);
+          const dmg = dodge ? 0 : Math.min(hk.hp, (h.dmgPerSec ?? 5) * dt); // 5 = 兜底 DPS（正常由 enemy def 提供）
           hk.hp -= dmg;
           if (hk.hp <= 0) {
             this.ctx.setHealth(nearest, { hp: 0, maxHp: hk.maxHp });
@@ -143,6 +146,7 @@ export class RaidSystem implements GameSystem {
     }
   }
 
+  // 半径内最近的建筑（野狼拆家；被毁建筑若为核心 → 触发征服吞并，见 updateCombat）
   private nearestBuilding(h: { x: number; y: number }, radius: number): { x: number; y: number } | null {
     const w = this.ctx.world;
     let best: { x: number; y: number } | null = null;

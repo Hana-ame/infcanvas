@@ -1,10 +1,12 @@
 // Sim —— 组装层（系统挂载 + 主循环 + 命令 + UI 读取）
 // 架构：Sim 实现 SimContext，系统通过 context 操作 sim，事件经 EventBus 流动
+// 权威仿真 = src/sim：零 DOM，浏览器/Node 双端复用同一份；数值全部数据驱动（defs/tuning，mod 可覆盖）
 import {
   createWorld, addEntity, addComponent, setComponent, query,
   type World as EcsWorld,
 } from 'bitecs';
 import { World } from './core/world';
+import { TECHS } from './defs/techs';
 import { findPath } from './core/pathfinding';
 import { SimRng } from './core/rng';
 import { initNeeds } from './core/needs';
@@ -43,6 +45,9 @@ export const NeedsComp = { food: [] as number[], rest: [] as number[], mood: [] 
 export const Speed = { v: [] as number[] };
 export const Health = { hp: [] as number[], maxHp: [] as number[] };
 
+// 组件自动回写：bitecs 的 setComponent 调用 → 自动同步到并行数组（组件即数组，读端直接索引取值）。
+// 为什么：ECS 组件用并行数组存储，系统/UI 读侧（readNeeds/readHealth 等）只读数组零拷贝；
+// observe+onSet 让所有 setComponent 路径免手写同步，避免"组件值改了数组没写"的坑
 function registerAutoStore(world: EcsWorld, component: Record<string, number[]>): void {
   observe(world, onSet(component), (eid: number, data: Record<string, number>) => {
     for (const key of Object.keys(data)) {
@@ -64,7 +69,7 @@ export interface PawnState {
   mineTarget?: { x: number; y: number };
   chopTarget?: { x: number; y: number };
   caveTarget?: { x: number; y: number }; // 矿洞工作目标
-  caveWork?: { x: number; y: number; progress: number; duration?: number }; // 矿洞内持续采掘
+  caveWork?: { x: number; y: number; progress: number; duration?: number; buildingId?: string }; // 建筑内持续工作（矿洞/竹筏，buildingId=recipe）
   chopXY?: { x: number; y: number };
   chopProgress?: number;
   prayTarget?: { x: number; y: number }; // 祈祷点（篝火）
@@ -75,6 +80,9 @@ export interface PawnState {
   faith?: number; // 信仰度（祈祷积累，影响违抗与心情）
   defyCd?: number; // 违抗后的冷却时间（秒）
   crazyCooldown?: number; // 狂乱乱跑冷却
+  farScanCd?: number;     // 远距回扫冷却（miss 后不重复大半径扫描）
+  crazyTime?: number;     // SAN 狂乱累计时长（超过阈值 → 逃向篝火）
+  crazyFleeTarget?: { x: number; y: number }; // 崩溃逃向的篝火目标
   skills?: Partial<Record<SkillId, number>>; // COC 技能（百分制，越用越强）
   desires?: Record<DesireId, number>; // 七宗罪满足度（DESIGN §3）
   relationships?: Map<number, number>; // 对其他小人的好感度（社交系统）
@@ -114,9 +122,10 @@ export interface SaveData {
   stockpile: Record<string, number>;
   tiles: string[];
   buildings: { key: number; defId: string; hp: number; faction: string }[];
+  techs?: string[]; // 已解锁科技（旧档缺省空）
   pawns: {
     eid: number; x: number; y: number;
-    dna: Dna; slots: (string | null)[]; // 卡 id（非函数）——JSON-safe
+    dna: Dna; slots: (string | { id: string; m: number; u: number } | null)[]; // 卡 id（+熟练度）——JSON-safe
     needs: NeedsData | null; health: HealthData | null;
     faith?: number;
     skills?: Partial<Record<SkillId, number>>;
@@ -185,6 +194,32 @@ export class Sim implements SimContext {
   set llmEventProvider(p: (() => ScriptedEvent | null) | null) { this._eventProvider = p; }
   socialUnits: SocialUnitSystem; // 篝火单位/部落记忆/派系涌现
   playerUnitId: string | null = null; // 玩家所属单位（Q3 团灭附身）
+  // 已抽到的科技（神谕抽卡解锁；tech 未解锁的建筑不可建造）
+  techs = new Set<string>();
+  // 神谕目标（影响目标层，不碰选择链）：神谕降旨 → 设定一个方向，小人仍自主决策，
+  // 但目标对应工作系列的抽卡权重被放大（weightRules.oracleGoal 规则），
+  // 且可带蓝图副作用（垦田令 → 农田蓝图入队）——神谕只引导、不指挥
+  oracleGoal: { workType: string; label: string; until: number } | null = null;
+
+  // 神谕降旨：设定/刷新目标（幂等，重复降旨仅续期）
+  setOracleGoal(def: { workType?: string; label: string; duration: number }): void {
+    if (!def.workType) return;
+    this.oracleGoal = { workType: def.workType, label: def.label, until: this.time + def.duration };
+    this.logEvent(`🎯 神谕降旨：${def.label}（目标持续 ${def.duration}s）`);
+  }
+  // 科技表（HUD 展示用：id → 名称/说明）
+  get techsMap(): Record<string, { name: string; desc: string }> {
+    return Object.fromEntries(Object.entries(TECHS).map(([id, t]) => [id, { name: t.name, desc: t.desc }]));
+  }
+
+  // 抽到科技卡 → 解锁（幂等）
+  unlockTech(techId: string): boolean {
+    if (this.techs.has(techId)) return false;
+    this.techs.add(techId);
+    const def = TECHS[techId];
+    this.logEvent(`🔬 科技解锁：${def?.name ?? techId}`);
+    return true;
+  }
 
   constructor(opts: SimOptions = {}) {
     const seed = opts.seed ?? 12345;
@@ -330,8 +365,8 @@ export class Sim implements SimContext {
     }
   }
 
-  findNearest(pos: PositionData, cond: (x: number, y: number) => boolean, allowNonPassable = false): { x: number; y: number } | null {
-    const R = this.mods.tuning.pawn.scanRadius;
+  findNearest(pos: PositionData, cond: (x: number, y: number) => boolean, allowNonPassable = false, radius?: number): { x: number; y: number } | null {
+    const R = radius ?? this.mods.tuning.pawn.scanRadius;
     let best: { x: number; y: number } | null = null;
     let bestDist = Infinity;
     for (let r = 1; r <= R; r++) {
@@ -352,6 +387,8 @@ export class Sim implements SimContext {
     return best;
   }
 
+  // 创建小人的唯一入口（出生/存档恢复/招募共用）：建 ECS 实体 + 初始化全部状态
+  // （DNA/卡槽/技能/欲望/倾向）。卡槽按人克隆（initSlots）——mastery/熟练度不得串人
   spawnPawn(x: number, y: number): number {
     if (!this.world.inBounds(x, y) || !this.world.isPassable(x, y)) return -1;
     const eid = addEntity(this.ecs);
@@ -392,6 +429,7 @@ export class Sim implements SimContext {
     this.selected = this.selected.filter((s) => s !== eid);
   }
 
+  // COC d100 检定：阈值 = dc + INT 加成（>50 的智力带来收益），roll <= 阈值即成功
   rollEvent(eid: number, dc: number): { success: boolean; roll: number } {
     const roll = this.rng.int(1, 100);
     const st = this.pawnStates.get(eid);
@@ -415,6 +453,7 @@ export class Sim implements SimContext {
     return { str, con, int, siz, dex, app, pow, edu };
   }
 
+  // 心情调整统一入口：钳制 0-100 + 广播 mood_changed（HUD 飘字/历史日志监听）
   adjustMood(eid: number, delta: number): void {
     const n = this.readNeeds(eid);
     if (!n) return;
@@ -475,8 +514,15 @@ export class Sim implements SimContext {
     const key = `${sx},${sy}->${ex},${ey}`;
     const cached = this.trailCache.get(key);
     if (cached) return cached;
-    // 寻路策略表（tuning.path）：迭代上限/暗区代价/启发式，mod 可覆盖
-    const path = findPath(this.world, sx, sy, ex, ey, this.tuning.path);
+    // 寻路策略表（tuning.path）：迭代上限/暗区代价/启发式 + 篝火航点中转，
+    // mod 可覆盖；航点段（锚点对）路径复用同一 trailCache（建筑变更 clearTrailCache 自动失效）
+    const path = findPath(this.world, sx, sy, ex, ey, this.tuning.path, {
+      get: (ax, ay, bx, by) => this.trailCache.get(`${ax},${ay}->${bx},${by}`),
+      set: (ax, ay, bx, by, p) => {
+        if (this.trailCache.size > 2048) this.trailCache.clear();
+        this.trailCache.set(`${ax},${ay}->${bx},${by}`, p);
+      },
+    });
     if (path.length > 0) {
       if (this.trailCache.size > 2048) this.trailCache.clear();
       this.trailCache.set(key, path);
@@ -653,6 +699,9 @@ export class Sim implements SimContext {
   private queueBuild(x: number, y: number, defId: string): void {
     const def = this.buildingDef(defId);
     if (!def) return;
+    // 科技锁：未抽到对应科技卡的建筑不可建造（科技 = 独立抽卡池按 TECH_ORDER 解锁，
+    // 门控建造防止"未研发就渡水/架桥"的科技作弊；techs.test.ts 覆盖）
+    if (def.tech && !this.techs.has(def.tech)) return;
     if (!this.world.canBuildFootprint(x, y, def)) return;
     const cost = {
       wood: def.costWood ?? def.size.x * def.size.y * this.mods.tuning.autobuild.costWoodPerCell,
@@ -710,6 +759,8 @@ export class Sim implements SimContext {
     tickEnv(this.env, dt, this.dayTime, this.rng, this.tuning.env);
     this.updateFactionPriority(dt);
     this.registry.updateAll(dt);
+    // 神谕目标到期自动清除
+    if (this.oracleGoal && this.time > this.oracleGoal.until) this.oracleGoal = null;
     this.checkPossession(); // Q3 团灭附身
     // mod 钩子：step 后（观察结果）
     this.mods.runHooks('step:after', { sim: this, dt });
@@ -807,6 +858,7 @@ export class Sim implements SimContext {
         createdAt: u.createdAt,
       })),
       playerUnitId: this.playerUnitId,
+      techs: [...this.techs],
       pawns: this._pawnList.map((eid) => {
         const st = this.pawnStates.get(eid)!;
         const pos = this.readPosition(eid)!;
@@ -814,7 +866,7 @@ export class Sim implements SimContext {
           eid,
           x: pos.x, y: pos.y,
           dna: st.dna,
-          slots: st.slots.map((c) => (c ? c.id : null)),
+          slots: st.slots.map((c) => (c ? { id: c.id, m: c.mastery ?? 0, u: c.lastUsed ?? 0 } : null)),
           needs: this.readNeeds(eid),
           health: this.readHealth(eid),
           faith: st.faith ?? 0,
@@ -828,6 +880,7 @@ export class Sim implements SimContext {
   }
 
   load(data: SaveData): void {
+    this.techs = new Set(data.techs ?? []);
     this.time = data.time ?? 0;
     this.dayTime = data.dayTime ?? 0;
     if (data.stockpile) this.stockpile = { ...TUNING.population.startStockpile, ...data.stockpile };
@@ -867,9 +920,18 @@ export class Sim implements SimContext {
         const st = this.pawnStates.get(eid)!;
         st.dna = p.dna;
         // 卡槽存 id（JSON-safe）：还原时按 id 从 mod 卡 → 基础卡 → 天赋卡 重取；查不到降级 null（抽卡跳过）
-        st.slots = (p.slots ?? []).map((id) => {
-          if (!id) return null;
-          return this.mods.cards.get(id) ?? BASE_CARDS.find((b) => b.id === id) ?? Object.values(TRAIT_CARDS).find((c) => c.id === id) ?? null;
+        st.slots = (p.slots ?? []).map((slot) => {
+          if (!slot) return null;
+          // 旧档：纯 id 字符串（无熟练度）；新档：{ id, m, u }
+          const id = typeof slot === 'string' ? slot : slot.id;
+          const found = this.mods.cards.get(id) ?? BASE_CARDS.find((b) => b.id === id) ?? Object.values(TRAIT_CARDS).find((c) => c.id === id) ?? null;
+          if (!found) return null;
+          const card = { ...found }; // 克隆（防共享单例 mastery 串）
+          if (typeof slot === 'object') {
+            card.mastery = slot.m;
+            card.lastUsed = slot.u;
+          }
+          return card;
         });
         st.faith = p.faith ?? 0;
         st.skills = p.skills ?? {};
