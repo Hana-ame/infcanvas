@@ -56,6 +56,7 @@ export function buildDelta(prev: SnapshotMsg | null, cur: SnapshotMsg): DeltaMsg
   if (!sameArr(prev.hostiles, cur.hostiles)) { d.hostiles = cur.hostiles; any = true; }
 
   // ---- buildings：按 key 对齐 diff hp；增删整条 ----
+  // 建筑身份 key = x + y*1000000（世界尺寸远小于 1000000，保证唯一；与协议/客户端 key 语义一致）
   const prevB = new Map(prev.buildings.map((b) => [b.x + b.y * 1000000, b]));
   const curB = new Map(cur.buildings.map((b) => [b.x + b.y * 1000000, b]));
   const bds: NonNullable<DeltaMsg['buildings']> = [];
@@ -83,7 +84,7 @@ function fullDelta(s: SnapshotMsg): DeltaMsg {
   d.pawns = s.pawns.map((p) => ({ ...p, attrs: p.attrs }));
   d.pawnList = s.pawns.map((p) => p.eid);
   d.hostiles = s.hostiles;
-  d.buildings = s.buildings.map((b) => ({ key: b.x + b.y * 1000000, defId: b.defId, hp: b.hp, maxHp: b.maxHp, faction: b.faction, footprint: b.footprint }));
+  d.buildings = s.buildings.map((b) => ({ key: b.x + b.y * 1000000, defId: b.defId, hp: b.hp, maxHp: b.maxHp, faction: b.faction, footprint: b.footprint })); // key 同 buildDelta：x + y*1000000
   d.buildingVersion = s.buildingVersion;
   d.buildQueue = s.buildQueue;
   return d;

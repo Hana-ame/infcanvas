@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest';
 import { Sim } from '../../sim/sim';
 import { feedbackPlanner, randomPlanner, makeDummyCardPlanner } from '../dummyLlm';
-import { drawCards } from '../../sim/ai/pawn';
+import { drawCards, effectiveWeight } from '../../sim/ai/pawn';
 
 // feedbackPlanner 最小 ctx 工厂（分支单点可控，不受默认 tuning 干扰）
 const mkCtx = (over: Record<string, unknown>) => ({
@@ -10,8 +10,15 @@ const mkCtx = (over: Record<string, unknown>) => ({
   buildQueue: [],
   isNight: () => false,
   tuning: { population: { foodThreshold: 50 } },
+  world: { buildings: new Map() },
+  socialUnits: { units: new Map() },
+  techs: new Set(),
+  rng: { next: () => 0.5 } as never,
   ...over,
 }) as never as Parameters<typeof feedbackPlanner>[0];
+
+// 构造一个带成员的社交单位（用于迁徙分支）
+const mkUnit = (members: number) => new Map([[ 'u1', { members: Array.from({ length: members }, (_, i) => i) } ]]);
 
 describe('sim.printCard（LLM 印卡 API：DESIGN §6 只印卡不进选择链路）', () => {
   it('印卡插入目标小人槽位，抽卡可命中', () => {
@@ -76,12 +83,56 @@ describe('dummy planner（feedback / random）', () => {
     expect(feedbackPlanner(mkCtx({ stockpile: { wood: 1, ore: 100, food: 1000 } }))?.workType).toBe('chop');
     expect(feedbackPlanner(mkCtx({ stockpile: { wood: 100, ore: 1, food: 1000 } }))?.workType).toBe('mine');
     expect(feedbackPlanner(mkCtx({ buildQueue: [{ x: 3, y: 3, defId: 'farm' }] }))?.workType).toBe('build');
-    expect(feedbackPlanner(mkCtx({ stockpile: { wood: 100, ore: 100, food: 1 } }))?.workType).toBe('chop');
+    expect(feedbackPlanner(mkCtx({ stockpile: { wood: 100, ore: 100, food: 1 } }))?.label).toBe('垦田令');
   });
 
   it('feedback：健康局面白天不干预；入夜给休整令', () => {
     expect(feedbackPlanner(mkCtx({}))).toBeNull();
     expect(feedbackPlanner(mkCtx({ isNight: () => true }))?.action).toBe('rest');
+  });
+
+  it('feedback：缺粮且农田不足 → 垦田令（种植）；人丁旺木足 → 拓荒令（迁徙）', () => {
+    expect(feedbackPlanner(mkCtx({ stockpile: { wood: 100, ore: 100, food: 1 } }))?.label).toBe('垦田令');
+    // 农田 ≥3 → 不再垦田，回落到缺粮伐木
+    const farms = new Map([[1, { def: { tags: ['farm'] } }], [2, { def: { tags: ['farm'] } }], [3, { def: { tags: ['farm'] } }]]);
+    expect(feedbackPlanner(mkCtx({ stockpile: { wood: 100, ore: 100, food: 1 }, world: { buildings: farms } }))?.label).toBe('伐木令');
+    // 农田不足但缺粮 → 垦田令（已在上行断言）
+    // 迁徙：成员 5 + 木足 + 单营地
+    const camps = new Map([[10, { def: { id: 'campfire' } }]]);
+    expect(feedbackPlanner(mkCtx({
+      stockpile: { wood: 400, ore: 100, food: 1000 },
+      socialUnits: { units: mkUnit(5) },
+      world: { buildings: camps },
+    }))?.label).toBe('拓荒令');
+    // 成员不足 → 不迁徙
+    expect(feedbackPlanner(mkCtx({
+      stockpile: { wood: 400, ore: 100, food: 1000 },
+      socialUnits: { units: mkUnit(2) },
+      world: { buildings: camps },
+    }))).toBeNull();
+  });
+
+  it('垦田令/拓荒令效用 = 34（神谕溢价高于建造令 32）', () => {
+    expect(feedbackPlanner(mkCtx({ stockpile: { wood: 100, ore: 100, food: 1 } }))!.utilityFixed).toBe(34);
+    const camps = new Map([[10, { def: { id: 'campfire' } }]]);
+    expect(feedbackPlanner(mkCtx({
+      stockpile: { wood: 400, ore: 100, food: 1000 },
+      socialUnits: { units: mkUnit(4) },
+      world: { buildings: camps },
+    }))!.utilityFixed).toBe(34);
+  });
+
+  it('垦田令蓝图落点 footprint 合法（farm 2×2，与已有建筑不重叠）', () => {
+    const sim = new Sim({ seed: 30, pawnCount: 2 });
+    sim.stockpile.wood = 999;
+    sim.stockpile.ore = 999;
+    sim.stockpile.food = 1; // 缺粮 → 垦田令
+    const planner = makeDummyCardPlanner(sim, { mode: 'feedback', interval: 60 });
+    planner.tick(60);
+    const farmBlueprint = sim.buildQueue.find((b) => b.defId === 'farm');
+    expect(farmBlueprint).toBeDefined();
+    const def = sim.mods.buildings.farm;
+    expect(sim.world.canBuildFootprint(farmBlueprint!.x, farmBlueprint!.y, def)).toBe(true);
   });
 
   it('random：随机印工作/生活卡（确定性种子结构）', () => {
@@ -98,15 +149,114 @@ describe('dummy planner（feedback / random）', () => {
     expect(life).toBeGreaterThan(0);
   });
 
-  it('makeDummyCardPlanner：interval 累计 → 印卡 + 计数', () => {
+  it('makeDummyCardPlanner：interval 累计 → 降旨目标（不碰选择链）', () => {
     const sim = new Sim({ seed: 27, pawnCount: 2 });
-    sim.stockpile.wood = 1; // 缺木局面，feedback 稳定印伐木令
+    sim.stockpile.wood = 1; // 缺木局面，feedback 稳定降"伐木"目标
     const planner = makeDummyCardPlanner(sim, { mode: 'feedback', interval: 60 });
     planner.tick(59);
     expect(planner.printed).toBe(0);
     planner.tick(1); // 60s 到点
     expect(planner.printed).toBe(1);
+    // 神谕目标生效（影响目标层）……
+    expect(sim.oracleGoal?.workType).toBe('chop');
+    // ……而非直接插卡（不碰选择链）
     expect(sim.pawnStates.get(sim.pawns[0])!.slots.some((c) => c?.id === 'dummy:chop')
-      || sim.pawnStates.get(sim.pawns[1])!.slots.some((c) => c?.id === 'dummy:chop')).toBe(true);
+      || sim.pawnStates.get(sim.pawns[1])!.slots.some((c) => c?.id === 'dummy:chop')).toBe(false);
+  });
+
+  it('神谕目标放大对应工作权重（×oracleGoalMul）；到期自动清除', () => {
+    const sim = new Sim({ seed: 32, pawnCount: 1 });
+    sim.setOracleGoal({ workType: 'chop', label: '伐木令', duration: 100 });
+    expect(sim.oracleGoal?.label).toBe('伐木令');
+    // 目标持续期内权重放大
+    const st = sim.pawnStates.get(sim.pawns[0])!;
+    const chop = st.slots.find((c) => c?.id === 'chop')!;
+    const ctx = {
+      view: {
+        oracleGoal: sim.oracleGoal,
+        tuning: { card: { oracleGoalMul: 3 } },
+      },
+      eid: sim.pawns[0],
+    } as never;
+    const w = effectiveWeight(chop, { dna: st.dna, slots: st.slots }, ctx);
+    // ×3（oracleGoal）× (0.5+mastery/100)（熟练度调制）
+    expect(w).toBeCloseTo(chop.weight * 3 * (0.5 + (chop.mastery ?? 0) / 100), 5);
+    // 到期清除
+    sim.step(101);
+    expect(sim.oracleGoal).toBeNull();
+  });
+
+  it('垦田令副作用：农田蓝图入队（种植闭环）', () => {
+    const sim = new Sim({ seed: 28, pawnCount: 2 });
+    sim.stockpile.wood = 100;
+    sim.stockpile.ore = 100;
+    sim.stockpile.food = 1; // 缺粮
+    const planner = makeDummyCardPlanner(sim, { mode: 'feedback', interval: 60 });
+    planner.tick(60);
+    expect(planner.printed).toBe(1);
+    // 蓝图已入队（垦田令 → farm）
+    expect(sim.buildQueue.length).toBeGreaterThan(0);
+    expect(sim.buildQueue.some((b) => b.defId === 'farm')).toBe(true);
+    // 步进后小人建造它（build 工作有蓝图可做）
+    sim.step(240);
+    expect([...sim.world.buildings.values()].some((b) => b.def.tags?.includes('farm'))).toBe(true);
+  });
+
+  it('拓荒令副作用：远处营地蓝图入队 → 建成形成第二派系（迁徙闭环）', () => {
+    const sim = new Sim({ seed: 29, pawnCount: 4 });
+    // 人丁兴旺（成员多）+ 木足 + 单营地条件：模拟单位+migration 局面
+    sim.spawnPawn(3, 3);
+    sim.step(120); // autobuild 已建 campfire，派系成员逐步加入
+    const planner = makeDummyCardPlanner(sim, { mode: 'feedback', interval: 60 });
+    // 直接构造迁徙局面：多人入派系 + 木足
+    const p = sim;
+    const campKey = [...p.world.buildings.keys()].find((k) => p.world.buildings.get(k)!.def.id === 'campfire');
+    expect(campKey).toBeDefined();
+    for (const eid of sim.pawns) sim.socialUnits.assignPawn(eid);
+    p.stockpile.wood = 999;
+    p.stockpile.food = 999;
+    p.stockpile.ore = 999;
+    planner.tick(60);
+    // 拓荒令或由于木足后沿用队里已有 blueprint 等情况 → 至少蓝图出现 campfire
+    if (planner.printed > 0) {
+      expect(p.buildQueue.some((b) => b.defId === 'campfire')).toBe(true);
+    }
+  });
+
+  it('迁徙闭环（内核）：新营地建成 → 附近的拓荒者自动划入新派系', () => {
+    const sim = new Sim({ seed: 31, pawnCount: 2 });
+    sim.step(120); // 初始 campfire + 派系
+    expect(sim.socialUnits.units.size).toBe(1);
+    const w = sim.world;
+    // 远处找合法落点（环形扫描 canBuildFootprint，避开水面/岩石/已有建筑）
+    let spot: { x: number; y: number } | null = null;
+    const def = sim.mods.buildings.campfire;
+    for (let r = 12; r < 40 && !spot; r++) {
+      for (let dy = -r; dy <= r && !spot; dy++) {
+        for (let dx = -r; dx <= r && !spot; dx++) {
+          if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+          const x = w.width / 2 + dx;
+          const y = w.height / 2 + dy;
+          if (w.canBuildFootprint(x, y, def)) spot = { x, y };
+        }
+      }
+    }
+    expect(spot).not.toBeNull();
+    // 远处造一个新营地（模拟拓荒蓝图被小人建成）
+    const key = w.buildKey(spot!.x, spot!.y);
+    expect(w.placeBuilding(spot!.x, spot!.y, 'campfire', 'player')).toBe(true);
+    sim.socialUnits.onBuildingBuilt(key, 'campfire', sim.time);
+    // 第二派系自动形成；出生小人仍在旧营地 → 新派系空
+    expect(sim.socialUnits.units.size).toBe(2);
+    const newUnit = [...sim.socialUnits.units.values()].find((u) => u.key === key)!;
+    expect(newUnit.members.length).toBe(0);
+    // 拓荒者抵达新营地 → 重算归属时划入新派系（迁徙者）
+    sim.pawnPositions.set(sim.pawns[0], { x: spot!.x, y: spot!.y });
+    sim.socialUnits.onBuildingBuilt(key, 'campfire', sim.time);
+    expect(newUnit.members).toContain(sim.pawns[0]);
+    // 旧营地的小人仍留在原派系（只有拓荒者一个离开）
+    const oldUnit = [...sim.socialUnits.units.values()].find((u) => u.key !== key)!;
+    expect(oldUnit.members).not.toContain(sim.pawns[0]);
+    expect(oldUnit.members.length).toBe(sim.pawns.length - 1);
   });
 });

@@ -48,6 +48,7 @@ export interface ModPackage {
   scripts?: string;
 }
 
+// mod id 白名单字符集（字母数字/连字符/下划线/点）：防路径穿越、URL/文件名注入字符
 const ID_RE = /^[a-z0-9][a-z0-9-_.]*$/i;
 const CARD_FN_FIELDS = ['condition', 'extraUtility', 'decide'] as const;
 

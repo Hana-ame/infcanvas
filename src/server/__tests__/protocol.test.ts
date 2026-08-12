@@ -9,10 +9,18 @@ describe('server 网络层基础（P1）', () => {
     const sim = new Sim({ seed: 7, pawnCount: 1 });
     const seen: [number, number, string][] = [];
     sim.addTileListener((x, y, id) => seen.push([x, y, id]));
-    sim.world.setTile(5, 5, 'grass');
-    sim.world.setTile(6, 6, 'dirt');
-    sim.world.setTile(5, 5, 'grass'); // 重复 set 不触发
-    expect(seen).toEqual([[5, 5, 'grass'], [6, 6, 'dirt']]);
+    // 动态找两个非目标 tile（世界生成参数化后坐标不稳定）
+    let a: [number, number] = [2, 2];
+    let b: [number, number] = [3, 3];
+    for (let y = 2; y < 40 && (sim.world.getTile(a[0], a[1]) === 'grass' || sim.world.getTile(b[0], b[1]) === 'grass'); y++) {
+      for (let x = 2; x < 40; x++) {
+        if (sim.world.getTile(x, y) !== 'grass') { if (sim.world.getTile(a[0], a[1]) === 'grass') a = [x, y]; else b = [x, y]; }
+      }
+    }
+    sim.world.setTile(a[0], a[1], 'grass');
+    sim.world.setTile(b[0], b[1], 'dirt');
+    sim.world.setTile(a[0], a[1], 'grass'); // 重复 set 不触发
+    expect(seen).toEqual([[a[0], a[1], 'grass'], [b[0], b[1], 'dirt']]);
   });
 
   it('addTileListener 退订后不再上报', () => {

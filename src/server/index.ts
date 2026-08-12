@@ -21,16 +21,14 @@ const MODS_DIR = process.env.MODS_DIR ?? 'mods'; // 根目录 mods/*.mod.json �
 const DELTA_MS = 500;        // 增量轮询
 const RECONCILE_MS = 5000;   // 全量对账间隔
 
-// LLM 慢决策层（P1）：
-//  - LLM_ENDPOINT：真 LLM（OpenAI 兼容 chat completions）事件导演
-//  - LLM_DUMMY=1：dummy 印卡（random/反馈模式，零成本可离线，模拟 LLM 生成策略卡）
-//  - 都不设：确定性脚本事件
+// 神谕慢决策层：完全可由随机抽卡替代（默认即启用，零成本零 API）
+//  - 默认：feedback 随机抽卡（策略卡 + 科技卡），LLM 组件的完整替代
+//  - LLM_DUMMY=random：纯随机抽卡；LLM_DUMMY=feedback：按局面反馈抽卡（默认）
+//  - LLM_ENDPOINT：可选真 LLM 事件导演（OpenAI 兼容；不设也能完整运行）
 const llmCfg = process.env.LLM_ENDPOINT
   ? { endpoint: process.env.LLM_ENDPOINT, apiKey: process.env.LLM_API_KEY ?? '', model: process.env.LLM_MODEL ?? 'gpt-4o-mini' }
   : null;
-const dummyCfg = process.env.LLM_DUMMY
-  ? { mode: (process.env.LLM_DUMMY === 'random' ? 'random' : 'feedback') as 'random' | 'feedback' }
-  : null;
+const dummyMode = (process.env.LLM_DUMMY === 'random' ? 'random' : 'feedback') as 'random' | 'feedback';
 
 // 权威模拟（零 DOM ✓ tsx 直跑）。
 // 注意：llm 预热在 sim 构造前发出首个请求（worldSummary 拿不到 ctx → 用开局提示），
@@ -49,8 +47,9 @@ sim = new Sim({
   registry,
   eventProvider: llm?.provider,
 });
-const dummyPlanner = dummyCfg ? makeDummyCardPlanner(sim, dummyCfg) : null;
-console.log(`[server] seed=${SEED} pawns=${PAWNS} ws://0.0.0.0:${PORT}${llmCfg ? ` llm=${llmCfg.endpoint}` : dummyCfg ? ` llm=dummy(${dummyCfg.mode})` : '（无 LLM，确定性事件）'}${modRes.mods.length ? ` mods=[${modRes.mods.join(', ')}]` : '（无 mod）'}`);
+// 随机抽卡 = LLM 组件的完整替代（默认启用；LLM_ENDPOINT 仅为可选增强）
+const dummyPlanner = makeDummyCardPlanner(sim, { mode: dummyMode });
+console.log(`[server] seed=${SEED} pawns=${PAWNS} ws://0.0.0.0:${PORT} 神谕抽卡=${dummyMode}${llmCfg ? ` llm=${llmCfg.endpoint}（可选增强）` : '（LLM 已由随机抽卡替代）'}${modRes.mods.length ? ` mods=[${modRes.mods.join(', ')}]` : '（无 mod）'}`);
 
 const wss = new WebSocketServer({ port: PORT });
 
@@ -188,6 +187,7 @@ wss.on('connection', (ws, req) => {
 });
 
 // 主循环：固定步进（accumulator，不随帧率漂移）+ tick delta 增量 + 定期全量对账 + feed 增量推送
+// 轮询间隔 10ms：实际步进节奏由 tickMs accumulator 决定（与轮询频率解耦）；无 client 在线时仅跑 sim 不广播
 const tickMs = 1000 / TICK_HZ;
 let acc = 0;
 let last = Date.now();
