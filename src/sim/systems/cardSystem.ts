@@ -273,6 +273,7 @@ export class BehaviorSystem implements GameSystem {
     const n = c.readNeeds(eid);
     if (n && c.stockpile.food > 0) {
       c.stockpile.food -= c.tuning.card.eatCost;
+      c.recordSpend(eid, c.tuning.card.eatCost); // 个人经济预期：花
       n.food = Math.min(100, n.food + c.tuning.card.eatAmount);
       c.setNeeds(eid, n);
       if (st.desires) fulfill(st.desires, 'gluttony', c.tuning.desire.fulfillGluttony);
@@ -325,6 +326,7 @@ export class BehaviorSystem implements GameSystem {
     if (st.urgent === 'rest' && n.rest >= this.ctx.tuning.needs.urgentRestAt) { st.urgent = undefined; return; }
     if (st.urgent === 'eat' && this.ctx.stockpile.food > 0) {
       this.ctx.stockpile.food -= this.ctx.tuning.card.eatCost;
+      this.ctx.recordSpend(eid, this.ctx.tuning.card.eatCost); // 个人经济预期：花
       n.food = Math.min(100, n.food + this.ctx.tuning.card.eatAmountUrgent);
       this.ctx.setNeeds(eid, n);
       if (st.desires) fulfill(st.desires, 'gluttony', this.ctx.tuning.desire.fulfillGluttony);

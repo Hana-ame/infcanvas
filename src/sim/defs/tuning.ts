@@ -328,10 +328,17 @@ export interface WorldTuning {
 
 export type HeuristicId = 'chebyshev' | 'manhattan' | 'euclidean';
 
+export interface EconomyTuning {
+  alpha: number;        // 预期滚动平滑率（EWA：新预期 = (1-α)·旧 + α·实际）
+  goodMul: number;      // 产出 ≥ 预期 × 此值 = 超预期
+  badMul: number;       // 产出 ≤ 预期 × 此值 = 失望
+  moodGood: number;     // 超预期心情增量
+  moodBad: number;      // 失望心情减量
+}
+
 export interface TechTuning {
-  researchPerEdu: number; // 每秒研究点 = 人口 EDU 均值 × 此值
-  thresholdBase: number;   // 第一项科技研究阈值
-  thresholdGrowth: number; // 每解锁一项，阈值增量（越来越贵 = "往后"）
+  poolInterval: number; // 科技抽卡间隔（秒）：独立池每轮抽一次
+  poolChance: number;   // 每轮抽出概率（留空档，渐进）
 }
 
 export interface PathTuning {
@@ -432,7 +439,8 @@ export interface TuningConfig {
   event: EventTuning;
   card: CardTuning;
   path: PathTuning; // 寻路策略表（参数数据化，算法本体保留 A* 代码）
-  tech: TechTuning; // 科技研究（EDU 知识线，与神谕解耦）
+  tech: TechTuning; // 科技抽卡池
+  economy: EconomyTuning; // 个人经济预期（赚/花心理账本）
 }
 
 // 默认平衡基线（全系统唯一数值源头；mod 经 ModRegistry.overrideTuning 部分覆盖，见 docs/DATA_DRIVEN.md §3.4）
@@ -745,9 +753,15 @@ export const TUNING: TuningConfig = {
     spawnCounts: { tree: 4, ore: 3, stone: 3 },
   },
   tech: {
-    researchPerEdu: 0.02, // EDU 均值 40 → 0.8 点/s → 第一项 ~125s（配合开局喘息）
-    thresholdBase: 100,
-    thresholdGrowth: 60,
+    poolInterval: 120, // 科技独立抽卡池：每 120s 抽一轮
+    poolChance: 0.6,   // 60% 抽出（"往后抽卡"渐进解锁）
+  },
+  economy: {
+    alpha: 0.15,   // 预期平滑：单次产出/消费对预期的权重
+    goodMul: 1.2,  // 赚 ≥ 预期×1.2 → 满足
+    badMul: 0.5,   // 赚 ≤ 预期×0.5 → 失望
+    moodGood: 3,
+    moodBad: -3,
   },
   path: {
     maxIter: 15000,         // 无篝火中转：迭代上限（防爆；锚点少时路径短，够用）

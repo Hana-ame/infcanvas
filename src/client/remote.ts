@@ -30,6 +30,8 @@ export interface SimViewPawn {
   skills: Record<string, number>;
   desires: Record<string, number>;
   oracleBuff?: { until: number; mood: number };
+  expectEarn?: number;  // 个人经济预期：工作赚（滚动平均）
+  expectSpend?: number; // 个人经济预期：花费花（滚动平均）
   lastDecision?: { drawn: string[]; picked: string; time: number };
 }
 

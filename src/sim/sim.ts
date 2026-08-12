@@ -81,6 +81,8 @@ export interface PawnState {
   defyCd?: number; // 违抗后的冷却时间（秒）
   crazyCooldown?: number; // 狂乱乱跑冷却
   farScanCd?: number;     // 远距回扫冷却（miss 后不重复大半径扫描）
+  expectEarn?: number;    // 个人经济预期：工作赚多少（滚动平均）
+  expectSpend?: number;   // 个人经济预期：花费花多少（滚动平均）
   crazyTime?: number;     // SAN 狂乱累计时长（超过阈值 → 逃向篝火）
   crazyFleeTarget?: { x: number; y: number }; // 崩溃逃向的篝火目标
   skills?: Partial<Record<SkillId, number>>; // COC 技能（百分制，越用越强）
@@ -508,6 +510,35 @@ export class Sim implements SimContext {
 
   clearTrailCache(): void {
     this.trailCache.clear();
+  }
+
+  // ---- 个人经济预期（用户 2026-08-13 设计：每个人心里有本账）----
+  // 工作产出/个人花费 各自滚动平均成预期；现实 vs 预期对比 → 情绪反馈：
+  // 赚 ≥ 预期×goodMul → 满足；赚 ≤ 预期×badMul → 失望；花费同理
+  private recordExpect(eid: number, key: 'expectEarn' | 'expectSpend', amount: number, dir: 1 | -1): void {
+    const st = this.pawnStates.get(eid);
+    if (!st) return;
+    const e = this.tuning.economy;
+    const prev = st[key] ?? amount;
+    const next = (1 - e.alpha) * prev + e.alpha * amount;
+    st[key] = next;
+    const good = dir === 1 ? amount >= prev * e.goodMul : amount <= prev * e.badMul;
+    const bad = dir === 1 ? amount <= prev * e.badMul : amount >= prev * e.goodMul;
+    if (good) {
+      this.adjustMood(eid, e.moodGood);
+      this.logEvent(`💰 #${eid} 这次${dir === 1 ? '赚' : '花'}得划算（预期 ${Math.round(prev)}，实际 ${amount}）`);
+    } else if (bad) {
+      this.adjustMood(eid, e.moodBad);
+      this.logEvent(`😞 #${eid} 对这次${dir === 1 ? '收获' : '花费'}失望（预期 ${Math.round(prev)}，实际 ${amount}）`);
+    }
+  }
+
+  recordEarn(eid: number, amount: number): void {
+    this.recordExpect(eid, 'expectEarn', amount, 1);
+  }
+
+  recordSpend(eid: number, amount: number): void {
+    this.recordExpect(eid, 'expectSpend', amount, -1);
   }
 
   // ---- 性能分析（内置，profiler 插件消费）----

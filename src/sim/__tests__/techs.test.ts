@@ -27,8 +27,11 @@ describe('科技抽卡（神谕解锁）', () => {
     sim.issueCommand({ type: 'build', x: spot.x, y: spot.y, buildingId: 'bridge' });
     expect(sim.buildQueue.length).toBe(before); // 科技锁：拒绝
     sim.issueCommand({ type: 'build', x: spot.x, y: spot.y, buildingId: 'raft' });
-    expect(sim.buildQueue.length).toBe(before + 1); // raft 无科技锁：可建
-    // 解锁 bridgeTech → 可建
+    expect(sim.buildQueue.length).toBe(before); // 载具也要科技锁：拒绝
+    // 解锁 raftTech + bridgeTech → 均可建
+    sim.unlockTech('raftTech');
+    sim.issueCommand({ type: 'build', x: spot.x, y: spot.y, buildingId: 'raft' });
+    expect(sim.buildQueue.length).toBe(before + 1);
     sim.unlockTech('bridgeTech');
     sim.issueCommand({ type: 'build', x: spot.x, y: spot.y, buildingId: 'bridge' });
     expect(sim.buildQueue.length).toBe(before + 2);
@@ -108,6 +111,7 @@ describe('桥 = 地形改造（water → bridge tile）', () => {
 describe('竹筏捕鱼（水上建筑 + recipe）', () => {
   it('筏上工作持续产食物（recipe fishing）', () => {
     const sim = new Sim({ seed: 49, pawnCount: 3 });
+    sim.unlockTech('raftTech'); // 载具科技锁
     const spot = findWaterWithLand(sim)!;
     sim.stockpile.wood = 999;
     sim.stockpile.ore = 999;

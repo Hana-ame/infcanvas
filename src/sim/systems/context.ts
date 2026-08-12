@@ -96,6 +96,9 @@ export interface SimContext {
   rollEvent(eid: number, dc: number): { success: boolean; roll: number };
   rollEventSkill(eid: number, dc: number, skill: SkillId): { success: boolean; roll: number };
   adjustMood(eid: number, delta: number): void;
+  // 个人经济预期（用户设计：每个人心里有本账——工作赚多少、花费花多少）
+  recordEarn(eid: number, amount: number): void;
+  recordSpend(eid: number, amount: number): void;
   logEvent(text: string): void;
   clearTrailCache(): void;
   // 技能（COC）：读取 + 使用后成长

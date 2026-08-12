@@ -506,7 +506,8 @@ describe('社交/流言系统（DESIGN §6 微互动）', () => {
   });
 
   it('preaching transfers faith via opposed check (COC §3)', () => {
-    const sim = new Sim({ seed: 55, pawnCount: 2 });
+    // preachChance 提高：techPool 等系统消耗 rng 会扰动确定性序列，靠统计概率必现不可靠
+    const sim = new Sim({ seed: 55, pawnCount: 2, mods: (m) => m.overrideTuning({ social: { preachChance: 0.8 } }) });
     const [a, b] = sim.pawns;
     const stA = sim.pawnStates.get(a)!;
     const stB = sim.pawnStates.get(b)!;

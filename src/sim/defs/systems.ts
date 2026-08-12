@@ -19,6 +19,7 @@ import { RaidSystem } from '../systems/raidSystem';
 import { PopulationSystem } from '../systems/populationSystem';
 import { EventSystem } from '../systems/eventSystem';
 import { AutonomousBuildSystem } from '../systems/autonomousBuildSystem';
+import { TechPoolSystem } from '../systems/techPoolSystem';
 
 export interface SystemDef {
   id: string;              // 唯一 id（排序/插入锚点，与 GameSystem.id 一致）
@@ -45,4 +46,5 @@ export const SYSTEM_DEFS: SystemDef[] = [
   { id: 'population',  label: '补员',     category: 'world',      ctor: (s) => new PopulationSystem(s) },
   { id: 'events',      label: '剧本事件', category: 'world',      ctor: (s) => new EventSystem(s, [...SCRIPTED_EVENTS, ...s.mods.events], s.llmEventProvider) },
   { id: 'autobuild',   label: '自主建造', category: 'ai',         ctor: (s) => new AutonomousBuildSystem(s) },
+  { id: 'techPool',    label: '科技抽卡池', category: 'ai',        ctor: (s) => new TechPoolSystem(s) },
 ];

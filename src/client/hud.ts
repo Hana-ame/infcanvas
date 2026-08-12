@@ -519,7 +519,10 @@ export function createHud(
           `欲望：${Object.entries(DESIRES).map(([k, { label }]) => `${label}${nf(p.desires[k])}`).join(' ')}<br>` +
           (dec ? `<span style="color:#caa">${dec}</span><br>` : '') +
           (nd ? `饥饿 ${nf(nd.food)} · 精力 ${nf(nd.rest)} · 心情 ${nf(nd.mood)} · 理智 ${nf(nd.san)}` : '') +
-          (p.oracleBuff && p.oracleBuff.until > sim.time ? `<br><span style="color:#e0b0ff">✨ 受神谕祝福</span>` : '');
+          (p.oracleBuff && p.oracleBuff.until > sim.time ? `<br><span style="color:#e0b0ff">✨ 受神谕祝福</span>` : '') +
+          ((p.expectEarn ?? 0) > 0 || (p.expectSpend ?? 0) > 0
+            ? `<br><span style="color:#9cf">预期赚 ${nf(p.expectEarn)} / 花 ${nf(p.expectSpend)}</span>`
+            : '');
         selPanel.style.display = 'block';
         return;
       }

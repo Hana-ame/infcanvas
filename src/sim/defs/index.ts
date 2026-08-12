@@ -99,7 +99,7 @@ export const BUILDINGS: Record<string, BuildingDef> = {
   cave: { id: 'cave', name: '矿洞', size: { x: 1, y: 1 }, hp: 500, color: '#3a2a1a', emoji: '⛰️', passable: false, buildTime: 6, workRadius: 1, tags: ['mine'], recipe: 'cave' },
   church: { id: 'church', name: '教堂', size: { x: 2, y: 2 }, hp: 600, color: '#5a3a6a', emoji: '⛪', passable: false, buildTime: 12, workRadius: 5, tags: ['faith', 'anchor', 'oracle'], capabilities: ['oracle'] },
   monument: { id: 'monument', name: '纪念碑', size: { x: 3, y: 3 }, hp: 1200, color: '#8a7a5a', emoji: '🗿', passable: false, buildTime: 40, workRadius: 6, costWood: 60, costOre: 25, tags: ['wonder'], aura: { radius: 6, moodPerSec: 0.3 } },
-  raft: { id: 'raft', name: '竹筏', size: { x: 1, y: 1 }, hp: 40, color: '#8a6a3a', emoji: '🛶', passable: true, buildTime: 2, onWater: true, recipe: 'fishing', tags: ['raft', 'water'] },
+  raft: { id: 'raft', name: '竹筏', size: { x: 1, y: 1 }, hp: 40, color: '#8a6a3a', emoji: '🛶', passable: true, buildTime: 2, onWater: true, recipe: 'fishing', tech: 'raftTech', tags: ['raft', 'water'] },
   boat: { id: 'boat', name: '渡船', size: { x: 2, y: 2 }, hp: 120, color: '#7a5a2a', emoji: '⛵', passable: true, buildTime: 6, costWood: 12, onWater: true, tech: 'boatTech', tags: ['raft', 'water'] },
   bridge: { id: 'bridge', name: '木桥', size: { x: 1, y: 1 }, hp: 60, color: '#8a6432', emoji: '🌉', passable: true, buildTime: 3, onWater: true, replacesTile: 'bridge', tech: 'bridgeTech', tags: ['raft', 'water'] },
 };
