@@ -2139,7 +2139,7 @@ describe('洞穴庇护与改造（用户设计：天然洞穴有房屋属性；�
     const sim = new Sim({ seed: 802, pawnCount: 1 });
     sim.unlockTech('shelter:cave');
     const caveHouse = sim.mods.buildings.caveHouse;
-    expect(caveHouse.costWood).toBeLessThan(sim.mods.buildings.house.costWood); // 改造便宜
+    expect(caveHouse.costWood as number).toBeLessThan(sim.mods.buildings.house.costWood as number); // 改造便宜
     expect(caveHouse.onCave).toBe(true);
     // 找洞穴格 → 可建；草地格 → 不可建
     let cave: { x: number; y: number } | null = null;
