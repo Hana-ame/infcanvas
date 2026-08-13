@@ -949,3 +949,10 @@ registerHook('beforeRoll', (prob, ctx) => ...);          // check 流程阶段�
 - **交流机制**（`SocialSystem.exchangeFireStory`）：同 chunk 相遇 + 冷却内不重复 → A 讲所属篝火历史 → B 按关键词推断 stance（敌意信号=袭击/摧毁/战死 → enemy；友善信号=建筑/贸易 → friend）→ 写 B.knownFires + 调 B 对 A 的关系。
 - **伙伴/敌人判定**（`relationEffects`）：heard stance 优先（enemy → 关系压到敌对区走动手路径；friend → 协作心情加成），未知才回退数值阈值。**判断基于听到的事实，不是数值**。
 - **另起篝火**（`SocialUnitSystem.migrateIfUncomfortable`）：篝火遭袭计数 `raidCount`（hostiles 落在营地半径内每检查周期 +1）达 `migrateRaidThreshold` 才迁出 1 人另起新篝火。**设计教训**：首版仅凭"敌人离小人近"触发 → 狼群驱散整个文明（12 次迁徙、15 个空壳派系连锁分裂）；改按"篝火持续遭袭"判定后收敛（4 次迁徙、7 派系）。
+
+### 13.1 迁徙判据与归属收敛（2026-08-14 试玩修复）
+
+- **迁徙 = 真实损失**（`migrateIfUncomfortable` 三修）：仅当篝火历史出现"💥 建筑被摧毁"且当前有威胁在场，raidCount 才 +1；达 `migrateRaidThreshold` 迁出 1 人。狼路过/仅喊打喊杀不计数。
+  - 踩坑链：①"敌人离小人近" → 狼驱散文明（12 次/15 空壳）；②"敌人在营地半径内计数" → 狼扫过一遍 raidCount 疯涨（90 分钟 40 次、41 单位 34 空壳连锁雪崩）；③ 终版真实损失判据 + 新篝火离旧营地 ≥`migrateMinDist`。
+- **归属持续收敛**（`reassignInterval`）：归属在"建 campfire/出生/迁徙"是时点快照，小人走到营地旁不重算 → 游牧幽灵。加低频全量 reassign（默认 20s）让个体自然划入最近单位。
+- **营地被毁清 fireId**：`building_destroyed` 解散派系时同步清空成员 fireId（曾踩坑：只删 membership 留 fireId → 幽灵归属）。

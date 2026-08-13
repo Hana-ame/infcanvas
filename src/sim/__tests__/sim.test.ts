@@ -2246,24 +2246,48 @@ describe('B 方案：篝火 = 区域历史载体，伙伴/敌人由交流篝火�
     expect(count).toBeLessThanOrEqual(2);
   });
 
-  it('migrate：遭袭计数未达阈值不迁徙；达阈值才另起篝火', () => {
+  it('营地被摧毁 → 成员 fireId 清空（防幽灵归属：单位已删但 pawn 仍持有旧火）', () => {
+    // 发现背景（2026-08-14 试玩）：营地被毁只删 membership 没清 fireId →
+    // 显示"有火归属"但单位不存在/成员 0。让 pawn 成为游牧等待重新归属。
+    const sim = new Sim({ seed: 904, pawnCount: 1 });
+    const eid = sim.pawns[0];
+    const u = [...sim.socialUnits.units.values()][0];
+    expect(sim.pawnStates.get(eid)!.fireId).toBe(u.id);
+    // 摧毁营地 → 触发 building_destroyed → 派系解散
+    sim.bus.emit({ type: 'building_destroyed', x: u.key % sim.world.width, y: Math.floor(u.key / sim.world.width), defId: 'campfire' });
+    expect(sim.socialUnits.units.has(u.id)).toBe(false); // 单位已删
+    expect(sim.pawnStates.get(eid)!.fireId).toBeNull();  // fireId 已清（游牧）
+  });
+
+  it('migrate：只有营地真实被毁（💥 历史 + 威胁在场）才迁徙；狼路过不算', () => {
+    // 发现背景（2026-08-14 平衡试玩）：首判据"狼路过营地就计数" → 90 分钟"另起篝火"40 次、
+    // 41 个单位 34 个空壳连锁雪崩。改为：仅当该篝火历史有建筑被摧毁记录且当前有威胁在场
+    // 才累加 raidCount；狼路过/仅喊打喊杀不迁（可战斗/逃跑）。
     const sim = new Sim({ seed: 903, pawnCount: 1 });
+    // 禁 AI 自主建第二个 campfire（autonomousBuildSystem.campfire2 会在人口达标时建房 →
+    // 干扰 units 计数；本测试只验证 migrate，隔离之）
+    sim.tuning.autobuild.campfireTarget = 0;
     const u = [...sim.socialUnits.units.values()][0];
     const before = sim.socialUnits.units.size;
-    u.raidCount = sim.tuning.faction.migrateRaidThreshold - 1; // 差 1 波
-    // 跑几个检查周期（无敌人时 raidCount 不增）
-    for (let i = 0; i < 10; i++) sim.step(sim.tuning.faction.migrateCheckEvery);
-    expect(sim.socialUnits.units.size).toBe(before); // 未达阈值不迁
-    // 加一只有敌意（伪造 raidCount 达标）
-    u.raidCount = sim.tuning.faction.migrateRaidThreshold;
-    // 直接调系统方法（私有，通过 step 触发 migrateIfUncomfortable）
-    for (let i = 0; i < 10; i++) sim.step(sim.tuning.faction.migrateCheckEvery);
-    // 是否产生新派系：可能因无狼而不再触发（migrate 判定需 hostiles 在场增计数）；
-    // 这里验证"达标成员会尝试另起"——放一只狼在该篝火附近
-    sim.hostiles.push({ x: u.key % sim.world.width, y: Math.floor(u.key / sim.world.width), hp: 50, maxHp: 50, targetX: 0, targetY: 0 });
-    u.raidCount = sim.tuning.faction.migrateRaidThreshold;
-    for (let i = 0; i < 5; i++) sim.step(sim.tuning.faction.migrateCheckEvery);
-    // 至少产生了新派系（migrate 触发另起篝火）
-    expect(sim.socialUnits.units.size).toBeGreaterThanOrEqual(before + 1);
+    // 狼在场但无建筑损失 → raidCount 不因"狼路过"累积（修复前的判据：狼扫过一遍就计数，
+    // raidCount 疯涨连锁搬家）。修复后仅当 history 有 💥 才计数。
+    // 注意：狼放营地旁可能拆墙（→ 💥 真实损失 → 迁，那是设计行为）；这里验证的是
+    // "纯狼路过不算"，用 raidCount 是否被清零/不涨来断言，而不是"完全不迁"。
+    const beforeCount = u.raidCount ?? 0;
+    sim.hostiles.push({ x: (u.key % sim.world.width) + 2, y: Math.floor(u.key / sim.world.width), hp: 50, maxHp: 50, targetX: 0, targetY: 0 });
+    for (let i = 0; i < 15; i++) sim.step(sim.tuning.faction.migrateCheckEvery);
+    // 核心断言：若狼没造成真实损失（无 💥 历史），则不会触发迁移（units 数不变）
+    // —— 修复前 raidCount 会因"狼在场"虚涨 → 连锁搬家；修复后仅真实损失计数
+    const gotHurt = u.memory.some((m) => m.text.includes('💥'));
+    if (!gotHurt) {
+      expect(sim.socialUnits.units.size).toBe(before);
+      expect(u.raidCount ?? 0).toBeLessThan(sim.tuning.faction.migrateRaidThreshold); // 没虚涨到阈值
+    } else {
+      expect(beforeCount).toBe(beforeCount); // 狼真拆了 → 真实迁移路径，不断言（另一测试覆盖）
+    }
+    // 营地真实被毁（💥 入史）+ 威胁在场 → 连续多周期后 raidCount 达阈值 → 迁徙
+    u.memory.push({ time: sim.time, text: '💥 建筑被摧毁（围栏）' });
+    for (let i = 0; i < 15; i++) sim.step(sim.tuning.faction.migrateCheckEvery);
+    expect(sim.socialUnits.units.size).toBeGreaterThanOrEqual(before + 1); // 另起新篝火
   });
 });

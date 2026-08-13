@@ -207,6 +207,8 @@ export interface FactionTuning {
   migrateMaxPerCheck: number; // 每周期最多迁移几人
   migrateHostileRadius: number; // 区域内有敌人视为遭袭的半径
   migrateRaidThreshold: number; // 遭袭 N 波后触发迁徙
+  reassignInterval: number;    // 归属重算周期（秒）
+  migrateMinDist: number;      // 新篝火最小距离
   migrateWoodNeeded: number;  // 起新篝火所需木头门槛
   raidCooldown: number;    // 派系袭击冷却
   tradeCooldown: number;
@@ -693,6 +695,8 @@ export const TUNING: TuningConfig = {
     migrateMaxPerCheck: 1,   // 每周期最多迁移几人（防连锁崩盘）
     migrateHostileRadius: 10, // 区域内有狼/敌人（此半径内）→ 视为遭袭（累计计数）
     migrateRaidThreshold: 3, // 遭袭达 N 波才触发迁徙（单次遇敌是战斗，不算；防连锁分裂）
+    reassignInterval: 20,    // 归属低频重算周期（秒）：小人走到营地旁自然划入（防游牧幽灵）
+    migrateMinDist: 10,      // 新篝火与旧篝火最小曼哈顿距离（防连锁再迁雪崩）
     migrateWoodNeeded: 10,   // 迁移起新篝火的木头门槛（全局库存）
   },
   population: {

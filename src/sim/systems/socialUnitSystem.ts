@@ -29,7 +29,13 @@ export class SocialUnitSystem implements GameSystem {
       const d = ev as Extract<import('../core/events').GameEvent, { type: 'building_destroyed' }>;
       const unit = this.unitAtKey(this.ctx.world.buildKey(d.x, d.y));
       if (!unit) return;
-      for (const eid of unit.members) this.membership.delete(eid);
+      for (const eid of unit.members) {
+        this.membership.delete(eid);
+        // 成员 fireId 同步清空（曾踩坑：只删 membership 没清 fireId →
+        // pawn 显示"有火归属"但单位已删、派系成员 0，形成幽灵归属）
+        const st = this.ctx.pawnStates.get(eid);
+        if (st) st.fireId = null;
+      }
       this.units.delete(unit.id);
       this.ctx.logEvent(`💔 ${unit.name} 的营地被摧毁，派系散落`);
     });
@@ -219,6 +225,7 @@ export class SocialUnitSystem implements GameSystem {
   }
 
   private migrateTimer = 0;
+  private reassignTimer = 0;
 
   update(dt: number): void {
     // 另起篝火（用户 2026-08-13 B 方案：不舒适环境可另起）：低频检查
@@ -226,6 +233,14 @@ export class SocialUnitSystem implements GameSystem {
     if (this.migrateTimer <= 0) {
       this.migrateTimer = this.ctx.tuning.faction.migrateCheckEvery;
       this.migrateIfUncomfortable();
+    }
+    // 归属持续收敛（曾踩坑：归属只在"建 campfire/出生/迁徙"瞬间算，
+    // 小人之后走到新营地旁也不重算 → 大量"人在营地旁却无火"的游牧幽灵。
+    // 低频全量重算，让靠近营地的个体自然划入最近单位）
+    this.reassignTimer -= dt;
+    if (this.reassignTimer <= 0) {
+      this.reassignTimer = this.ctx.tuning.faction.reassignInterval;
+      for (const eid of this.ctx.pawnList) this.assignPawn(eid);
     }
     // 信任：双方单位成员相邻时，看法朝友好漂移（协作凝聚）
     this.trustTimer -= dt;
@@ -252,15 +267,24 @@ export class SocialUnitSystem implements GameSystem {
       }
       return false;
     };
-    // 1) 遭袭计数：当前有敌人在某篝火半径内 → 该篝火 raidCount++（跨检查周期累积）
+    // 迁移判据（v2026-08-14 三修）：迁徙 = 营地真实"不舒适"，不是"狼路过"。
+    //   - 遭袭计数只算"该篝火附近确有建筑被摧毁"（building_destroyed 已记入 memory 的 💥 行）
+    //   - 狼路过营地不算（可以战斗/逃跑），否则狼群扫过一遍 → raidCount 疯涨 → 连锁搬家雪崩
+    //     曾实测：90 分钟"另起篝火"40 次、41 个单位 34 个空壳，全部由"狼路过也迁"造成。
     const R2 = f.migrateHostileRadius * f.migrateHostileRadius;
-    for (const u of this.units.values()) {
+    const nearThreat = (u: { key: number }): boolean => {
       const ux = u.key % w.width;
       const uy = Math.floor(u.key / w.width);
-      const underThreat = this.ctx.hostiles.some((h) => (h.x - ux) ** 2 + (h.y - uy) ** 2 <= R2);
-      if (underThreat) u.raidCount = (u.raidCount ?? 0) + 1;
+      return this.ctx.hostiles.some((h) => (h.x - ux) ** 2 + (h.y - uy) ** 2 <= R2);
+    };
+    for (const u of this.units.values()) {
+      // 真实遭袭 = 篝火历史里有"💥 建筑被摧毁"记录，且当前仍有威胁在场
+      const gotHurt = u.memory.some((m) => m.text.includes('💥'));
+      const underThreat = nearThreat(u);
+      if (gotHurt && underThreat) u.raidCount = (u.raidCount ?? 0) + 1;
+      else if (!gotHurt) u.raidCount = 0; // 无真实损失 → 清零（不累积"狼路过"）
     }
-    // 2) 迁移：raidCount 达标 + 有成员 + 本周期未满额 → 该篝火最"被威胁"的一名成员迁出
+    // 迁移：raidCount 达标 + 有成员 + 本周期未满额 → 该篝火最"被威胁"的一名成员迁出
     let done = 0;
     for (const u of [...this.units.values()]) {
       if (done >= f.migrateMaxPerCheck) break;
@@ -270,9 +294,11 @@ export class SocialUnitSystem implements GameSystem {
       const st = this.ctx.pawnStates.get(eid);
       const pos = this.ctx.pawnPositions.get(eid);
       if (!st || !pos) continue;
-      // 起新篝火：环扫找"可建 + 非威胁区"落点（优先远离狼群方向）
+      // 起新篝火：远离旧营地（≥migrateMinDist）+ 可建 + 非威胁区。曾踩坑：落点 4-8 格太近，
+      // 新营地仍在狼威胁半径内 → 继续遭袭 → 连锁再迁（雪崩）。必须真正"另起炉灶"。
       let placed = false;
-      for (let r = 4; r <= 8 && !placed; r++) {
+      const oldKey = u.key;
+      for (let r = 8; r <= 14 && !placed; r++) {
         for (let dy = -r; dy <= r && !placed; dy++) {
           for (let dx = -r; dx <= r && !placed; dx++) {
             if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
@@ -280,10 +306,12 @@ export class SocialUnitSystem implements GameSystem {
             if (!w.inBounds(nx, ny)) continue;
             if (hostileNear(nx, ny)) continue; // 落点必须远离威胁
             if (!w.canBuildAt(nx, ny)) continue;
+            const nk = w.buildKey(nx, ny);
+            if (Math.abs(nk % w.width - oldKey % w.width) + Math.abs(Math.floor(nk / w.width) - Math.floor(oldKey / w.width)) < f.migrateMinDist) continue;
             if (w.placeBuilding(nx, ny, 'campfire', 'auto')) {
               const key = w.buildKey(nx, ny);
               this.createUnit(key, 'campfire', this.ctx.time);
-              this.ctx.logEvent(`🔥 ${u.name} 屡遭侵扰，#${eid} 在附近另起篝火（第${u.raidCount ?? 0}波）`);
+              this.ctx.logEvent(`🔥 ${u.name} 屡遭侵扰（${u.raidCount ?? 0} 次实际损失），#${eid} 另起篝火@(${nx},${ny})`);
               u.raidCount = 0; // 已行动，重置
               // 迁徙闭环（复用 onBuildingBuilt 的重新归属）：新篝火近者划入
               for (const pe of this.ctx.pawnList) this.assignPawn(pe);
