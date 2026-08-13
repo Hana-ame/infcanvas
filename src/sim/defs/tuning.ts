@@ -119,6 +119,10 @@ export interface SocialTuning {
   gossipTtl: number;        // 话题传播有效期（秒）：听到的话题在期内可转述
   gossipChance: number;     // 互动时聊起听到的话题的概率（其余从历史抽新话题）    // 全系统社交节流（秒）
   meetDist: number;        // 相遇距离（相邻才算）
+  fireEnemyRel: number;    // B 方案：听到敌意篝火历史 → 对对方个体好感变化
+  fireTalkCooldown: number; // 交流冷却（秒）
+  fireFriendRel: number;   // 听到友善历史 → 好感升
+  fireNeutralRel: number;  // 未知立场 → 轻微接近
   interactCdMin: number;   // 社交冷却下限
   interactCdMax: number;
   friendAt: number;        // 好感 ≥ 此值 = 亲密（协作加成）
@@ -199,6 +203,11 @@ export interface FactionTuning {
   tradeRateShort: number;  // 缺粮时汇率
   tradeWood: number;       // 每次贸易交换的木量
   tradeFoodScarceAt: number; // 缺粮判定库存阈值（< 此值 → 高汇率）
+  migrateCheckEvery: number;  // 另起篝火判定周期（秒）
+  migrateMaxPerCheck: number; // 每周期最多迁移几人
+  migrateHostileRadius: number; // 区域内有敌人视为遭袭的半径
+  migrateRaidThreshold: number; // 遭袭 N 波后触发迁徙
+  migrateWoodNeeded: number;  // 起新篝火所需木头门槛
   raidCooldown: number;    // 派系袭击冷却
   tradeCooldown: number;
   msgCooldown: number;
@@ -571,6 +580,10 @@ export const TUNING: TuningConfig = {
     gossipTtl: 60,           // 话题传播有效期：听到后 60s 内可转述
     gossipChance: 0.7,       // 互动聊起听到话题的概率
     meetDist: 1.6,           // 相遇距离
+    fireEnemyRel: -12,       // B 方案：听到敌意篝火历史 → 对对方个体好感变化
+    fireTalkCooldown: 120,   // 交流篝火情况冷却（秒）：同对 pawn 冷却内不重复交流
+    fireFriendRel: 8,        // 听到友善历史 → 好感升
+    fireNeutralRel: 1,       // 未知立场 → 轻微接近
     interactCdMin: 15,
     interactCdMax: 25,
     friendAt: 40,
@@ -675,6 +688,12 @@ export const TUNING: TuningConfig = {
     //  必须 > autobuild 营间距上限（spotRingMax 6）的平方差；真迁徙者站在新营地旁必切）
     opinionMsgFriendly: 1,   // 友善传话看法增量
     tradeFoodScarceAt: 40,   // 缺粮判定库存阈值
+    // 另起篝火（用户 2026-08-13 B 方案：不舒适的环境下可另起篝火）
+    migrateCheckEvery: 30,   // 迁移判定周期（秒）
+    migrateMaxPerCheck: 1,   // 每周期最多迁移几人（防连锁崩盘）
+    migrateHostileRadius: 10, // 区域内有狼/敌人（此半径内）→ 视为遭袭（累计计数）
+    migrateRaidThreshold: 3, // 遭袭达 N 波才触发迁徙（单次遇敌是战斗，不算；防连锁分裂）
+    migrateWoodNeeded: 10,   // 迁移起新篝火的木头门槛（全局库存）
   },
   population: {
     maxPawns: 12,

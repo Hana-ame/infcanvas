@@ -20,15 +20,16 @@ export interface UnitMemory {
 
 export interface SocialUnit {
   id: string;
-  key: number;            // 建筑 key（篝火/教堂位置）
+  key: number;            // 建筑 key（篝火位置）
   level: UnitLevel;
   name: string;
-  members: number[];      // 所属 pawn eid
-  memory: UnitMemory[];   // 部落记忆
-  opinions: Map<string, UnitOpinion>; // 对其他 unit id 的看法
+  members: number[];      // 所属 pawn eid（派生：由 pawn.fireId 反查，见 socialUnitSystem）
+  memory: UnitMemory[];   // 篝火区域历史（区域生活情况/历史事件，用户 2026-08-13 B 方案）
+  opinions: Map<string, UnitOpinion>; // 对其他 unit 的看法（B 方案过渡保留：交互驱动改为个体关系）
   createdAt: number;
-  resources: Record<string, number>; // 派系库存（Q9 贸易/逆差地基）
-  tradeBalance: Map<string, number>; // 与其他单位的贸易逆差（正=顺差，负=逆差）
+  resources: Record<string, number>; // 区域库存（按成员汇总）
+  tradeBalance: Map<string, number>; // 与其他区域的贸易逆差（正=顺差，负=逆差）
+  raidCount?: number;     // 遭袭计数（B 方案：持续遭袭才触发迁徙；读处 ?? 0）
 }
 
 // 记忆/看法容量：篝火 2-3，教堂 5-10（用户指定）；未知等级回退最小容量

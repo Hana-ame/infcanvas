@@ -67,6 +67,8 @@ export interface SimContext {
     onBuildingBuilt(key: number, defId: string, now: number): void;
     assignPawn(eid: number): void;
     unassignPawn(eid: number): void;
+    // 篝火区域历史（B 方案：交流篝火情况 = 读这份历史推断伙伴/敌人）
+    fireHistory(fireId: string, limit?: number): string[];
   };
   // 征服（Q9）：核心建筑被毁 → 吞并该派系
   conquestOf(coreKey: number, conquerorName: string): void;

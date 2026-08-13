@@ -6,6 +6,7 @@ import type { SimContext } from './context';
 import type { EventBus } from '../core/events';
 import { fulfill } from '../core/desires';
 import { socialLinesOf } from '../mods/registry';
+import { CHUNK_SIZE } from '../core/world';
 
 export class SocialSystem implements GameSystem {
   id = 'social';
@@ -40,17 +41,42 @@ export class SocialSystem implements GameSystem {
         const posB = this.ctx.pawnPositions.get(b);
         if (!posB) continue;
         if (Math.hypot(posA.x - posB.x, posA.y - posB.y) > this.ctx.tuning.social.meetDist) continue; // 相邻才算相遇
+        // 用户 2026-08-13 B 方案：只有同 chunk 距离相近时才能交流篝火情况
+        if (Math.floor(posA.x / CHUNK_SIZE) === Math.floor(posB.x / CHUNK_SIZE) && Math.floor(posA.y / CHUNK_SIZE) === Math.floor(posB.y / CHUNK_SIZE)) {
+          this.exchangeFireStory(a, b); // 交流篝火情况 → 推断伙伴/敌人
+        }
         this.interact(a, b, stA.socialCd ?? 0);
         this.relationEffects(a, b); // 关系影响（协作/口角），用户 Q8
       }
     }
   }
 
-  // 关系效应（用户 Q8：社会关系支持协作/战争）
-  // 好感高 → 协作心情加成；敌对 → 口角，积累冲突可能动手
+  // 关系效应（用户 Q8：社会关系支持协作/战争；B 方案：伙伴/敌人由听到的篝火历史判定）
+  // 判定优先级：stA 对 b 所属篝火的 knownFires stance（听到的事实）> 数值关系 rel
+  //   stance=enemy → 敌意（口角/动手）；stance=friend → 协作（心情加成）
+  // 未听说过对方篝火（unknown）→ 退回数值阈值判断
   private relationEffects(a: number, b: number): void {
     const s = this.ctx.tuning.social;
     const stA = this.ctx.pawnStates.get(a)!;
+    const stB = this.ctx.pawnStates.get(b);
+    // 从 heard stance 判定（B 方案：历史叙事驱动）
+    const fireB = stB?.fireId ?? null;
+    const heard = fireB ? (stA.knownFires?.[fireB]?.stance ?? 'unknown') : 'unknown';
+    if (heard === 'enemy') {
+      // 听说对方营地有敌意历史 → 敌意：把数值关系压到敌对区，走数值敌意路径（口角/动手）
+      const rel2 = stA.relationships ?? new Map<number, number>();
+      if ((rel2.get(b) ?? 0) > s.hostileAt) rel2.set(b, s.hostileAt);
+      stA.relationships = rel2;
+      this.ctx.adjustMood(a, s.moodHostile);
+      if (stB) this.ctx.adjustMood(b, s.moodHostile);
+      // 继续走到下面的数值敌意判定（动手概率）
+    } else if (heard === 'friend') {
+      // 听说对方营地友善 → 协作心情加成（不强制改数值，保留个体差异）
+      this.ctx.adjustMood(a, s.moodFriend);
+      if (stB) this.ctx.adjustMood(b, s.moodFriend);
+      return;
+    }
+    // heard === 'unknown'（或 enemy 已落入上方）→ 退回数值判断
     const rel = stA.relationships?.get(b) ?? 0;
     if (rel >= s.friendAt) {
       // 亲密：一起干活心情好
@@ -91,6 +117,59 @@ export class SocialSystem implements GameSystem {
         this.ctx.adjustMood(a, s.moodHostile);
         this.ctx.adjustMood(b, s.moodHostile);
       }
+    }
+  }
+
+  private fireTalkCd = new Map<string, number>(); // 交流冷却：同一对 pawn 一次交流后冷却（防同一条历史反复刷屏）
+
+  // 交流篝火情况（用户 2026-08-13 B 方案核心：判断伙伴/敌人的依据 = 听到的篝火历史，而非数值阈值）
+  // 机制：A 把自己所属篝火的近期历史讲给 B（同 chunk 相遇时触发）；B 从内容推断该篝火立场：
+  //   - 听到"战/袭/毁"类事件 → 记 enemy（依据 = 该事件原文）
+  //   - 听到"建/贸/善"类事件 → 记 friend
+  //   - 其余 → unknown（继续观察）
+  // B 对 A 个体的关系 relationships[A] 也随之调整（"你来自一个什么样的篝火"决定对你的初始态度）。
+  // B 记住对 A.fireId 的看法（knownFires），后续相遇可转述。
+  private exchangeFireStory(a: number, b: number): void {
+    const stA = this.ctx.pawnStates.get(a);
+    const stB = this.ctx.pawnStates.get(b);
+    if (!stA || !stB) return;
+    // 交流冷却：同对 pawn 冷却期内不重复交流（防同一条历史被反复讲 → 日志/关系刷屏）
+    const pair = a < b ? `${a}:${b}` : `${b}:${a}`;
+    if ((this.fireTalkCd.get(pair) ?? 0) > this.ctx.time) return;
+    this.fireTalkCd.set(pair, this.ctx.time + this.ctx.tuning.social.fireTalkCooldown);
+    const fireA = stA.fireId;
+    if (!fireA) return; // A 无篝火（游牧）无故事可讲
+    const history = this.ctx.socialUnits.fireHistory(fireA, 5);
+    if (history.length === 0) return;
+    const s = this.ctx.tuning.social;
+    // 推断立场：篝火历史里最强的"敌对/友善"信号决定 stance
+    const hostileKws = ['战', '袭', '毁', '掠夺', '攻打'];
+    const friendlyKws = ['建', '贸', '协作', '传善', '善缘'];
+    let stance: 'friend' | 'enemy' | 'unknown' = 'unknown';
+    let basis = '';
+    for (const line of history) {
+      if (hostileKws.some((k) => line.includes(k)) && stance !== 'enemy') {
+        // 敌对优先：最敌对的一条作为依据
+        stance = 'enemy';
+        basis = line;
+      } else if (friendlyKws.some((k) => line.includes(k)) && stance === 'unknown') {
+        stance = 'friend';
+        basis = line;
+      }
+    }
+    // 记录对 A.fireId 的看法（B 侧），A 也知道 B 听过了（B 的篝火也会讲回来——由对面触发）
+    const kf = stB.knownFires ?? {};
+    kf[fireA] = { stance, basis: basis || history[0], at: this.ctx.time };
+    stB.knownFires = kf;
+    // 对 A 个体的关系调整（初始态度来自"TA 的篝火"）
+    const relA = stB.relationships ?? new Map<number, number>();
+    const cur = relA.get(a) ?? 0;
+    const delta = stance === 'enemy' ? s.fireEnemyRel : stance === 'friend' ? s.fireFriendRel : s.fireNeutralRel;
+    relA.set(a, Math.max(s.relFloor, Math.min(s.relCap, cur + delta)));
+    stB.relationships = relA;
+    // 日志：B 听到了 A 的篝火历史
+    if (stance !== 'unknown') {
+      this.ctx.logEvent(`🗣 #${b} 听说 #${a} 的营地（${fireA}）："${basis}" → ${stance === 'enemy' ? '视为敌' : '视为友'}`);
     }
   }
 

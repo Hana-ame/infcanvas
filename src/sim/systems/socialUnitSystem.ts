@@ -43,6 +43,38 @@ export class SocialUnitSystem implements GameSystem {
         this.unassignPawn(e.eid);
       }
     });
+    // 区域历史收集（用户 2026-08-13 B 方案：篝火记载这个区域的生活情况/历史事件）：
+    // 事件发生时，把事件记入「离事发点最近的篝火」的 memory —— 该篝火成为这片区域的历史载体。
+    // 交流篝火情况 = 读这份 history（见 socialSystem.交流篝火情况）。
+    const recordNearby = (x: number, y: number, text: string): void => {
+      const u = this.unitNearKey(this.ctx.world.buildKey(x, y));
+      if (u) addMemory(u, this.ctx.time, text);
+    };
+    bus.on('raid_started', (ev) => {
+      // 狼袭记入营地篝火历史（B 方案：袭击是"敌意"信号，交流时他人听到 → 推断 enemy）
+      const d = ev as Extract<import('../core/events').GameEvent, { type: 'raid_started' }>;
+      recordNearby(this.ctx.world.width / 2, this.ctx.world.height / 2, `🐺 营地遭到袭击（${d.count} 只野狼）`);
+    });
+    bus.on('building_built', (ev) => {
+      const d = ev as Extract<import('../core/events').GameEvent, { type: 'building_built' }>;
+      recordNearby(d.x, d.y, `🏗 建起了建筑（${this.ctx.buildingDef(d.defId)?.name ?? d.defId}）`);
+    });
+    bus.on('building_destroyed', (ev) => {
+      // 建筑被毁记入篝火历史（敌意信号）
+      const d = ev as Extract<import('../core/events').GameEvent, { type: 'building_destroyed' }>;
+      recordNearby(d.x, d.y, `💥 建筑被摧毁（${this.ctx.buildingDef(d.defId)?.name ?? d.defId}）`);
+    });
+    bus.on('faction_event', (ev) => {
+      const d = ev as Extract<import('../core/events').GameEvent, { type: 'faction_event' }>;
+      if (d.kind === 'war') recordNearby(this.ctx.world.width / 2, this.ctx.world.height / 2, `⚔ ${d.from ?? ''} 与 ${d.to ?? ''} 交战`);
+    });
+  }
+
+  // 篝火区域历史（供交流读取）：最近 N 条（从新到旧）
+  fireHistory(fireId: string, limit = 5): string[] {
+    const u = this.units.get(fireId);
+    if (!u) return [];
+    return u.memory.slice(-limit).reverse().map((m) => m.text);
   }
 
   // 建篝火/教堂 → 创建或升级单位。level 由 defId 的标签决定
@@ -84,6 +116,25 @@ export class SocialUnitSystem implements GameSystem {
     return null;
   }
 
+  // 按 key 找最近的篝火（区域历史记入用；无精确匹配时取范围内最近）
+  private unitNearKey(key: number): SocialUnit | null {
+    const w = this.ctx.world;
+    const x = key % w.width;
+    const y = Math.floor(key / w.width);
+    let best: SocialUnit | null = null;
+    let bestD = Infinity;
+    for (const u of this.units.values()) {
+      const ux = u.key % w.width;
+      const uy = Math.floor(u.key / w.width);
+      const d = (ux - x) ** 2 + (uy - y) ** 2;
+      if (d < bestD) { bestD = d; best = u; }
+    }
+    // 仅限"近距离"（同 chunk 级）：太远的事件不该记到别的篝火
+    const radius = this.ctx.tuning.faction.upgradeNearDist;
+    if (best && bestD <= radius * radius) return best;
+    return null;
+  }
+
   createUnit(key: number, level: UnitLevel, now: number): SocialUnit {
     const existing = this.unitAtKey(key);
     if (existing) return existing;
@@ -101,6 +152,7 @@ export class SocialUnitSystem implements GameSystem {
       createdAt: now,
       resources: { ...this.ctx.tuning.faction.unitStartResources }, // 派系初始库存（Q9，数据在 tuning.faction）
       tradeBalance: new Map(),
+      raidCount: 0,
     };
     this.units.set(unit.id, unit);
     addMemory(unit, now, `🏕 ${unit.name} 建立营地`);
@@ -144,10 +196,15 @@ export class SocialUnitSystem implements GameSystem {
     if (best && bestD + m * m <= oldD) {
       if (!best.members.includes(eid)) best.members.push(eid);
       this.membership.set(eid, best.id);
+      // 个体持有篝火（用户 2026-08-13 B 方案：pawn.fireId = 我所属的篝火）
+      const st = this.ctx.pawnStates.get(eid);
+      if (st) st.fireId = best.id;
     } else if (oldUnit && !oldUnit.members.includes(eid)) {
       // 未能切换 → 保持原归属（重新挂回，防止重算时被解聘后无归属）
       oldUnit.members.push(eid);
       this.membership.set(eid, oldUnit.id);
+      const st = this.ctx.pawnStates.get(eid);
+      if (st) st.fireId = oldUnit.id;
     }
   }
 
@@ -157,9 +214,19 @@ export class SocialUnitSystem implements GameSystem {
       if (i >= 0) u.members.splice(i, 1);
     }
     this.membership.delete(eid);
+    const st = this.ctx.pawnStates.get(eid);
+    if (st) st.fireId = null; // 脱离篝火（B 方案：个体不再持有任何篝火）
   }
 
+  private migrateTimer = 0;
+
   update(dt: number): void {
+    // 另起篝火（用户 2026-08-13 B 方案：不舒适环境可另起）：低频检查
+    this.migrateTimer -= dt;
+    if (this.migrateTimer <= 0) {
+      this.migrateTimer = this.ctx.tuning.faction.migrateCheckEvery;
+      this.migrateIfUncomfortable();
+    }
     // 信任：双方单位成员相邻时，看法朝友好漂移（协作凝聚）
     this.trustTimer -= dt;
     if (this.trustTimer > 0) return;
@@ -167,6 +234,66 @@ export class SocialUnitSystem implements GameSystem {
     this.updateTrust();
     this.unitRelations();
     this.allocateResources(dt);
+  }
+
+  // 另起篝火（B 方案）：某篝火区域"持续不舒适"→ 成员迁出另起新篝火
+  // 机制（v2026-08-14 收紧，防连锁崩盘）：
+  //   - 判不适 = 该篝火 raidCount 达到阈值（连续多波袭击落在营地附近），单次遇敌不算（是战斗）
+  //   - 每检查周期最多迁 1 人；起新篝火找"远离当前威胁方向 + 可建"的落点
+  // 曾踩坑（首次实现）：仅凭"敌人离小人近"就迁徙 → 狼群驱散整个文明，
+  //   12 次另起篝火产生 15 个空壳派系连锁分裂。改为按篝火遭袭计数判定。
+  private migrateIfUncomfortable(): void {
+    const f = this.ctx.tuning.faction;
+    const w = this.ctx.world;
+    const hostileNear = (x: number, y: number): boolean => {
+      for (const h of this.ctx.hostiles) {
+        const dx = h.x - x, dy = h.y - y;
+        if (dx * dx + dy * dy <= f.migrateHostileRadius * f.migrateHostileRadius) return true;
+      }
+      return false;
+    };
+    // 1) 遭袭计数：当前有敌人在某篝火半径内 → 该篝火 raidCount++（跨检查周期累积）
+    const R2 = f.migrateHostileRadius * f.migrateHostileRadius;
+    for (const u of this.units.values()) {
+      const ux = u.key % w.width;
+      const uy = Math.floor(u.key / w.width);
+      const underThreat = this.ctx.hostiles.some((h) => (h.x - ux) ** 2 + (h.y - uy) ** 2 <= R2);
+      if (underThreat) u.raidCount = (u.raidCount ?? 0) + 1;
+    }
+    // 2) 迁移：raidCount 达标 + 有成员 + 本周期未满额 → 该篝火最"被威胁"的一名成员迁出
+    let done = 0;
+    for (const u of [...this.units.values()]) {
+      if (done >= f.migrateMaxPerCheck) break;
+      if ((u.raidCount ?? 0) < f.migrateRaidThreshold) continue;
+      if (u.members.length === 0) continue;
+      const eid = u.members[0];
+      const st = this.ctx.pawnStates.get(eid);
+      const pos = this.ctx.pawnPositions.get(eid);
+      if (!st || !pos) continue;
+      // 起新篝火：环扫找"可建 + 非威胁区"落点（优先远离狼群方向）
+      let placed = false;
+      for (let r = 4; r <= 8 && !placed; r++) {
+        for (let dy = -r; dy <= r && !placed; dy++) {
+          for (let dx = -r; dx <= r && !placed; dx++) {
+            if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+            const nx = pos.x + dx, ny = pos.y + dy;
+            if (!w.inBounds(nx, ny)) continue;
+            if (hostileNear(nx, ny)) continue; // 落点必须远离威胁
+            if (!w.canBuildAt(nx, ny)) continue;
+            if (w.placeBuilding(nx, ny, 'campfire', 'auto')) {
+              const key = w.buildKey(nx, ny);
+              this.createUnit(key, 'campfire', this.ctx.time);
+              this.ctx.logEvent(`🔥 ${u.name} 屡遭侵扰，#${eid} 在附近另起篝火（第${u.raidCount ?? 0}波）`);
+              u.raidCount = 0; // 已行动，重置
+              // 迁徙闭环（复用 onBuildingBuilt 的重新归属）：新篝火近者划入
+              for (const pe of this.ctx.pawnList) this.assignPawn(pe);
+              placed = true;
+            }
+          }
+        }
+      }
+      if (placed) done++;
+    }
   }
 
   // 分派系资源（Q9 利益最大化 + 报告差距"生产走全局"的轻量打通）

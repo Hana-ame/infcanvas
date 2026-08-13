@@ -941,3 +941,11 @@ registerHook('beforeRoll', (prob, ctx) => ...);          // check 流程阶段�
 - **实现**：删除 `playerUnitId`（玩家派系单位实体）、`checkPossession`（团灭附身）、`allocateResources` 玩家镜像、贸易 `isPlayer` 特判。
 - **全局仓库 stockpile**：即玩家资源池，`faction='player'` 建筑（玩家/探索/神谕蓝图）产出直接进全局；各派系单位按成员数被动自给独立库存，派系间贸易/战争/传话只发生在单位之间，玩家不参与。
 - **视角**：玩家是纯观察者 + 干预者，无派系身份、无附身、无库存镜像。
+
+### 13. 篝火 = 区域历史载体（B 方案，2026-08-14）
+
+- **用户设计**：每个人都保存一个篝火，在篝火周围生存；不舒适环境可另起篝火；篝火记载区域生活情况/历史事件；只有同 chunk 距离相近时才能交流篝火情况；pawn 据此判断伙伴或敌人；pawn 记得个体间的社会关系。
+- **数据结构**：`pawn.fireId`（归属篝火，null=游牧）+ `pawn.knownFires: {fireId → {stance, basis, at}}`；篝火 `SocialUnit.memory` 即区域历史（bus 订阅 building_built/raid_started/building_destroyed/pawn_died 写入）。
+- **交流机制**（`SocialSystem.exchangeFireStory`）：同 chunk 相遇 + 冷却内不重复 → A 讲所属篝火历史 → B 按关键词推断 stance（敌意信号=袭击/摧毁/战死 → enemy；友善信号=建筑/贸易 → friend）→ 写 B.knownFires + 调 B 对 A 的关系。
+- **伙伴/敌人判定**（`relationEffects`）：heard stance 优先（enemy → 关系压到敌对区走动手路径；friend → 协作心情加成），未知才回退数值阈值。**判断基于听到的事实，不是数值**。
+- **另起篝火**（`SocialUnitSystem.migrateIfUncomfortable`）：篝火遭袭计数 `raidCount`（hostiles 落在营地半径内每检查周期 +1）达 `migrateRaidThreshold` 才迁出 1 人另起新篝火。**设计教训**：首版仅凭"敌人离小人近"触发 → 狼群驱散整个文明（12 次迁徙、15 个空壳派系连锁分裂）；改按"篝火持续遭袭"判定后收敛（4 次迁徙、7 派系）。

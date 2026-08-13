@@ -107,6 +107,12 @@ export interface PawnState {
   assignedJob?: string; // 指派职业（Q10 生产线：lumberjack/miner/farmer/crafter）
   lean?: Record<LeanKey, number>; // 行为倾向（勒沙特列反馈：按 profit 自平衡）
   gossip?: { text: string; heardAt: number }; // 听到的八卦（社交网络传播，TTL 内可转述）
+  // 关联篝火（用户 2026-08-13 B 方案：每个人保存一个篝火，在篝火周围生存；
+  // 不舒适可另起篝火）。null = 游牧（暂无营地归属）
+  fireId?: string | null;
+  // 对"听说的篝火"的看法（B 方案：通过交流篝火历史判断伙伴/敌人）
+  // stance: friend/enemy/unknown；basis = 判断依据（听到的历史事件描述）
+  knownFires?: Record<string, { stance: 'friend' | 'enemy' | 'unknown'; basis: string; at: number }>;
   onArriveWork?: () => void; // mod 工作的到达回执（非序列化，仅当 tick 行为态：走到点后调用）
 }
 
@@ -144,10 +150,13 @@ export interface SaveData {
     desires?: Record<DesireId, number>;
     oracleBuff?: { until: number; mood: number };
     assignedJob?: string;
+    fireId?: string | null; // 关联篝火（B 方案）
+    knownFires?: Record<string, { stance: 'friend' | 'enemy' | 'unknown'; basis: string; at: number }>;
   }[];
   units?: {
     id: string; key: number; level: string; name: string;
     members: number[]; memory: { time: number; text: string }[];
+    raidCount?: number; // 遭袭计数（B 方案）
     opinions: [string, { value: number; lastChanged: number }][];
     resources: Record<string, number>;
     tradeBalance: [string, number][];
@@ -943,6 +952,7 @@ export class Sim implements SimContext {
         resources: { ...u.resources },
         tradeBalance: [...u.tradeBalance.entries()],
         createdAt: u.createdAt,
+        raidCount: u.raidCount,
       })),
       techs: [...this.techs],
       pawns: this._pawnList.map((eid) => {
@@ -960,6 +970,8 @@ export class Sim implements SimContext {
           desires: st.desires ?? initDesires(this.rng, this.tuning.desire),
           oracleBuff: st.oracleBuff,
           assignedJob: st.assignedJob,
+          fireId: st.fireId ?? null,
+          knownFires: st.knownFires,
         };
       }),
     };
@@ -986,6 +998,7 @@ export class Sim implements SimContext {
           resources: { ...u.resources },
           tradeBalance: new Map(u.tradeBalance),
           createdAt: u.createdAt,
+          raidCount: u.raidCount ?? 0, // 旧档缺省 0（B 方案遭袭计数）
         });
       }
     }
@@ -1023,6 +1036,8 @@ export class Sim implements SimContext {
         st.desires = p.desires ?? initDesires(this.rng, this.tuning.desire);
         st.oracleBuff = p.oracleBuff;
         st.assignedJob = p.assignedJob;
+        st.fireId = p.fireId ?? null;
+        st.knownFires = p.knownFires;
         if (p.needs) this.setNeeds(eid, p.needs);
         if (p.health) this.setHealth(eid, p.health);
       }
