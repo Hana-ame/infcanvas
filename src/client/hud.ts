@@ -97,6 +97,7 @@ export function createHud(
   onSelectBuild: (id: string | null) => void,
   onZoom?: (factor: number) => void,
   onViewMode?: (mode: 'top' | 'iso') => void,
+  onJumpTo?: (x: number, y: number) => void,
 ): HudApi {
   injectStyle();
   const root = document.createElement('div');
@@ -357,6 +358,16 @@ export function createHud(
   techPanel.className = 'hud-pop';
   root.appendChild(techPanel);
   const panels = [helpPanel, histPanel, facPanel, techPanel];
+  // 历史行点击跳转镜头（委托监听一次，innerHTML 每帧重建也不丢）
+  histPanel.addEventListener('click', (e) => {
+    const row = (e.target as HTMLElement).closest('div[data-x]') as HTMLElement | null;
+    if (!row || !onJumpTo) return;
+    const x = Number(row.dataset.x);
+    const y = Number(row.dataset.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+    onJumpTo(x, y);
+    toggle(histPanel); // 跳转后收起面板，避免挡视野
+  });
   const toggle = (p: HTMLElement): void => {
     const show = p.style.display !== 'block';
     for (const q of panels) q.style.display = 'none';
@@ -447,15 +458,17 @@ export function createHud(
     }
 
     // 📜 结构化历史（DESIGN §3 仿真日志）
+    // UIUX 2026-08-14：行内嵌坐标 data 属性，点击整行跳转镜头（委托一次监听）
     if (histPanel.style.display === 'block') {
       const rows = sim.historyRecent.map((h) => {
         const where = h.x !== undefined ? `@(${h.x},${h.y})` : '';
         const who = h.eid !== undefined ? `#${h.eid}` : '';
         const detail = h.data ? ' ' + Object.entries(h.data).map(([k, v]) => `${k}=${v}`).join(' ') : '';
         const cause = h.cause ? ` [${h.cause}]` : '';
-        return `<div>D${h.day} ${h.time}s · ${h.type} ${who}${where}${cause}${detail}</div>`;
+        const nav = h.x !== undefined && onJumpTo ? ' 📍跳转' : '';
+        return `<div data-x="${h.x ?? ''}" data-y="${h.y ?? ''}">D${h.day} ${h.time}s · ${h.type} ${who}${where}${cause}${detail}${nav}</div>`;
       });
-      histPanel.innerHTML = `<b>📜 结构化历史（仿真日志）</b><br>` + rows.join('');
+      histPanel.innerHTML = `<b>📜 结构化历史（仿真日志，点击带 📍 的行跳转镜头）</b><br>` + rows.join('');
     }
 
     // 🌍 派系概览（2026-08-14 用户裁决：派系 = 涌现展示，按篝火归属聚合；无库存/贸易/战争）

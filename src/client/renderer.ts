@@ -6,6 +6,7 @@ import type { SimView } from './remote';
 import type { TileDef } from '../sim/defs';
 import { SvgAssets } from './svgLoader';
 import { pawnAssetIdFor } from './svgAssets';
+import { jobLabelOf } from '../sim/defs/jobs';
 
 const TILE = 32;
 
@@ -56,6 +57,10 @@ export class Renderer {
   private pawnStatus = new Map<number, Text>();
   // 选中高亮圆环（跟随选中 pawn，黄色脉冲）
   private selectedRing: Graphics;
+  // 选中头顶职业标签（UIUX 2026-08-14：与圆环一起给"谁被选中+在干嘛"）
+  private selLabel: Text | null = null;
+  // 血条层（UIUX 2026-08-14：hostile 全部 + 选中 pawn，比 alpha 变暗直观）
+  private hpBarLayer: Graphics;
   // 状态阈值（对齐 tuning：hungerAt=30 / crazyAt=25；rest 无 urgentAt 暴露给渲染层，取 20）
   private static STATUS_THRESHOLD = { hungry: 30, sleepy: 20, crazy: 25, hurt: 0.4 } as const;
 
@@ -78,12 +83,15 @@ export class Renderer {
     this.statusLayer.eventMode = 'none';
     this.selectedRing = new Graphics();
     this.selectedRing.eventMode = 'none';
+    this.hpBarLayer = new Graphics();
+    this.hpBarLayer.eventMode = 'none';
     this.worldContainer.addChild(this.terrainLayer);
     this.worldContainer.addChild(this.entityLayer);
     this.worldContainer.addChild(this.blueprintLayer);
     this.worldContainer.addChild(this.markerLayer);
     this.worldContainer.addChild(this.statusLayer); // 状态图标随世界 y 排（2.5D 遮挡自然）
     this.worldContainer.addChild(this.selectedRing);
+    this.worldContainer.addChild(this.hpBarLayer);
     this.worldContainer.addChild(this.pawnLayer); // 飘字等屏幕上层
     this.worldContainer.addChild(this.ghost);
   }
@@ -201,6 +209,8 @@ export class Renderer {
         // 头顶偏移：2.5D 锚格底，图标顶在脚部 y 之上 0.9 格；2D 锚格中，偏移 0.7 格
         const lift = this.viewMode === 'iso' ? -0.95 : -0.7;
         t.position.set(pos.x * TILE + TILE / 2, pos.y * TILE + TILE / 2 + lift * TILE);
+        // UIUX 2026-08-14：图标按 1/zoom 反缩放 → 屏幕恒定大小（zoom 0.3 时不缩成芝麻）
+        t.scale.set(Math.max(0.5, Math.min(1.5, 1 / this.camera.zoom)));
         t.zIndex = Math.round(pos.y) * 10 + 20;
         t.visible = true;
       } else {
@@ -212,6 +222,7 @@ export class Renderer {
   }
 
   // 选中高亮圆环（UIUX 2026-08-14）：黄色圆环跟随选中 pawn，替代原来仅 scale 的弱反馈
+  // 线宽按 1/zoom 反缩放 → 屏幕恒定（zoom 0.3 时世界变小，环线不跟着变细）
   private renderSelectedRing(): void {
     this.selectedRing.clear();
     const eid = this.sim.selectedIds[0];
@@ -222,8 +233,56 @@ export class Renderer {
     const cx = interp.x * TILE + TILE / 2;
     const cy = this.viewMode === 'iso' ? interp.y * TILE + TILE : interp.y * TILE + TILE / 2;
     const r = TILE * 0.72;
+    const w = Math.max(1, 3 / this.camera.zoom);
     this.selectedRing.circle(cx, cy, r);
-    this.selectedRing.stroke({ color: 0xffd966, width: 3, alpha: 0.95 });
+    this.selectedRing.stroke({ color: 0xffd966, width: w, alpha: 0.95 });
+    // 选中头顶职业标签（名字在仿真内层，渲染层只给职业标签 + 血条）
+    const p = this.sim.pawnProfile(eid);
+    if (p && p.job) {
+      if (!this.selLabel) {
+        this.selLabel = new Text({ text: '', style: new TextStyle({ fontSize: 12, fontFamily: 'system-ui', fill: '#ffd966', fontWeight: 'bold' }) });
+        this.selLabel.resolution = this.app.renderer.resolution;
+        this.selLabel.anchor.set(0.5, 1);
+        this.worldContainer.addChild(this.selLabel);
+      }
+      const lift = this.viewMode === 'iso' ? -1.35 : -1.1;
+      this.selLabel.text = jobLabelOf(p.job);
+      this.selLabel.scale.set(Math.max(0.6, Math.min(1.6, 1 / this.camera.zoom)));
+      this.selLabel.position.set(cx, cy + lift * TILE * this.selLabel.scale.x);
+    } else if (this.selLabel) {
+      this.selLabel.visible = false;
+    }
+  }
+
+  // 血条（UIUX 2026-08-14）：hostile 全部 + 选中 pawn；高 4 屏幕像素（/zoom），颜色随 hp 绿→橙→红
+  private renderHpBars(): void {
+    this.hpBarLayer.clear();
+    const h = Math.max(2, 4 / this.camera.zoom);
+    const w = TILE * 0.62;
+    const bw = Math.max(1, 1.5 / this.camera.zoom);
+    const drawBar = (cx: number, topY: number, ratio: number): void => {
+      const x = cx - w / 2;
+      this.hpBarLayer.rect(x, topY, w, h);
+      this.hpBarLayer.fill(0x222233);
+      this.hpBarLayer.rect(x + bw, topY + bw, (w - bw * 2) * Math.max(0, ratio), h - bw * 2);
+      this.hpBarLayer.fill(ratio > 0.6 ? 0x6fbf4f : ratio > 0.35 ? 0xe8a33d : 0xdd3a3a);
+    };
+    for (const hst of this.sim.hostiles) {
+      const cx = hst.x * TILE + TILE / 2;
+      const top = this.viewMode === 'iso' ? hst.y * TILE + TILE - h - 4 : hst.y * TILE + TILE / 2 - TILE / 2 - h - 4;
+      drawBar(cx, top, hst.hp / hst.maxHp);
+    }
+    const eid = this.sim.selectedIds[0];
+    if (eid !== undefined) {
+      const pos = this.sim.pawnPositions.get(eid);
+      const hk = this.sim.healthOf(eid);
+      if (pos && hk) {
+        const interp = this.interpPos(eid, { x: pos.x, y: pos.y }, this.pawnAnim);
+        const cx = interp.x * TILE + TILE / 2;
+        const top = this.viewMode === 'iso' ? interp.y * TILE - h - 6 : interp.y * TILE - h - 6;
+        drawBar(cx, top, hk.hp / hk.maxHp);
+      }
+    }
   }
 
   private updateMarker(dt: number): void {
@@ -340,6 +399,7 @@ export class Renderer {
     this.renderHostiles();
     this.renderPawnStatus();
     this.renderSelectedRing();
+    this.renderHpBars();
     this.sortEntities();
     this.renderGhost();
     this.updateFloaters(dt);
@@ -531,13 +591,13 @@ export class Renderer {
       const dy = gy - fy;
       const len = Math.hypot(dx, dy);
       if (len > TILE * 0.4) {
-        // 线略短于目标点（避免盖住目标圆环），末端画箭簇三角
+        // 线略短于目标点（避免盖住目标圆环），末端画箭簇三角；线宽反缩放保持屏幕恒定
         const ux = dx / len;
         const uy = dy / len;
         const t = Math.min(len - 14, len * 0.8);
         this.markerLayer.moveTo(fx + ux * t, fy + uy * t);
         this.markerLayer.lineTo(gx - ux * 14, gy - uy * 14);
-        this.markerLayer.stroke({ color: 0x4cf, width: 3, alpha: 0.9 });
+        this.markerLayer.stroke({ color: 0x4cf, width: Math.max(1, 3 / this.camera.zoom), alpha: 0.9 });
         const ax = gx - ux * 16;
         const ay = gy - uy * 16;
         const px = -uy * 6;
@@ -550,11 +610,17 @@ export class Renderer {
       }
     }
     this.markerLayer.circle(gx, gy, TILE * 0.45);
-    this.markerLayer.stroke({ color: 0x4cf, width: 3, alpha: 0.9 });
+    this.markerLayer.stroke({ color: 0x4cf, width: Math.max(1, 3 / this.camera.zoom), alpha: 0.9 });
     this.markerLayer.circle(gx, gy, 3);
     this.markerLayer.fill(0x4cf);
     this.markerLayer.alpha = 1;
     this.markerLife = 1.2;
+  }
+
+  // 镜头直接跳转到世界坐标（UIUX 2026-08-14：历史面板点击跳转）
+  focusOn(wx: number, wy: number): void {
+    this.camera.x = wx;
+    this.camera.y = wy;
   }
 
   // 建造幽灵预览

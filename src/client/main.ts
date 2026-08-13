@@ -109,7 +109,8 @@ function attachScene(
     if (!id) renderer.clearGhost();
     hud.refreshHint(buildMode);
     hud.update(buildMode);
-  }, (factor) => renderer.zoomBy(factor), (mode) => renderer.setViewMode(mode));
+  }, (factor) => renderer.zoomBy(factor), (mode) => renderer.setViewMode(mode),
+    (x, y) => renderer.focusOn(x, y));
   hudApi = hud;
   hud.refreshHint(null);
 
