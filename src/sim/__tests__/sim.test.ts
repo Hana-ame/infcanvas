@@ -2132,7 +2132,7 @@ describe('洞穴庇护与改造（用户设计：天然洞穴有房屋属性；�
     const rest0 = sim.readNeeds(eid)?.rest ?? 90;
     sim.pawnPositions.set(eid, cave!);
     for (let i = 0; i < 40; i++) sim.step(1 / 20); // 2s 洞穴庇护恢复
-    expect((sim.readNeeds(eid)?.rest ?? 0)).toBeGreaterThan(rest0); // shelterRestPerSec 生效
+    expect((sim.readNeeds(eid)?.rest ?? 0)).toBeGreaterThan(rest0 as number); // shelterRestPerSec 生效
   });
 
   it('洞穴改造：caveHouse 只能建在洞穴上、资源少（木 5 < 木屋 30）', () => {
