@@ -80,7 +80,6 @@ export interface SimView {
   events: { time: number; text: string }[];
   historyRecent: { id: number; time: number; day: number; type: string; eid?: number; x?: number; y?: number; cause?: string; data?: Record<string, unknown> }[];
   socialUnits: { units: Map<string, SimViewUnit> };
-  playerUnitId: string | null;
   unitAt(x: number, y: number): SimViewUnit | null;
   buildingAt(x: number, y: number): SimViewBuilding | null;
   buildingDef(id: string): BuildingDef | undefined;
@@ -189,7 +188,6 @@ export class RemoteSim {
   events: { time: number; text: string }[] = [];
   historyRecent: { id: number; time: number; day: number; type: string; eid?: number; x?: number; y?: number; cause?: string; data?: Record<string, unknown> }[] = [];
   socialUnits = { units: new Map<string, SimViewUnit>() };
-  playerUnitId: null = null;
 
   mods: {
     tiles: Record<string, TileDef>;

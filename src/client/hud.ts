@@ -470,8 +470,7 @@ export function createHud(
           return `${other?.name ?? id} ${op.value > 0 ? '+' : ''}${Math.round(op.value)}`;
         }).join('、') || '无';
         const mem = u.memory.slice(-2).map((m) => m.text).join(' / ') || '无';
-        const badge = u.id === sim.playerUnitId ? '👁' : '';
-        return `<div><b>${badge} ${u.name}</b>（${u.level === 'church' ? '教堂' : '篝火'}，记忆${cap}）成员${u.members.length} · 库存🌲${nf(u.resources.wood)}🪨${nf(u.resources.ore)}🍖${nf(u.resources.food)}<br>` +
+        return `<div><b>${u.name}</b>（${u.level === 'church' ? '教堂' : '篝火'}，记忆${cap}）成员${u.members.length} · 库存🌲${nf(u.resources.wood)}🪨${nf(u.resources.ore)}🍖${nf(u.resources.food)}<br>` +
           `<span style="color:#aaa">看法：${opinions}<br>记忆：${mem}</span></div>`;
       }).join('<hr>');
       facPanel.innerHTML = `<b>🌍 世界派系（${units.length}）</b><br>` + (rows || '暂无');

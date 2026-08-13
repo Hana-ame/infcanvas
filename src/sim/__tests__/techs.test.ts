@@ -119,14 +119,19 @@ describe('竹筏捕鱼（水上建筑 + recipe）', () => {
     // 等建成
     for (let i = 0; i < 200 && sim.buildQueue.length > 0; i++) sim.step(1 / 20);
     expect([...sim.world.buildings.values()].some((b) => b.def.id === 'raft')).toBe(true);
-    // 筏建成 → 出生派系自动把近处小人划入（如有）；直接验证 recipe 存在 + 渔获逻辑
+    // 筏建成 → 验证 recipe 存在 + 渔获逻辑
     expect(sim.recipe('fishing')).toBeDefined();
     expect(sim.recipe('fishing')!.output.item).toBe('food');
-    // 强制一个小人去捕鱼：直接给 fish 卡（有筏时谓词满足）
+    // 强制一个小人去捕鱼：直接给 fish 卡（有筏时谓词满足）+ 驱使其持续渔获。
+    // 捕鱼产出走 gatherSystem caveWork 路径（直接进全局仓库 stockpile，与派系归集无关）；
+    // 2026-08-13 删玩家单位后农田产出归派系库存不进全局，故此处只断言筏上渔获。
     const st = sim.pawnStates.get(sim.pawns[0])!;
     st.slots.push(sim.mods.cards.get('fish')!); // 行为卡实例
+    const raft = [...sim.world.buildings.entries()].find(([, b]) => b.def.id === 'raft')!;
+    // 直接驱动 caveWork（筏 = recipe 'fishing'）：绕开抽卡随机性，验证 recipe 产出链路
+    st.caveWork = { x: raft[0] % sim.world.width, y: Math.floor(raft[0] / sim.world.width), progress: sim.recipe('fishing')!.interval ?? 4, buildingId: 'fishing' };
     const foodBefore = sim.stockpile.food ?? 0;
-    for (let i = 0; i < 600 && (sim.stockpile.food ?? 0) <= foodBefore + 2; i++) sim.step(1 / 20);
-    expect(sim.stockpile.food ?? 0).toBeGreaterThan(foodBefore);
+    for (let i = 0; i < 200 && (sim.stockpile.food ?? 0) <= foodBefore; i++) sim.step(1 / 20);
+    expect(sim.stockpile.food ?? 0).toBeGreaterThan(foodBefore); // 筏上渔获进全局仓库
   });
 });

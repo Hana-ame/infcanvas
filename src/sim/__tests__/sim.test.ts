@@ -973,28 +973,6 @@ describe('自主建造（用户 Q1/Q8：营地自主扩张）', () => {
     expect(su.membership.get(sim.pawns[0])).toBe(conq.id);
   });
 
-  it('player possession transfers to another unit when its camp is wiped (Q3)', () => {
-    // 独立测试：玩家单位成员清零 → 附身到最近存活单位
-    const sim = new Sim({ seed: 113, pawnCount: 2 });
-    const su = sim.socialUnits;
-    const key0 = [...su.units.keys()][0];
-    // 造第二个存活单位
-    su.units.set('upos', {
-      id: 'upos', key: su.units.get(key0)!.key + 4444, level: 'campfire',
-      name: '继任部落', members: [sim.pawns[0]], memory: [], opinions: new Map(), createdAt: 0,
-      resources: { wood: 30, ore: 5, food: 25, tools: 0 }, tradeBalance: new Map(),
-    });
-    su.membership.set(sim.pawns[0], 'upos');
-    // 玩家单位成员清空（团灭）
-    const playerUnit = su.units.get(sim.playerUnitId!)!;
-    playerUnit.members = [];
-    // 跑一帧触发 checkPossession
-    sim.step(1 / 20);
-    expect(sim.playerUnitId).not.toBeNull();
-    expect(sim.playerUnitId).not.toBe(sim.socialUnits.units.get(key0)!.id); // 已转移
-    expect(su.units.get(sim.playerUnitId!)!.name).toBe('继任部落');
-  });
-
   it('assigned job dominates card draw (Q10 生产线)', () => {
     // 独立测试：指派 lumberjack → chop 权重 6x，其他工作卡 0.1x
     const sim = new Sim({ seed: 114, pawnCount: 1 });
@@ -1051,23 +1029,26 @@ describe('自主建造（用户 Q1/Q8：营地自主扩张）', () => {
     }
   });
 
-  it('wild unit production routes to that unit, not global (Q9)', () => {
-    // 独立测试：addProductionNear 把产出记给最近的单位；玩家单位=全局
+  it('production routing (2026-08-13 架构裁决：无玩家单位)', () => {
+    // 独立测试：addProductionNear 归集规则——faction='player'（玩家/探索/神谕蓝图建筑）→ 全局仓库；
+    // 否则（auto 野营建筑）→ 记给最近的单位。玩家不是派系单位，不参与单位间分配。
     const sim = new Sim({ seed: 116, pawnCount: 2 });
     const su = sim.socialUnits;
-    // 野生单位在远处
     su.units.set('ufarm', {
       id: 'ufarm', key: 99999, level: 'campfire',
       name: '自足部落', members: [], memory: [], opinions: new Map(), createdAt: 0,
       resources: { wood: 30, ore: 5, food: 0, tools: 0 }, tradeBalance: new Map(),
     });
-    // 在世界坐标 (1,1) 附近没有单位 → 应该无人接收（或最近的玩家单位）
+    // 远处无单位 → 无人接收（不进全局）
     const globalFoodBefore = sim.stockpile.food;
-    su.addProductionNear(9999, 9999, 'food', 5); // 远处 → 归属野生单位
+    su.addProductionNear(9999, 9999, 'food', 5);
+    expect(sim.stockpile.food).toBe(globalFoodBefore);
+    // 靠近 ufarm → 记给该单位
+    su.addProductionNear(9999 % sim.world.width, 9999 % sim.world.height, 'food', 5);
     expect(su.units.get('ufarm')!.resources.food!).toBeGreaterThan(0);
-    // 玩家单位产出 → 全局
+    // faction='player' → 全局仓库（无玩家单位，faction 标记即玩家干预产物）
     const px = Math.floor(sim.world.width / 2);
-    su.addProductionNear(px, Math.floor(sim.world.height / 2), 'food', 5);
+    su.addProductionNear(px, Math.floor(sim.world.height / 2), 'food', 5, 'player');
     expect(sim.stockpile.food).toBeGreaterThan(globalFoodBefore);
   });
 
@@ -1092,7 +1073,6 @@ describe('自主建造（用户 Q1/Q8：营地自主扩张）', () => {
     expect(u.resources.wood).toBe(11);
     expect(u.opinions.get(key0)?.value).toBe(45);
     expect(u.memory[0].text).toBe('建营');
-    expect(sim2.playerUnitId).toBe(sim.playerUnitId);
   });
 
   it('unit id sequence resumes after load (no id collision)', () => {
@@ -1286,12 +1266,11 @@ describe('mod 玩法（DATA_DRIVEN §6 验收）', () => {
       }
     }
     expect(placed).toBe(true);
-    // 运行农场系统（手动更新一次，farm 系统按 dt 累加）——玩家单位产出走全局库存
+    // 运行农场系统（手动更新一次，farm 系统按 dt 累加）——faction='player' 建筑产出走全局库存
+    //（2026-08-13 架构裁决：无玩家单位，faction='player' 即进全局仓库 stockpile）
     const su = sim.socialUnits;
-    const pid = sim.playerUnitId;
     const before = sim.stockpile.herb ?? 0;
-    void pid;
-    su.addProductionNear(cx, cy, 'herb', 0.5);
+    su.addProductionNear(cx, cy, 'herb', 0.5, 'player');
     const after = sim.stockpile.herb ?? 0;
     expect(after - before).toBeGreaterThanOrEqual(0.5);
   });
@@ -1639,13 +1618,12 @@ describe('存档 JSON 往返（save/load 修复）', () => {
     const data = JSON.parse(JSON.stringify(sim.save())) as ReturnType<Sim['save']>;
     const sim2 = new Sim({ seed: 803, pawnCount: 3 });
     sim2.load(data);
-    const pid = sim2.playerUnitId;
-    expect(pid).toBeTruthy();
-    // 修复前：members 恒空 → 首个 step 触发"本体团灭，附身"日志
+    // 修复前：members 恒空 → 首个 step 触发"本体团灭，附身"日志（附身机制 2026-08-13 已删）
     sim2.step(1);
-    expect(sim2.playerUnitId).toBe(pid);
-    const unit = sim2.socialUnits.units.get(pid!)!;
-    expect(unit.members.length).toBeGreaterThan(0);
+    for (const unit of sim2.socialUnits.units.values()) {
+      if (unit.members.length > 0) return; // 至少一个单位有成员（不崩即可）
+    }
+    throw new Error('no unit has members after load');
   });
 });
 

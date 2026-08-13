@@ -68,7 +68,6 @@ export interface SimContext {
     assignPawn(eid: number): void;
     unassignPawn(eid: number): void;
   };
-  playerUnitId: string | null; // 玩家派系 id（Q9：玩家单位 = 全局库存镜像；null = 玩家尚未建营）
   // 征服（Q9）：核心建筑被毁 → 吞并该派系
   conquestOf(coreKey: number, conquerorName: string): void;
   addProductionNear(x: number, y: number, item: string, amount: number, faction?: string): void;

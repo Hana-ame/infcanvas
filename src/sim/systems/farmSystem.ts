@@ -10,7 +10,7 @@ export class FarmSystem implements GameSystem {
   constructor(private ctx: SimContext) {}
 
   update(dt: number): void {
-    // 每个农田按其附近单位产出（Q9：单位独立生产；玩家单位=全局）——读 BuildingDef.recipe(passive)
+    // 每个农田按其附近单位产出（Q9：单位独立生产；faction='player' 进全局）——读 BuildingDef.recipe(passive)
     for (const [key, b] of this.ctx.world.buildings) {
       if (!b.def.recipe) continue; // 任意 passive recipe 建筑（农田/水井/mod 建筑）
       const recipe = this.ctx.recipe(b.def.recipe);

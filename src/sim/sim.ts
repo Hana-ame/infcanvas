@@ -153,7 +153,6 @@ export interface SaveData {
     tradeBalance: [string, number][];
     createdAt: number;
   }[];
-  playerUnitId?: string | null;
 }
 
 export class Sim implements SimContext {
@@ -205,7 +204,7 @@ export class Sim implements SimContext {
   get llmEventProvider(): (() => ScriptedEvent | null) | null { return this._eventProvider; }
   set llmEventProvider(p: (() => ScriptedEvent | null) | null) { this._eventProvider = p; }
   socialUnits: SocialUnitSystem; // 篝火单位/部落记忆/派系涌现
-  playerUnitId: string | null = null; // 玩家所属单位（Q3 团灭附身）
+
   // 已抽到的科技（神谕抽卡解锁；tech 未解锁的建筑不可建造）
   techs = new Set<string>();
   // 全局资源流账本（用户 2026-08-13 经济设计：收益/支出自动调节工作概率）
@@ -658,8 +657,6 @@ export class Sim implements SimContext {
     }
     // 出生小人归入最近的派系单位
     for (const eid of this.pawns) this.socialUnits.assignPawn(eid);
-    // 初始单位为玩家所属（Q3 团灭附身的基础）
-    this.playerUnitId = this.socialUnits.units.size > 0 ? [...this.socialUnits.units.keys()][0] : null;
   }
 
   // 空世界（旧档全灭/坏档）重开：重建出生点小人 + 初始营地（供客户端恢复局面）
@@ -676,26 +673,6 @@ export class Sim implements SimContext {
       this.ensureInitialCamp();
     } else {
       for (const eid of this.pawns) this.socialUnits.assignPawn(eid);
-      this.playerUnitId = this.socialUnits.units.size > 0 ? [...this.socialUnits.units.keys()][0] : null;
-    }
-  }
-
-  // 团灭附身（Q3）：玩家所属单位成员清零 → 视角转移到最近的存活单位
-  private checkPossession(): void {
-    if (!this.playerUnitId) return;
-    const unit = this.socialUnits.units.get(this.playerUnitId);
-    // 单位已不存在（被征服）或成员全灭
-    if (!unit || unit.members.length === 0) {
-      const others = [...this.socialUnits.units.values()].filter((u) => u.id !== this.playerUnitId && u.members.length > 0);
-      if (others.length > 0) {
-        const next = others[0];
-        this.playerUnitId = next.id;
-        this.logEvent(`👁 本体团灭，神谕附身于 ${next.name}`);
-        addMemory(next, this.time, `👁 神谕降临，接管了 ${next.name}`);
-      } else {
-        this.playerUnitId = null;
-        this.logEvent('👁 所有派系已覆灭，世界陷入沉寂');
-      }
     }
   }
 
@@ -734,7 +711,7 @@ export class Sim implements SimContext {
     return jobLabelOf(job);
   }
 
-  // 产出归集（Q9）：建筑附近单位获得产出（玩家单位=全局）
+  // 产出归集（Q9）：建筑附近单位获得产出（faction='player' 进全局仓库）
   addProductionNear(x: number, y: number, item: string, amount: number, faction?: string): void {
     this.socialUnits.addProductionNear(x, y, item, amount, faction);
   }
@@ -872,7 +849,6 @@ export class Sim implements SimContext {
     this.registry.updateAll(dt);
     // 神谕目标到期自动清除
     if (this.oracleGoal && this.time > this.oracleGoal.until) this.oracleGoal = null;
-    this.checkPossession(); // Q3 团灭附身
     // mod 钩子：step 后（观察结果）
     this.mods.runHooks('step:after', { sim: this, dt });
   }
@@ -895,7 +871,7 @@ export class Sim implements SimContext {
   }
 
   // 征服（Q9：战争征服/吞并）：敌方摧毁某单位核心篝火/教堂 → 该单位被吞并
-  // 成员并入征服者，记忆记录，地图标记征服（Q3 团灭附身的基础）
+  // 成员并入征服者，记忆记录，地图标记征服
   conquestOf(coreKey: number, conquerorName: string): void {
     const victim = this.socialUnits.unitAtKey(coreKey);
     if (!victim) return;
@@ -968,7 +944,6 @@ export class Sim implements SimContext {
         tradeBalance: [...u.tradeBalance.entries()],
         createdAt: u.createdAt,
       })),
-      playerUnitId: this.playerUnitId,
       techs: [...this.techs],
       pawns: this._pawnList.map((eid) => {
         const st = this.pawnStates.get(eid)!;
@@ -1014,7 +989,6 @@ export class Sim implements SimContext {
         });
       }
     }
-    this.playerUnitId = data.playerUnitId ?? null;
     // 恢复单位 id 序列，避免新单位 id 冲突
     let maxSeq = 0;
     for (const id of this.socialUnits.units.keys()) {
@@ -1053,10 +1027,8 @@ export class Sim implements SimContext {
         if (p.health) this.setHealth(eid, p.health);
       }
     }
-    // 重建后把小人重新归入最近的派系单位（否则 members 恒空 → 首轮 step 误判团灭附身）
+    // 重建后把小人重新归入最近的派系单位（否则 members 恒空）
     for (const eid of this._pawnList) this.socialUnits.assignPawn(eid);
-    // 玩家单位若已不存在（坏档）则置空，由 checkPossession 逻辑接管
-    if (this.playerUnitId && !this.socialUnits.units.has(this.playerUnitId)) this.playerUnitId = null;
   }
 
   // 瓦片变更监听：server 推增量 / 测试断言（P1 网络层）。订阅返回退订函数

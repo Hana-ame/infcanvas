@@ -31,7 +31,6 @@ export class SocialUnitSystem implements GameSystem {
       if (!unit) return;
       for (const eid of unit.members) this.membership.delete(eid);
       this.units.delete(unit.id);
-      if (this.ctx.playerUnitId === unit.id) this.ctx.playerUnitId = null; // step 尾部 checkPossession 转移视角
       this.ctx.logEvent(`💔 ${unit.name} 的营地被摧毁，派系散落`);
     });
     // 成员死亡 → 记入部落记忆
@@ -120,7 +119,7 @@ export class SocialUnitSystem implements GameSystem {
   // 成员归属：pawn 归入最近单位
   // 门槛：新归属距离必须比旧归属**明显更近**（距差 > reassignMargin 格）才切换
   //（曾踩坑：出生 4 人触发行 autobuild 第二个篝火建在出生圈内 → 重算全量划走
-  //  初始派系成员 → 开局 1s 假团灭附身；margin 保证近距离新营不洗牌、
+  //  初始派系成员 → 开局 1s 归属洗牌；margin 保证近距离新营不洗牌、
   //  只有远走迁徙者（距新营地显著更近）才改归属）
   assignPawn(eid: number, margin?: number): void {
     const pos = this.ctx.pawnPositions.get(eid);
@@ -171,28 +170,23 @@ export class SocialUnitSystem implements GameSystem {
   }
 
   // 分派系资源（Q9 利益最大化 + 报告差距"生产走全局"的轻量打通）
-  // 玩家单位 = 全局库存镜像（生产全进玩家营地）；野生/其他单位按成员数被动产出
+  // 所有单位按成员数被动产出（2026-08-13 架构裁决：玩家不是派系单位）
   private allocateResources(dt: number): void {
     const f = this.ctx.tuning.faction;
     const s = this.ctx.stockpile;
-    const playerId = this.ctx.playerUnitId;
+    // 所有单位一视同仁：按成员数被动自给（成员在野外采集微薄资源）
+    // （2026-08-13 架构裁决：玩家不是派系单位——全局仓库 stockpile 即玩家资源池，不需要"玩家单位=全局镜像"）
     for (const u of this.units.values()) {
-      if (u.id === playerId) {
-        // 玩家单位库存 = 全局库存（单一生产池）
-        u.resources = { ...s };
-      } else {
-        // 其他单位：按成员数被动自给（成员在野外采集微薄资源）
-        const members = Math.max(1, u.members.length);
-        u.resources.wood = (u.resources.wood ?? 0) + f.resourceGrowthWood * members * dt;
-        u.resources.food = (u.resources.food ?? 0) + f.resourceGrowthFood * members * dt;
-        u.resources.ore = (u.resources.ore ?? 0) + f.resourceGrowthOre * members * dt;
-      }
+      const members = Math.max(1, u.members.length);
+      u.resources.wood = (u.resources.wood ?? 0) + f.resourceGrowthWood * members * dt;
+      u.resources.food = (u.resources.food ?? 0) + f.resourceGrowthFood * members * dt;
+      u.resources.ore = (u.resources.ore ?? 0) + f.resourceGrowthOre * members * dt;
     }
   }
 
-  // 产出归集（Q9：各单位营地建筑产出归该单位；玩家单位=全局）
+  // 产出归集（Q9：各单位营地建筑产出归该单位；faction='player' 建筑直接进全局）
   // 在世界坐标附近找最近单位，把产出记入其库存
-  // 产出归集（Q9 + 玩家生产主池）：
+  // 产出归集（Q9 + 全局生产池）：
   // 建筑 faction='player'（玩家/探索/神谕蓝图建成）→ 产出直接进全局生产池；
   // 否则（野营 auto 建筑）→ 归最近单位——曾踩坑：well 被野营 campfire 抢归集，
   // 玩家水井产水全进野营库存（全局 water 恒 0）
@@ -211,12 +205,9 @@ export class SocialUnitSystem implements GameSystem {
       if (d < bestD) { bestD = d; best = u; }
     }
     if (!best) return;
-    if (best.id === this.ctx.playerUnitId) {
-      // 玩家单位 → 全局生产池
-      this.ctx.stockpile[item] = Math.min(f.resourceCap, (this.ctx.stockpile[item] ?? 0) + amount);
-    } else {
-      best.resources[item] = Math.min(f.resourceCap, (best.resources[item] ?? 0) + amount);
-    }
+    // 归最近单位库存（非玩家建筑：auto 野营产出归该单位）
+    // （2026-08-13 架构裁决：无"玩家单位"概念——faction='player' 的建筑已在上面直接进全局仓库）
+    best.resources[item] = Math.min(f.resourceCap, (best.resources[item] ?? 0) + amount);
   }
 
   // 单位间关系效应（Q9：篝火间信任机制 → 贸易/战争）
@@ -317,19 +308,13 @@ export class SocialUnitSystem implements GameSystem {
     if (this.ctx.time < cd) return;
     this.tradeCd.set(ua.id, this.ctx.time + f.tradeCooldown);
 
-    // 玩家单位 = 全局库存（生产池）；贸易时直接操作全局
-    const isPlayer = ua.id === this.ctx.playerUnitId;
-    const uaFood = isPlayer ? (this.ctx.stockpile.food ?? 0) : (ua.resources.food ?? 0);
-    const uaWood = isPlayer ? this.ctx.stockpile.wood : (ua.resources.wood ?? 0);
+    // 派系间贸易（玩家不参与——玩家是神谕，只有卡片/指令，无派系身份；2026-08-13 架构裁决）
+    const uaFood = ua.resources.food ?? 0;
+    const uaWood = ua.resources.wood ?? 0;
     const rate = uaFood < f.tradeFoodScarceAt ? f.tradeRateShort : f.tradeRateNormal;
     if (uaWood >= f.tradeWood) {
-      if (isPlayer) {
-        this.ctx.stockpile.wood = uaWood - f.tradeWood;
-        this.ctx.stockpile.food = Math.min(f.resourceCap, (this.ctx.stockpile.food ?? 0) + f.tradeWood * rate);
-      } else {
-        ua.resources.wood = uaWood - f.tradeWood;
-        ua.resources.food = (ua.resources.food ?? 0) + f.tradeWood * rate;
-      }
+      ua.resources.wood = uaWood - f.tradeWood;
+      ua.resources.food = (ua.resources.food ?? 0) + f.tradeWood * rate;
       // 记账逆差：a 付出木、得到食 → 对 b 顺差（b 逆差）
       const balA = (ua.tradeBalance.get(ub.id) ?? 0);
       const balB = (ub.tradeBalance.get(ua.id) ?? 0);
