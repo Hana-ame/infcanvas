@@ -11,7 +11,7 @@ import { INTERESTS, allInterests } from '../defs/interests';
 import { MARKOV_BIAS, SERIES_TO_DESIRE } from '../defs/behavior';
 import { TUNING, type PawnTuning, type DesireTuning, type TuningConfig } from '../defs/tuning';
 import { BASE_CARD_DEFS } from '../defs/cards';
-import { cardPredicateOf, weightRulesOf } from '../mods/registry';
+import { cardPredicateOf, weightRulesOf } from '../mods/query';
 import { JOBS } from '../defs/jobs';
 
 export type SkillId = 'work' | 'fight' | 'social' | 'faith' | 'craft';

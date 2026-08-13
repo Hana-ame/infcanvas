@@ -981,3 +981,9 @@ registerHook('beforeRoll', (prob, ctx) => ...);          // check 流程阶段�
   - `huntCombat`：huntTarget 到近旁后推进攻击（fight 技能加成伤害），猫死掉肉
   - `campRebuild`：营火被拆后 60s 轮询重建（无 autobuild 时营地是命根子）
   - 狩猎卡 `when:['huntNearby']`（谓词先于卡注册，卡工厂构建时即解析）
+
+### 17. 单系统独立测试（2026-08-14）
+
+- **minCtx helper**（`src/sim/__tests__/helpers/minCtx.ts`）：构造最小 SimContext（真实 World/EventBus/SimRng/ModRegistry/TUNING + 桩方法），`attach(ctx, sys)` 注入系统、直接 `update()`/发 bus 事件验证。桩方法用 `_` 前缀字段暴露观测（`_log/_spawned/_killed/_moodAdj/_unlockedTechs…`），测试可 override 任意成员（如 `isNight: () => true`、固定 rng）。
+- **16 系统独立测试文件**：`src/sim/__tests__/systems/*.test.ts` 每系统一文件，覆盖各自核心行为（衰减/归属/招募/产出/袭击/决策…）。
+- **依赖解环**：`mods/query.ts` 独立承载跨实例共享表（predicateStore/weightRuleStore/socialLinesStore）+ 查询函数；registry/pawn/socialSystem 单向依赖，消除 registry↔pawn 循环 import。

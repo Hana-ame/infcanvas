@@ -5,7 +5,7 @@ import type { GameSystem } from './registry';
 import type { SimContext } from './context';
 import type { EventBus } from '../core/events';
 import { fulfill } from '../core/desires';
-import { socialLinesOf } from '../mods/registry';
+import { socialLinesOf } from '../mods/query';
 import { CHUNK_SIZE } from '../core/world';
 
 export class SocialSystem implements GameSystem {

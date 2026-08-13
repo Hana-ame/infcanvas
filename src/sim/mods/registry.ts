@@ -34,6 +34,7 @@ import { makeExploreCard } from '../defs/explore';
 import { BUILTIN_WEIGHT_RULES, type WeightRule } from '../defs/weightRules';
 import { SOCIAL_LINES, type SocialLineTable, type TopicTemplate } from '../defs/socialLines';
 import type { CardContext } from '../ai/pawn';
+import { predicateStore, weightRuleStore, socialLinesStore } from './query';
 
 // 生命周期钩子上下文（step:before / step:after，见 sim.step）
 export interface HookContext {
@@ -56,18 +57,8 @@ export class ModRegistry {
   recipesMap = new Map<string, RecipeDef>();
   // 行为结果学习表（EWA）：per-key scale 归一化。跨 Sim 实例共享（与 DESIRES 同策略）
   private static leanStore: Map<LeanKey, LeanDef> = new Map(Object.entries(BUILTIN_LEANS));
-  // 卡条件谓词表（行为树条件节点）：内置谓词 + mod 扩展。跨 Sim 实例共享
-  // 公开 static：模块级查询函数 cardPredicateOf 与实例 registerPredicate 共用（跨 Sim 实例共享）
-  static predicateStore: Map<string, (c: CardContext) => boolean> = new Map(Object.entries(BUILTIN_PREDICATES));
-  // 抽卡权重调制规则表（权重合成流水线）：规则顺序 = 执行顺序。跨 Sim 实例共享
-  static weightRuleStore: Map<string, WeightRule> = new Map(BUILTIN_WEIGHT_RULES.map((r) => [r.id, r]));
-  // 社交对话模板表（文本层）：微互动 + 话题。跨 Sim 实例共享
-  static socialLinesStore: SocialLineTable = {
-    greet: [...SOCIAL_LINES.greet],
-    positive: [...SOCIAL_LINES.positive],
-    negative: [...SOCIAL_LINES.negative],
-    topics: [...SOCIAL_LINES.topics], // 模板含函数，浅拷贝即可
-  };
+  // 卡条件谓词表 / 权重规则表 / 社交模板表：定义移到 mods/query.ts（2026-08-14
+  // 打破 registry↔pawn 循环依赖，见 query.ts 头注释）。此处仅从 query 存取。
   events: ScriptedEvent[] = [];
   expansionPlans: ExpansionPlan[] = [];
   tuning: TuningConfig;
@@ -436,47 +427,48 @@ export class ModRegistry {
   // 卡条件谓词注册（行为树条件节点）：卡 when: ['hasChurch'] → registerPredicate('hasChurch', ...)
   registerPredicate(id: string, fn: (c: CardContext) => boolean): this {
     // 静态共享键：幂等（重复挂载同包安全，保持首次定义）；不同 mod 想替换用新 id
-    if (ModRegistry.predicateStore.has(id)) return this;
-    ModRegistry.predicateStore.set(id, fn);
+    if (predicateStore.has(id)) return this;
+    predicateStore.set(id, fn);
     return this;
   }
 
   // 谓词查询（卡工厂组合条件用）；缺省抛错（拼错 id 立即暴露，提示注册）
   cardPredicate(id: string): (c: CardContext) => boolean {
-    const fn = ModRegistry.predicateStore.get(id);
+    const fn = predicateStore.get(id);
     if (!fn) throw new Error(`mod: 条件谓词 "${id}" 未注册，请先用 registerPredicate 注册`);
     return fn;
   }
 
   // 权重调制规则注册（权重合成流水线）：插入内置规则之前（before 锚点）；缺省追加表尾
   registerWeightRule(rule: WeightRule, before?: string): this {
-    if (ModRegistry.weightRuleStore.has(rule.id)) throw new Error(`mod: 权重规则 "${rule.id}" 已存在，请用不同 id`);
-    const rules = [...ModRegistry.weightRuleStore.values()];
+    if (weightRuleStore.has(rule.id)) throw new Error(`mod: 权重规则 "${rule.id}" 已存在，请用不同 id`);
+    const rules = [...weightRuleStore.values()];
     const idx = before ? rules.findIndex((r) => r.id === before) : -1;
     if (before && idx >= 0) rules.splice(idx, 0, rule);
     else rules.push(rule);
-    ModRegistry.weightRuleStore = new Map(rules.map((r) => [r.id, r]));
+    weightRuleStore.clear();
+    for (const r of rules) weightRuleStore.set(r.id, r);
     return this;
   }
 
   // 社交对话模板：追加一条微互动文案（greet/positive/negative）
   registerLine(category: keyof Pick<SocialLineTable, 'greet' | 'positive' | 'negative'>, line: string): this {
     // 静态共享键：同文案重复注册幂等
-    if (!ModRegistry.socialLinesStore[category].includes(line)) ModRegistry.socialLinesStore[category].push(line);
+    if (!socialLinesStore[category].includes(line)) socialLinesStore[category].push(line);
     return this;
   }
 
   // 社交对话模板：追加一条话题模板（历史事件 type → 文案）；同事件多条按注册序取用
   registerTopicTemplate(tpl: TopicTemplate): this {
-    ModRegistry.socialLinesStore.topics.push(tpl);
+    socialLinesStore.topics.push(tpl);
     return this;
   }
 
   // 权重规则替换（保持位置）：mod 调整内置规则的行为（如改天赋倍率的合成方式）
   overrideWeightRule(id: string, apply: WeightRule['apply']): this {
-    const old = ModRegistry.weightRuleStore.get(id);
+    const old = weightRuleStore.get(id);
     if (!old) throw new Error(`mod: 覆盖目标权重规则 "${id}" 不存在，请先 registerWeightRule`);
-    ModRegistry.weightRuleStore.set(id, { ...old, apply });
+    weightRuleStore.set(id, { ...old, apply });
     return this;
   }
 
@@ -520,20 +512,5 @@ function deepMerge<T>(target: T, patch: DeepPartial<T>): T {
   return (patch === undefined ? target : patch) as T;
 }
 
-// 谓词查询（卡工厂组合条件用）；缺省抛错（拼错 id 立即暴露，提示注册）
-// 跨 Sim 实例共享：任何实例 registerPredicate 后全项目卡表生效
-export function cardPredicateOf(id: string): (c: CardContext) => boolean {
-  const fn = ModRegistry.predicateStore.get(id);
-  if (!fn) throw new Error(`mod: 条件谓词 "${id}" 未注册，请先用 registerPredicate 注册`);
-  return fn;
-}
-
-// 权重规则流水线查询（effectiveWeight 合成用；规则顺序 = 表序，跨 Sim 实例共享）
-export function weightRulesOf(): WeightRule[] {
-  return [...ModRegistry.weightRuleStore.values()];
-}
-
-// 社交对话模板查询（社交系统取文案用；跨 Sim 实例共享）
-export function socialLinesOf(): SocialLineTable {
-  return ModRegistry.socialLinesStore;
-}
+// 模块级查询函数 cardPredicateOf/weightRulesOf/socialLinesOf 已移到 mods/query.ts（2026-08-14）
+export { cardPredicateOf, weightRulesOf, socialLinesOf } from './query';

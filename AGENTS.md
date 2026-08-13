@@ -36,8 +36,18 @@
 - 寻路：A* 二叉堆 + 篝火航点中转（锚点对段缓存）+ 迭代上限双档（无火 15000 / 有火 40000，显式 maxIter 尊重钳制）
 - 小人卡实例必须按人克隆（initSlots），mastery/熟练度不串
 
+## 插件化纪律（重要，2026-08-14）
+
+**一切皆插件，系统必须可单独装卸与单独测试。**
+
+- **每个系统都应可独立测试**：系统（`GameSystem`）只依赖 `SimContext` 接口、不碰 Sim 本体，单测可直接构造最小 ctx 注入验证；新增系统必须能脱离完整 Sim 单独跑。
+- **系统可装卸**：新增功能优先做成 mod（`registerSystemDef`/`disableSystem`/`registerCardDef`/`registerWork`/`registerEnemy`/`overrideTuning`…），而非写死进 `SYSTEM_DEFS`/`BASE_CARD_DEFS`。玩法包通过 `disableSystem(id)` 卸载默认系统。
+- **不往内核塞玩法**：采集/狩猎/耕种/科技等玩法应作为 mod 提供；内核只留"需求/决策/采集/社交"等基础系统。改内核前先问"能不能做成 mod"。
+- **卸载不破坏核心**：任何系统被禁用后 Sim 仍能跑（装配过滤见 `sim.registerSystems`）；依赖被卸载系统的代码要条件化，避免引用已卸载实例。
+
 ## 命令
 
-- 测试：`npm test`（vitest，211+ 用例）；类型：`npx tsc --noEmit`
+- 测试：`npm test`（vitest，276+ 用例，其中 52 个为最小 ctx 独立系统测试）；类型：`npx tsc --noEmit`
+- 单系统独立测试：`npx vitest run <文件> -t "<用例名>"`（系统只依赖 SimContext，可脱离完整 Sim 单独验证）
 - 纯逻辑游玩：`npx tsx scripts/play.ts`（CLI：state/pawns/sel/move/build/job/oracle/map/f）
 - 联机 server：`npm run server -- 8080`，客户端 `?remote=ws://127.0.0.1:8080`（神谕抽卡默认启用，LLM_ENDPOINT 仅可选增强）
