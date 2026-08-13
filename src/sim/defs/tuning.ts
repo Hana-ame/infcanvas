@@ -547,7 +547,7 @@ export const TUNING: TuningConfig = {
     raidCountBase: 2,
     raidCountPerPawn: 0.35,
     meleeRange: 5,
-    buildingDmg: 6,   // 建筑抗拆：篝火 80HP ≈ 13s 拆（原 15/s 五秒拆火 → 无火 SAN 崩 → 死亡循环）
+    buildingDmg: 3,   // 建筑抗拆：80HP 建筑 ≈ 27s 拆（再下调：重玩发现 well 被 5 狼 3 秒拆 → 反复重建循环，水维度迟迟不起）
     buildingRadius: 6,
     minDodge: 0.05,
     dodgeBase: 30,

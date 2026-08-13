@@ -17,7 +17,7 @@ export class FarmSystem implements GameSystem {
       if (!recipe || recipe.kind !== 'passive') continue;
       const x = key % this.ctx.world.width;
       const y = Math.floor(key / this.ctx.world.width);
-      this.ctx.addProductionNear(x, y, recipe.output.item, recipe.output.amount * dt);
+      this.ctx.addProductionNear(x, y, recipe.output.item, recipe.output.amount * dt, b.faction);
     }
   }
 }

@@ -192,8 +192,16 @@ export class SocialUnitSystem implements GameSystem {
 
   // 产出归集（Q9：各单位营地建筑产出归该单位；玩家单位=全局）
   // 在世界坐标附近找最近单位，把产出记入其库存
-  addProductionNear(x: number, y: number, item: string, amount: number): void {
+  // 产出归集（Q9 + 玩家生产主池）：
+  // 建筑 faction='player'（玩家/探索/神谕蓝图建成）→ 产出直接进全局生产池；
+  // 否则（野营 auto 建筑）→ 归最近单位——曾踩坑：well 被野营 campfire 抢归集，
+  // 玩家水井产水全进野营库存（全局 water 恒 0）
+  addProductionNear(x: number, y: number, item: string, amount: number, faction?: string): void {
     const f = this.ctx.tuning.faction;
+    if (faction === 'player') {
+      this.ctx.stockpile[item] = Math.min(f.resourceCap, (this.ctx.stockpile[item] ?? 0) + amount);
+      return;
+    }
     let best: SocialUnit | null = null;
     let bestD = Infinity;
     for (const u of this.units.values()) {

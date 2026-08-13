@@ -92,6 +92,15 @@
 - 根因：utility 16 低于其他卡，pickBest 择优永远不选
 - 修复：utility 40 + weight 8（娱乐语境下的探索冲动：抽到即可执行）
 
+### 重玩验证（修复后）
+- **渐进权重确认**：科技解锁初期只有娱乐探索命中（D2 解锁→立即"灵光一现建水井"），
+  权重 ramp 300s 后普通建造接管（techBuildWeight 0→1，workBuild 无队列按权重规划）
+- **水维度归集修复**（💧 恒 0 → 500）：玩家建的建筑（well）产水被野营 campfire 抢归集
+  （addProductionNear 按"最近单位"归集）→ 改为按建筑 faction：'player' 建筑产出进全局生产池；
+  转发层 Sim.addProductionNear 补 faction 参数（曾漏传导致修复无效）
+- **平衡**：buildingDmg 6→3（well 被 5 狼 3 秒拆 → 反复重建循环）；探索落点 3-6→2-5（靠内圈）
+- 长局 3600s：💧500(cap) 🍖402 🌲562 👥9-13 稳定，寻路风暴无复发（30s 跑完）
+
 ### 实验结果：殖民地能跑起来 ✅
 - 人口 4→10（流浪者持续加入）；toy/well/house/raft 全部通过"娱乐探索"建成
 - 科技顺序解锁：toyTech→wellTech→houseTech→raftTech→bridgeTech→boatTech

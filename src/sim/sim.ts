@@ -727,8 +727,8 @@ export class Sim implements SimContext {
   }
 
   // 产出归集（Q9）：建筑附近单位获得产出（玩家单位=全局）
-  addProductionNear(x: number, y: number, item: string, amount: number): void {
-    this.socialUnits.addProductionNear(x, y, item, amount);
+  addProductionNear(x: number, y: number, item: string, amount: number, faction?: string): void {
+    this.socialUnits.addProductionNear(x, y, item, amount, faction);
   }
 
   // 建筑升级（篝火→教堂）
