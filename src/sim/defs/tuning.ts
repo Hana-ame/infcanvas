@@ -270,6 +270,11 @@ export interface AutobuildTuning {
   churchWood: number;
   wallWood: number;        // 围墙余木阈值
   wallTarget: number;
+  fenceWood: number;       // 篱笆余木阈值（低：早期圈地）
+  fenceTarget: number;     // 篱笆段数目标
+  rampartWood: number;     // 城墙余木阈值（更高：富余才筑城墙）
+  rampartOre: number;      // 城墙所需矿
+  rampartTarget: number;   // 城墙段数目标
   spotRingMin: number;     // 找建造位环半径下限
   spotRingMax: number;
   spotAttempts: number;    // 找位尝试次数
@@ -706,6 +711,12 @@ export const TUNING: TuningConfig = {
     churchWood: 25,
     wallWood: 60,
     wallTarget: 6,
+    fenceWood: 30,      // 木 > 30 围篱笆（早期）
+    fenceTarget: 4,
+    rampartWood: 100,   // 木 > 100 才筑城墙（富余防御）
+    rampartOre: 6,      // 城墙耗矿 6
+    rampartTarget: 4,   // 4 段城墙围营地
+
     spotRingMin: 2,          // 找建造位环半径
     spotRingMax: 6,
     spotAttempts: 12,

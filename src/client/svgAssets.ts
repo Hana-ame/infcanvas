@@ -100,6 +100,21 @@ export const BUILDING_SVG: Record<string, string> = {
     <rect x="22" y="14" width="4" height="14" fill="#7a6a4a"/>
     <path d="M10 28 H22" stroke="#6a5a3a" stroke-width="3"/>
   `),
+  fence: svg(`
+    <rect x="4" y="4" width="4" height="24" fill="#8a6a3a" rx="1"/>
+    <rect x="14" y="4" width="4" height="24" fill="#8a6a3a" rx="1"/>
+    <rect x="24" y="4" width="4" height="24" fill="#8a6a3a" rx="1"/>
+    <rect x="2" y="8" width="28" height="4" fill="#a0804a" rx="1"/>
+    <rect x="2" y="18" width="28" height="4" fill="#a0804a" rx="1"/>
+  `),
+  rampart: svg(`
+    <rect x="2" y="10" width="28" height="14" fill="#7a7268" stroke="#5a544c" stroke-width="1.5"/>
+    <rect x="2" y="6" width="6" height="6" fill="#8a8278"/>
+    <rect x="13" y="6" width="6" height="6" fill="#8a8278"/>
+    <rect x="24" y="6" width="6" height="6" fill="#8a8278"/>
+    <rect x="2" y="24" width="28" height="4" fill="#6a645c"/>
+    <path d="M6 10 L8 4 L12 10" fill="#6a645c"/>
+  `),
   raft: svg(`
     <path d="M2 22 L10 10 L26 14 L30 24 Z" fill="#a07030" stroke="#7a5220" stroke-width="1.5"/>
     <path d="M2 22 L30 24" stroke="#8a5a2a" stroke-width="2"/>

@@ -92,6 +92,8 @@ export const TILES: Record<string, TileDef> = {
 export const BUILDINGS: Record<string, BuildingDef> = {
   campfire: { id: 'campfire', name: '篝火', size: { x: 1, y: 1 }, hp: 80, color: '#4a2a1a', emoji: '🔥', passable: true, buildTime: 1, workRadius: 3, upgradesTo: 'church', emitsLight: 4, tags: ['anchor', 'warmth', 'heal', 'pray', 'social'], aura: { radius: 6, moodPerSec: 0.5, restPerSec: 0.3 } },
   wall: { id: 'wall', name: '墙', size: { x: 1, y: 1 }, hp: 200, color: '#8a8a8a', emoji: '🧱', passable: false, buildTime: 3, tags: ['barrier'] },
+  fence: { id: 'fence', name: '篱笆', size: { x: 1, y: 3 }, hp: 100, color: '#8a6a3a', emoji: '🪵', passable: false, buildTime: 2, costWood: 6, tags: ['barrier', 'fence'] },
+  rampart: { id: 'rampart', name: '城墙', size: { x: 1, y: 4 }, hp: 600, color: '#7a7268', emoji: '🏰', passable: false, buildTime: 10, costWood: 20, costOre: 6, tags: ['barrier', 'rampart'] },
   floor: { id: 'floor', name: '地板', size: { x: 1, y: 1 }, hp: 50, color: '#b8a884', emoji: '⬜', passable: true, buildTime: 1, tags: [] },
   door: { id: 'door', name: '门', size: { x: 1, y: 1 }, hp: 100, color: '#7a5a1a', emoji: '🚪', passable: true, buildTime: 2, tags: ['barrier'] },
   farm: { id: 'farm', name: '农田', size: { x: 2, y: 2 }, hp: 80, color: '#6a8a3a', emoji: '🌾', passable: true, buildTime: 4, workRadius: 0, tags: ['farm', 'food'], recipe: 'farm' },
