@@ -221,12 +221,25 @@ export class Sim implements SimContext {
   }
 
   // 抽到科技卡 → 解锁（幂等）
+  // 科技解锁时间（渐进权重：科技建筑解锁后建造倾向随时间爬升——用户设计）
+  techUnlockedAt: Record<string, number> = {};
+
   unlockTech(techId: string): boolean {
     if (this.techs.has(techId)) return false;
     this.techs.add(techId);
+    this.techUnlockedAt[techId] = this.time;
     const def = TECHS[techId];
     this.logEvent(`🔬 科技解锁：${def?.name ?? techId}`);
     return true;
+  }
+
+  // 科技建筑建造权重（0→1 渐进）：解锁时 0（只有娱乐探索卡能命中），
+  // 随解锁时长线性爬升到 1（普通建造卡也能自动建）——tuning.tech.weightRamp
+  techBuildWeight(techId: string): number {
+    const at = this.techUnlockedAt[techId];
+    if (at === undefined) return 0;
+    const ramp = this.mods.tuning.tech.weightRamp;
+    return Math.min(1, (this.time - at) / ramp);
   }
 
   constructor(opts: SimOptions = {}) {

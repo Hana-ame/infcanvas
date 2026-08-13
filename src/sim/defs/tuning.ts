@@ -342,6 +342,7 @@ export interface EconomyTuning {
 export interface TechTuning {
   poolInterval: number; // 科技抽卡间隔（秒）：独立池每轮抽一次
   poolChance: number;   // 每轮抽出概率（留空档，渐进）
+  weightRamp: number;   // 科技建筑建造权重爬升时长（秒）：解锁时 0→ramp 后 1
 }
 
 export interface PathTuning {
@@ -761,6 +762,7 @@ export const TUNING: TuningConfig = {
   tech: {
     poolInterval: 120, // 科技独立抽卡池：每 120s 抽一轮
     poolChance: 0.6,   // 60% 抽出（"往后抽卡"渐进解锁）
+    weightRamp: 300,   // 科技建筑权重爬升 300s：解锁初期只有娱乐探索能建，5 分钟后普通建造接管
   },
   economy: {
     alpha: 0.15,   // 预期平滑：单次产出/消费对预期的权重

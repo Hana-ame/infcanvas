@@ -3,6 +3,7 @@
 import type { GameSystem } from './registry';
 import type { SimContext } from './context';
 import type { PositionData } from '../sim';
+import { TECHS } from '../defs/techs';
 import type { EventBus } from '../core/events';
 import type { PawnState } from '../sim';
 import type { BehaviorCard, CardContext, CardView, BehaviorIntent } from '../ai/pawn';
@@ -289,7 +290,61 @@ export class BehaviorSystem implements GameSystem {
     return far;
   }
 
+  // 科技建筑渐进权重（用户设计）：解锁初期只有娱乐探索卡能建（权重 0），
+  // 随解锁时长 techBuildWeight 0→1 爬升——普通建造卡在无队列时按权重概率规划蓝图
+  private techBuildChance(c: SimContext, eid: number, st: PawnState): void {
+    const pos = c.readPosition(eid);
+    if (!pos) return;
+    const t = c.tuning.tech;
+    // 已解锁的科技建筑（按解锁顺序，取"营地还没有的"）
+    const candidates: { techId: string; defId: string }[] = [];
+    for (const techId of Object.keys(c.techs)) {
+      const w = c.techBuildWeight(techId);
+      if (w <= 0) continue;
+      for (const defId of TECHS[techId]?.unlocks ?? []) {
+        if (c.world.hasBuildingWithTag(defId)) continue;
+        if (c.buildQueue.some((b) => b.defId === defId)) continue;
+        candidates.push({ techId, defId });
+      }
+    }
+    if (candidates.length === 0) { st.job = '闲逛'; return; }
+    // 按权重概率：权重 1 → 每候选 10% 概率规划（渐进接管）；权重低 → 更少
+    for (const cand of candidates) {
+      const w = c.techBuildWeight(cand.techId);
+      if (c.rng.next() < w * 0.1) {
+        const def = c.buildingDef(cand.defId);
+        if (!def) continue;
+        // 营地旁环扫落点（复用探索落点逻辑）
+        let camp: { x: number; y: number } | null = null;
+        for (const [k, b] of c.world.buildings) {
+          if (b.def.id === 'campfire') { camp = { x: k % c.world.width, y: Math.floor(k / c.world.width) }; break; }
+        }
+        if (!camp) continue;
+        for (let r = 3; r <= 6; r++) {
+          for (let dy = -r; dy <= r; dy++) {
+            for (let dx = -r; dx <= r; dx++) {
+              if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+              const x = camp.x + dx;
+              const y = camp.y + dy;
+              if (c.world.canBuildFootprint(x, y, def)) {
+                c.issueCommand({ type: 'build', x, y, buildingId: cand.defId });
+                c.logEvent(`🏗 #${eid} 按经验规划建造${def.name}（科技权重已就位）`);
+                return;
+              }
+            }
+          }
+        }
+      }
+    }
+    st.job = '闲逛';
+  }
+
   private workBuild(c: SimContext, eid: number, st: PawnState): void {
+    if (c.buildQueue.length === 0) {
+      // 无队列 → 科技建筑渐进权重接管（解锁初期概率低，权重满后稳定自动建）
+      this.techBuildChance(c, eid, st);
+      return;
+    }
     if (c.buildQueue.length > 0) {
       // 找最近的蓝图（而不是永远第一个）
       const pos = c.readPosition(eid);

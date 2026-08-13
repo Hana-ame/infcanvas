@@ -56,6 +56,7 @@ export interface SimContext {
   env: { raining: boolean; temperature: number };
   factionPriority: Record<string, number>; // 派系工作优先级（用户 Q8）
   techs: Set<string>; // 已解锁科技（神谕抽卡）
+  techBuildWeight(techId: string): number; // 科技建筑建造权重（0→1 渐进：解锁初期仅娱乐探索可命中）
   unlockTech(techId: string): boolean;
   oracleGoal: { workType: string; label: string; until: number } | null; // 神谕目标（影响目标层）
   // 神谕设定目标（策略卡 = 神谕目标：只调制工作系列权重 ×oracleGoalMul，不插小人卡槽、不碰选择链）
