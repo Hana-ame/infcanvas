@@ -285,10 +285,17 @@ overrideTuning(patch: DeepPartial<TuningConfig>): this  // 覆盖平衡参数（
 ### 10.1 系统装配表（defs/systems.ts）
 
 - `SYSTEM_DEFS`：15 个系统按表序装配（执行顺序 = 表序），系统 id 即锚点
+  - （2026-08-14 更新：实际 **16** 个系统，见下方"系统装配过滤"补充——原行"15"为历史记录，按铁律保留不改）
 - `SystemDef`：id/label/category/ctor（依赖注入 sim）+ `before?`（mod 插入锚点）
 - ModRegistry：`registerSystemDef(def)`（缺省追加表尾，`before` 指定插在某系统前）、旧式 `registerSystem(实例)` 兼容
 - 单例回填：替换 `behavior`/`socialUnit` 系统后，intent/work 注册与 bus 回调仍指向新实例
 - Sim 暴露 `systemIds` 只读视图（调试/工具/测试）
+
+### 10.1.1 系统装配过滤与卸载（2026-08-14 追加）
+
+- **`disableSystem(id)`**（ModRegistry）：声明禁用某系统（内置或 mod 注册的），`sim.registerSystems` 装配时 `isSystemEnabled` 过滤跳过——"插件可撤"（采集狩猎玩法包卸载 farm/craft/techPool/autobuild/repair 即此机制）
+- **卸载不破坏核心**：① `sim.socialUnits` 字段默认回落 `NOOP_SOCIAL_UNITS` 空实现（socialUnit 系统卸载时消费方——needsSystem 记需求/socialSystem 交流历史/sim 自身归属回调——契约不变不崩，启用时回填真实例）；② `sim.behavior` 可空，mods.intents/works 挂接判空条件化；③ 构造器不再预建系统实例（曾双重实例化：禁用 behavior 时孤儿实例吞掉 intents 挂接）
+- 回归保护：`src/sim/__tests__/uninstall.test.ts` 20 用例（16 系统逐个卸载 / no-op 契约 / 组合卸载 / 全量卸载）
 
 ### 10.2 卡条件谓词表（行为树条件节点）
 

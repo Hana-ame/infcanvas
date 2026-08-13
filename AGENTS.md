@@ -47,7 +47,7 @@
 
 ## 命令
 
-- 测试：`npm test`（vitest，276+ 用例，其中 52 个为最小 ctx 独立系统测试）；类型：`npx tsc --noEmit`
+- 测试：`npm test`（vitest，296+ 用例，其中 52 个为最小 ctx 独立系统测试、20 个为系统卸载 smoke 测试）；类型：`npx tsc --noEmit`
 - 单系统独立测试：`npx vitest run <文件> -t "<用例名>"`（系统只依赖 SimContext，可脱离完整 Sim 单独验证）
 - 纯逻辑游玩：`npx tsx scripts/play.ts`（CLI：state/pawns/sel/move/build/job/oracle/map/f）
 - 联机 server：`npm run server -- 8080`，客户端 `?remote=ws://127.0.0.1:8080`（神谕抽卡默认启用，LLM_ENDPOINT 仅可选增强）
