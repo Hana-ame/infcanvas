@@ -19,11 +19,10 @@ describe('CardSystem 独立测试（最小 ctx，无 Sim）', () => {
     sys.update(1);
     expect(st.lastDecision).toBeDefined(); // 记录了决策
     expect(st.lastDecision!.drawn.length).toBeGreaterThan(0);
-    // 卡满足标记后 urgent 会走 eat 意图：验证在 update 后卡系统不再报错即可，意图值随卡池随机
-    // 饥饿小人应决策到 eat（urgent 卡权重最高）；断言 picked 在 drawn 中即可（卡池含 eat 卡）
-    // 饥饿小人：卡池必有进食卡（slots 里存在）——drawn 是 3 张抽样，不能保证被抽中
+    // 加固：选中的卡必须来自抽出的手牌（picked ∈ drawn），这是决策语义的硬约束
+    expect(st.lastDecision!.drawn).toContain(st.lastDecision!.picked);
+    // 饥饿小人的卡池必装配进食卡（slots 是装配结果，与随机抽样无关，可稳定断言）
     expect(st.slots.some((c) => c?.id === 'eat')).toBe(true);
-    expect(st.lastDecision!.picked).toBeTruthy();
   });
 
   it('决策记录：drawn 含抽到的卡、picked 为选中卡', () => {

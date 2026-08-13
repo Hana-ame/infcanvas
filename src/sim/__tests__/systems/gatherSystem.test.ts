@@ -3,6 +3,8 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { GatherSystem, carryCapOf, capGainTo } from '../../systems/gatherSystem';
 import { makeMinCtx, attach } from '../helpers/minCtx';
+import { World } from '../../core/world';
+import { TILES } from '../../defs';
 
 describe('GatherSystem 独立测试（最小 ctx，无 Sim）', () => {
   let ctx = makeMinCtx(5);
@@ -27,24 +29,26 @@ describe('GatherSystem 独立测试（最小 ctx，无 Sim）', () => {
   });
 
   it('采集食物（growable harvest 产物 food）→ 进个人口袋（私有化）', () => {
-    const sys = attach(ctx, new GatherSystem(ctx));
-    const eid = ctx.spawnPawn(10, 10);
-    const st = ctx._pawnStates.get(eid)!;
-    // 手动设置：模拟采集浆果（食物）
+    // 背景：默认 TILES 无产 food 的 tile（树→wood、矿→ore），旧版此用例的条件式断言
+    // 从未走到私有化分支（假通过）。加固：自定义 World 注入产 food 的浆果丛 tile，
+    // 真实触发 gatherSystem 的私有化路径（food 进个人 inventory、不进全局 stockpile）。
+    const berryWorld = new World(5, { tiles: {
+      ...TILES,
+      berry: { id: 'berry', name: '浆果丛', passable: true, buildable: false, growable: true, color: '#a44',
+        harvest: { product: 'food', time: 0.5, yieldSuccess: 5, yieldFail: 1, dc: 10 } },
+    } });
+    const ctxB = makeMinCtx(5, { world: berryWorld });
+    berryWorld.setTile(10, 10, 'berry');
+    const sys = attach(ctxB, new GatherSystem(ctxB));
+    const eid = ctxB.spawnPawn(10, 10);
+    const st = ctxB._pawnStates.get(eid)!;
     st.chopXY = { x: 10, y: 10 };
     st.chopProgress = 0;
-    // 直接调用内部逻辑太脆，改为验证私有化路径：食物产出进 inventory 而非 stockpile
-    // 用 growable+harvest 产物是 food 的 tile（若无则跳过——测试世界确定有：浆果丛）
-    ctx.setPosition(eid, { x: 10, y: 10 });
-    const tile = ctx.world.getTileDef(10, 10);
-    const time = tile.harvest?.time ?? ctx.tuning.gather.chopTime;
-    for (let i = 0; i < Math.ceil(time) + 2; i++) sys.update(1);
-    // 无论产物是什么，规则是：food → 个人，其他 → 全局
-    const st2 = ctx._pawnStates.get(eid)!;
-    if (st2.chopXY === undefined && (st2.inventory?.['food'] ?? 0) > 0) {
-      // 若采到食物，个人口袋有、全局无
-      expect(ctx.stockpile.food ?? 0).toBe(0);
-    }
+    for (let i = 0; i < 4; i++) sys.update(1); // time=0.5s，跑 4s 必采完
+    const st2 = ctxB._pawnStates.get(eid)!;
+    expect(st2.chopXY).toBeUndefined(); // 采完
+    expect((st2.inventory?.['food'] ?? 0)).toBeGreaterThan(0); // 食物进个人口袋
+    expect(ctxB.stockpile.food ?? 0).toBe(0); // 不进全局
   });
 
   it('carryCapOf / capGainTo：负重钳制工具函数', () => {

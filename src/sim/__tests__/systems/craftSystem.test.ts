@@ -19,8 +19,8 @@ describe('CraftSystem 独立测试（最小 ctx，无 Sim）', () => {
 
   it('workbench（craft 建筑）→ 木材变工具（batch 配方）', () => {
     const sys = attach(ctx, new CraftSystem(ctx));
-    const def = ctx.buildingDef('workbench');
-    if (!def) return; // 无工作台定义则跳过
+    // 加固：workbench 是内置建筑表成员，缺失即测试失败（原先 if(!def) return 会静默假通过）
+    expect(ctx.buildingDef('workbench')).toBeDefined();
     placeBuilding('workbench');
     ctx.stockpile.wood = 100;
     const toolsBefore = ctx.stockpile.tools ?? 0;
@@ -32,8 +32,7 @@ describe('CraftSystem 独立测试（最小 ctx，无 Sim）', () => {
 
   it('材料不足 → 不产出（等待）', () => {
     const sys = attach(ctx, new CraftSystem(ctx));
-    const def = ctx.buildingDef('workbench');
-    if (!def) return;
+    expect(ctx.buildingDef('workbench')).toBeDefined(); // 内置表成员，缺失即失败
     placeBuilding('workbench');
     ctx.stockpile.wood = 0;
     for (let i = 0; i < 120; i++) sys.update(1);

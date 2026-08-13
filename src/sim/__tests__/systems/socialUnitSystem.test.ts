@@ -61,6 +61,7 @@ describe('SocialUnitSystem 独立测试（最小 ctx，无 Sim）', () => {
 
   it('遭袭计数达标（≥3 次 💥）+ 威胁在场 → 另起篝火', () => {
     const sys = new SocialUnitSystem(ctx);
+    sys.init(ctx.bus);
     const key = placeCampfire(20, 20);
     const eid = ctx.spawnPawn(21, 20);
     sys.onCampfireBuilt(key);
@@ -70,9 +71,8 @@ describe('SocialUnitSystem 独立测试（最小 ctx，无 Sim）', () => {
     for (let i = 0; i < f.migrateRaidThreshold; i++) sys.addMemory(key, '💥 建筑被摧毁（测试）');
     // 当前有威胁（猫在营地附近）
     ctx.hostiles.push({ x: 22, y: 20, hp: 10, maxHp: 10, targetX: 20, targetY: 20, enemyId: 'cat', name: '野猫' });
-    // 触发迁移检查
-    const sys2 = new SocialUnitSystem(ctx);
-    for (let i = 0; i < Math.ceil(f.migrateCheckEvery) + 2; i++) sys2.update(1);
+    // 加固：同实例跑迁移检查（原先另建 sys2 造成"双实例共享 bus 订阅"的误导性写法）
+    for (let i = 0; i < Math.ceil(f.migrateCheckEvery) + 2; i++) sys.update(1);
     // 新增了一个 campfire（迁移）
     const fires = [...ctx.world.buildings.entries()].filter(([, b]) => b.def.id === 'campfire');
     expect(fires.length).toBeGreaterThanOrEqual(2);

@@ -34,10 +34,9 @@ describe('BuildSystem 独立测试（最小 ctx，无 Sim）', () => {
     const { x, y } = placeSpot();
     ctx.world.placeBuilding(x, y, 'campfire', 'player');
     const churchDef = ctx.buildingDef('church')!;
-    if (!churchDef || !ctx.world.getBuilding(x, y)!.def.upgradesTo) {
-      // 无 church 定义则跳过（buildings 表没有升级链时）
-      return;
-    }
+    // 加固：church 是内置建筑表成员且 campfire.upgradesTo==='church'（升级链固定），缺失即失败
+    expect(churchDef).toBeDefined();
+    expect(ctx.world.getBuilding(x, y)!.def.upgradesTo).toBe('church');
     ctx.buildQueue.push({ x, y, defId: 'church', progress: 0, faction: 'player' });
     for (let i = 0; i < Math.ceil(churchDef.buildTime) + 2; i++) sys.update(1);
     expect(ctx._upgrades.length).toBeGreaterThanOrEqual(1);
