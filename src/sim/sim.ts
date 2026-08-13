@@ -41,6 +41,18 @@ const INTEREST_CARDS: Map<string, BehaviorCard> = new Map(
   Object.values(INTERESTS).filter((i) => i.card).map((i) => [i.card!.id, cardFromDef(i.card!)]),
 );
 
+// socialUnit 系统被卸载时的 no-op 空实现（2026-08-14 插件化加固）：
+// 纪律"卸载不破坏核心"——SimContext.socialUnits 是契约字段，消费方（needsSystem 记需求、
+// socialSystem 交流历史、sim 自身归属回调）无条件调用它；系统卸载时若直接置 null 会空引用。
+// 方案：字段默认回落空实现（调用即无操作），registerSystems 启用时回填真实例。
+const NOOP_SOCIAL_UNITS: SimContext['socialUnits'] = {
+  onCampfireBuilt: () => {},
+  assignPawn: () => {},
+  unassignPawn: () => {},
+  addMemory: () => {},
+  fireHistory: () => [],
+};
+
 // ---- ECS 组件定义 ----
 export interface PositionData { x: number; y: number }
 export interface NeedsData { food: number; rest: number; mood: number; san: number }
@@ -202,13 +214,17 @@ export class Sim implements SimContext {
   recipe(id: string): RecipeDef | undefined {
     return this.mods.recipes[id];
   }
-  private behavior: BehaviorSystem;
+  private behavior: BehaviorSystem | null = null;
   private _started = false;
   private _eventProvider: (() => ScriptedEvent | null) | null = null;
   // LLM 慢决策层注入（构造后由 server 挂接；数据驱动系统装配表经此读取）
   get llmEventProvider(): (() => ScriptedEvent | null) | null { return this._eventProvider; }
   set llmEventProvider(p: (() => ScriptedEvent | null) | null) { this._eventProvider = p; }
-  socialUnits: SocialUnitSystem; // 篝火单位/部落记忆/派系涌现
+  // 篝火单位/部落记忆/派系涌现。
+  // 2026-08-14 插件化加固：socialUnit 系统可被 mod 卸载（disableSystem），
+  // 卸载时此字段回落到 no-op 空实现（见 registerSystems），保证消费方（needsSystem/
+  // socialSystem 及 sim 自身回调）在契约不变的前提下不崩——"卸载不破坏核心"纪律。
+  socialUnits: SimContext['socialUnits'] = NOOP_SOCIAL_UNITS;
 
   // 已抽到的科技（神谕抽卡解锁；tech 未解锁的建筑不可建造）
   techs = new Set<string>();
@@ -286,8 +302,7 @@ export class Sim implements SimContext {
       }
     });
 
-    this.behavior = new BehaviorSystem(this);
-    this.socialUnits = new SocialUnitSystem(this);
+    this.behavior = null;
     this.applyMods();
     this.registerSystems();
     this._started = true;
@@ -320,9 +335,13 @@ export class Sim implements SimContext {
       if (def.id === 'behavior') this.behavior = sys as BehaviorSystem;
       else if (def.id === 'socialUnit') this.socialUnits = sys as SocialUnitSystem;
     }
-    // mod 注册的意图/工作执行器交给行为系统（系统实例确定后挂接）
-    for (const [id, fn] of this.mods.intents) this.behavior.registerIntent(id, fn);
-    for (const [type, fn] of this.mods.works) this.behavior.registerWork(type, fn);
+    // mod 注册的意图/工作执行器交给行为系统（系统实例确定后挂接）。
+    // 2026-08-14 加固：behavior 系统可被 mod 卸载（hunter-gatherer 等玩法包不禁，
+    // 但"卸载不破坏核心"要求卸载后此处跳过而非空引用）。
+    if (this.behavior) {
+      for (const [id, fn] of this.mods.intents) this.behavior.registerIntent(id, fn);
+      for (const [type, fn] of this.mods.works) this.behavior.registerWork(type, fn);
+    }
   }
 
   // ---- 系统可通过 SimContext 访问 ----

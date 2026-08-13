@@ -987,3 +987,14 @@ registerHook('beforeRoll', (prob, ctx) => ...);          // check 流程阶段�
 - **minCtx helper**（`src/sim/__tests__/helpers/minCtx.ts`）：构造最小 SimContext（真实 World/EventBus/SimRng/ModRegistry/TUNING + 桩方法），`attach(ctx, sys)` 注入系统、直接 `update()`/发 bus 事件验证。桩方法用 `_` 前缀字段暴露观测（`_log/_spawned/_killed/_moodAdj/_unlockedTechs…`），测试可 override 任意成员（如 `isNight: () => true`、固定 rng）。
 - **16 系统独立测试文件**：`src/sim/__tests__/systems/*.test.ts` 每系统一文件，覆盖各自核心行为（衰减/归属/招募/产出/袭击/决策…）。
 - **依赖解环**：`mods/query.ts` 独立承载跨实例共享表（predicateStore/weightRuleStore/socialLinesStore）+ 查询函数；registry/pawn/socialSystem 单向依赖，消除 registry↔pawn 循环 import。
+
+### 18. 卸载不破坏核心（2026-08-14 插件化加固）
+
+审阅 `sim.registerSystems` 装配面发现"插件可卸载"只做了一半——系统装配表能过滤，但 Sim 本体的硬引用在卸载时会崩：
+
+- **双重实例化（删除）**：sim 构造器在 `registerSystems` 之外又 `new BehaviorSystem/SocialUnitSystem`。禁用 behavior 时这俩孤儿实例仍被创建，`mods.intents/works` 挂到死实例上（行为层"幽灵运行"）。修复：构造器不再预建，`registerSystems` 是唯一实例化点。
+- **socialUnits no-op 回落**：`SimContext.socialUnits` 是契约字段，needsSystem 记需求 / socialSystem 交流历史 / sim 自身 bus 回调（建篝火→记忆、归属、unitAt 展示）都无条件调用。卸载 socialUnit 后置 null 会空引用崩溃。修复：字段默认 `NOOP_SOCIAL_UNITS` 空实现（调用即无操作），启用时回填真实例——消费方契约不变，卸载无感。
+- **intents/works 挂接条件化**：`this.behavior` 判空后挂接（behavior 卸载时跳过）。
+- **回归保护**：`src/sim/__tests__/uninstall.test.ts` 20 用例——16 系统逐个卸载（构造+步进 120s 不崩、装配表不含该 id）、socialUnit no-op 契约、behavior 卸载、采集狩猎组合卸载（farm/craft/techPool/autobuild/repair 长跑 600s）、全量卸载（空壳稳定）。全量 296 测试通过。
+
+**已知差距（未做，待用户裁决）**：纪律"玩法应作为 mod 提供、内核只留需求/决策/采集/社交"尚未完全达成——farm/craft/techPool/autobuild/repair 仍内置在 `SYSTEM_DEFS` 内核，玩法包目前靠 `disableSystem` 卸载达成"可撤"，未迁移为"默认玩法 mod"装配。迁移成本：系统拆包 + 默认装配表 + 双端加载顺序，属独立重构。
