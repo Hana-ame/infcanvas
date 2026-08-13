@@ -7,6 +7,7 @@ import { SimRng } from '../core/rng';
 import type { DesireId } from '../core/desires';
 import { allDesires } from '../core/desires';
 import { TRAITS, allTraits, type AttrKey, type TraitDef } from '../defs/traits';
+import { INTERESTS, allInterests } from '../defs/interests';
 import { MARKOV_BIAS, SERIES_TO_DESIRE } from '../defs/behavior';
 import { TUNING, type PawnTuning, type DesireTuning, type TuningConfig } from '../defs/tuning';
 import { BASE_CARD_DEFS } from '../defs/cards';
@@ -25,6 +26,7 @@ export interface Dna {
   pow: number;   // 意志：对抗欲望/抗压/SAN
   edu: number;   // 教育：技能起点/科技
   traits: string[];
+  interests: string[]; // 兴趣属性（表驱动：娱乐活动由兴趣决定做什么，用户 2026-08-13）
   maxSlots: number;
   skillBonuses: Partial<Record<SkillId, number>>;
   sins: Partial<Record<DesireId, number>>; // 罪孽倾向（个性权重 0-1）
@@ -99,6 +101,8 @@ export interface BehaviorCard {
   satisfies?: { desire: DesireId; amount: number }[];
   // 欲望关联声明：匮乏时升该类卡权重（缺省按系列映射：work→greed 等；mod 新欲望可用此字段直接挂钩）
   desire?: DesireId;
+  // 兴趣关联（娱乐开放活动：卡属于哪个兴趣；ruleInterest 按 pawn.interests 调制权重）
+  interest?: string;
   // 熟练度（P0.5 卡演化：卡=习惯的建模）：触发↑、长期不用↓，权重调制 ×(0.5+mastery/100)
   // 注意：卡实例必须按小人独立（initSlots 克隆），否则共享单例互相污染
   mastery?: number;
@@ -122,6 +126,7 @@ export interface BehaviorCardDef {
   reason?: string;         // 印卡原因（LLM/反馈层填，UI 展示）
   satisfies?: { desire: DesireId; amount: number }[];
   desire?: DesireId;
+  interest?: string; // 兴趣关联（ruleInterest 按 pawn.interests 调制；mod 卡可声明）
   when?: string[]; // 声明式条件谓词（CARD_PREDICATES 表查，AND 组合；mod 可 registerPredicate 扩展）
   condition?: (c: CardContext) => boolean; // needAt/when 之外的自定义条件
   extraUtility?: (c: CardContext) => number; // 叠加收益（与 need/queue 合并）
@@ -159,7 +164,7 @@ export function cardFromDef(def: BehaviorCardDef): BehaviorCard {
   return {
     id: def.id, name: def.name, series: def.series, weight: def.weight,
     condition, utility,
-    satisfies: def.satisfies, desire: def.desire,
+    satisfies: def.satisfies, desire: def.desire, interest: def.interest,
     mastery: 0, lastUsed: 0,
     decide: () => ({ action: def.action, workType: def.workType, label: def.label }),
   };
@@ -203,6 +208,23 @@ export function generateDna(
     if (picked) traits.push(picked);
   }
 
+  // 兴趣抽选（v2026-08-13 兴趣驱动娱乐：娱乐 = 开放活动空间，做什么由 pawn 兴趣决定）
+  // 起因：娱乐卡池写死（idle+explore）→ 全营地统一反复建 toy 39 次吃光木头（toy:39/well:2/house:1）；
+  //       初试「buildMinWood 门槛」被否决（治标），改为兴趣属性治本。
+  // 经过：按 INTERESTS 表 weight 加权抽 1~3 个兴趣（interestsMin/interestsRange 读 tuning.pawn）；
+  //       兴趣卡进卡槽（initSlots），带 interest 标记的卡由 ruleInterest 按有无该兴趣调制权重。
+  // 结果：每个人娱乐活动由自己的兴趣决定——有人采集有人钓鱼，建造只是少数人的娱乐。
+  const interests: string[] = [];
+  const interestCount = cfg.interestsMin + rng.int(0, cfg.interestsRange);
+  const ipool = allInterests().filter((id) => INTERESTS[id] !== undefined);
+  for (let i = 0; i < interestCount; i++) {
+    const cand = ipool.filter((id) => !interests.includes(id));
+    if (cand.length === 0) break;
+    const iw = cand.map((id) => INTERESTS[id].weight);
+    const picked = rng.weightedPick(cand, iw);
+    if (picked) interests.push(picked);
+  }
+
   const dna: Dna = {
     str: roll(cfg.attrMin, cfg.attrMax),
     con: roll(cfg.attrMin, cfg.attrMax),
@@ -213,6 +235,7 @@ export function generateDna(
     pow: roll(cfg.attrMin, cfg.attrMax),
     edu: roll(cfg.attrMin, cfg.attrMax),
     traits,
+    interests,
     maxSlots: cfg.maxSlotsMin + rng.int(0, cfg.maxSlotsRand),
     skillBonuses: {},
     sins: {},
@@ -261,6 +284,13 @@ export function initSlots(dna: Dna, extraCards?: BehaviorCard[], t?: CardTuningL
   for (const id of dna.traits) {
     const tr = TRAITS[id];
     if (tr?.card) slots.push(clone(traitCardOf(tr)));
+  }
+  // 兴趣休闲卡（v2026-08-13：娱乐 = 开放活动空间，做什么由兴趣决定）：
+  // 每个兴趣一张专属 leisure 卡进卡槽（INTERESTS[id].card）；克隆独立实例（mastery 不串人）。
+  // 注意：此卡进槽后即参与抽卡——娱乐时小人优先抽自己的兴趣卡（权重调制见 ruleInterest）。
+  for (const id of dna.interests) {
+    const card = INTERESTS[id]?.card;
+    if (card) slots.push(clone(cardFromDef(card)));
   }
   // mod 卡全部进池（去重排除基础卡；即使超 maxSlots 也保留——抽卡按权重，容量不再挤出 mod 玩法）
   const extra = (extraCards ?? []).filter((c) => !BASE_CARDS.some((b) => b.id === c.id));

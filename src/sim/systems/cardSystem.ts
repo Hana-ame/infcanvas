@@ -296,6 +296,9 @@ export class BehaviorSystem implements GameSystem {
     const pos = c.readPosition(eid);
     if (!pos) return;
     const t = c.tuning.tech;
+    // 建造兴趣门控（v2026-08-13 兴趣驱动娱乐：建造是娱乐活动之一，只有有 build 兴趣的人才会
+    // 「按经验规划」科技建筑；无兴趣者即使科技解锁、权重爬满也不主动建——与探索卡同源设计）
+    if (!c.pawnStates.get(eid)?.dna.interests.includes('build')) { st.job = '闲逛'; return; }
     // 已解锁的科技建筑（按解锁顺序，取"营地还没有的"）
     const candidates: { techId: string; defId: string }[] = [];
     for (const techId of Object.keys(c.techs)) {

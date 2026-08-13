@@ -4,6 +4,7 @@
 // 规则函数是"机制"（参数全部读表/tuning），表序与组合才是数据——mod 无需改内核源码
 import type { BehaviorCard, PawnLike, CardContext } from '../ai/pawn';
 import { TRAITS } from './traits';
+import { INTERESTS } from './interests';
 import { MARKOV_BIAS } from './behavior';
 
 export interface WeightRule {
@@ -139,6 +140,25 @@ const ruleJob: WeightRule = {
   },
 };
 
+// 兴趣调制（v2026-08-13 兴趣驱动娱乐落地，规则顺序=表序第 1 位）
+// 起因：娱乐活动被写死成固定小卡池（idle+explore），探索卡人人权重一致 → 全营地统一反复建 toy
+//       39 次吃光木头（试玩统计 toy:39/well:2/house:1）。
+// 经过：先试「buildMinWood 游牧期门槛」拦截全部科技建筑建造被用户否决——「肯定是建造toy的意愿降低啊」，
+//       改为正确架构：娱乐 = 开放活动空间，做什么由 pawn 兴趣属性决定（用户 2026-08-13 原话）。
+// 结果：卡声明 interest（属于哪个兴趣）→ pawn 有此兴趣权重 ×INTERESTS[id].weightMul（表驱动），
+//       无此兴趣 ÷weightMul（压到低）——不感兴趣就不做，从权重合成层杜绝重复循环。
+// 放在规则表首位（先于天赋/欲望）：兴趣是最底层的「人设」，先于一切即时调制。
+const ruleInterest: WeightRule = {
+  id: 'interest',
+  label: '兴趣调制',
+  apply(w, card, pawn) {
+    if (!card.interest) return w;
+    const def = INTERESTS[card.interest];
+    const mul = def?.weightMul ?? 1;
+    return pawn.dna.interests.includes(card.interest) ? w * mul : w / mul;
+  },
+};
+
 // 行为结果学习（EWA）：经验吸引 A → exp(βA) 权重倍率（1=无经验中性，>1 偏做，<1 回避）
 const ruleLean: WeightRule = {
   id: 'lean',
@@ -150,9 +170,10 @@ const ruleLean: WeightRule = {
   },
 };
 
-// 内置规则表（权重合成顺序 = 表序：天赋→欲望→环境→马尔可夫→派系优先→神谕目标→指派职业→EWA 学习，
+// 内置规则表（权重合成顺序 = 表序：兴趣→天赋→欲望→环境→马尔可夫→派系优先→神谕目标→指派职业→EWA 学习，
 // 前规则输出 = 后规则输入；mod 可 registerWeightRule 在任意规则前插入、overrideWeightRule 替换同 id 规则）
 export const BUILTIN_WEIGHT_RULES: WeightRule[] = [
+  ruleInterest,
   ruleTrait,
   ruleDesire,
   ruleEnv,

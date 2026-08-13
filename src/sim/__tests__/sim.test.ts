@@ -2,8 +2,10 @@ import { describe, it, expect } from 'vitest';
 import { Sim } from '../sim';
 import { socialLinesOf } from '../mods/registry';
 import { SimRng } from '../core/rng';
-import { generateDna, initSlots, drawCards, pickBest, effectiveWeight, BASE_CARDS, type BehaviorCard } from '../ai/pawn';
+import { generateDna, initSlots, drawCards, pickBest, effectiveWeight, cardFromDef, BASE_CARDS, type BehaviorCard } from '../ai/pawn';
 import type { Dna } from '../ai/pawn';
+import { INTERESTS } from '../defs/interests';
+import { makeExploreCard } from '../defs/explore';
 import { World } from '../core/world';
 import { findPath } from '../core/pathfinding';
 import { BUILDINGS } from '../defs';
@@ -86,7 +88,7 @@ describe('DNA + slots', () => {
 
   it('guaranteed base cards: even 2 traits + maxSlots=2 keeps eat/rest/chop (no idle-lock), sim.test 回归：maxSlots 被 trait 挤占曾致永久闲逛', () => {
     // 构造最坏情形：maxSlots=2，两个 trait（设计上各占一槽）——修复前基础卡 0 张
-    const dna: Dna = { traits: ['强壮', '机灵'], maxSlots: 2, str: 60, con: 50, siz: 55, dex: 50, int: 50, pow: 50, app: 50, edu: 50, skillBonuses: {}, sins: {} };
+    const dna: Dna = { traits: ['强壮', '机灵'], interests: [], maxSlots: 2, str: 60, con: 50, siz: 55, dex: 50, int: 50, pow: 50, app: 50, edu: 50, skillBonuses: {}, sins: {} };
     const slots = initSlots(dna as unknown as Parameters<typeof initSlots>[0]);
     const ids = slots.filter(Boolean).map((c) => (c as BehaviorCard).id);
     expect(ids).toContain('eat');
@@ -2172,5 +2174,49 @@ describe('科技 DLC（registerTech / defs.techs：.mod.json 加科技 = 探索�
     sim.unlockTech('test:totem2');
     sim.issueCommand({ type: 'build', x: spot.x, y: spot.y, buildingId: 'totem' });
     expect(sim.buildQueue.some((b) => b.defId === 'totem')).toBe(true);
+  });
+});
+
+describe('兴趣驱动娱乐（v2026-08-13：娱乐 = 开放活动空间，做什么由 pawn 兴趣属性决定）', () => {
+  // 背景：toy 曾被全营地反复建 39 次吃光木头（toy:39/well:2/house:1）——根因是娱乐卡池写死
+  // （idle+explore 人人权重一致）。本组测试保护：兴趣属性进 DNA、兴趣休闲卡进卡槽、权重调制生效。
+  it('generateDna 生成 1~3 个兴趣；兴趣卡进卡槽', () => {
+    let anyInterest = false;
+    for (let seed = 1; seed <= 20; seed++) {
+      const dna = generateDna(seed);
+      expect(dna.interests.length).toBeGreaterThanOrEqual(1);
+      expect(dna.interests.length).toBeLessThanOrEqual(3);
+      // 去重
+      expect(new Set(dna.interests).size).toBe(dna.interests.length);
+      if (dna.interests.length > 0) anyInterest = true;
+      // 兴趣休闲卡进卡槽（有 card 的兴趣）
+      const slots = initSlots(dna);
+      for (const id of dna.interests) {
+        if (INTERESTS[id]?.card) {
+          expect(slots.some((c) => c?.id === INTERESTS[id]!.card!.id)).toBe(true);
+        }
+      }
+    }
+    expect(anyInterest).toBe(true);
+  });
+
+  it('ruleInterest：有建造兴趣者探索卡权重高、无者被压低', () => {
+    const withBuild = generateDna(7);
+    const withoutBuild = generateDna(8);
+    // 找一个明确有/无 build 兴趣的组合（遍历种子保证覆盖）
+    let found = false;
+    for (let seed = 1; seed <= 50 && !found; seed++) {
+      const a = generateDna(seed);
+      const b = generateDna(seed + 1000);
+      if (a.interests.includes('build') && !b.interests.includes('build')) {
+        found = true;
+        const exploreCard = cardFromDef(makeExploreCard('toy', 'craft:toy'));
+        const wa = effectiveWeight(exploreCard, { dna: a, slots: [] }, undefined);
+        const wb = effectiveWeight(exploreCard, { dna: b, slots: [] }, undefined);
+        expect(wa).toBeGreaterThan(wb); // 兴趣调制生效：有 build ×3 > 无 build ÷3
+        break;
+      }
+    }
+    expect(found).toBe(true);
   });
 });

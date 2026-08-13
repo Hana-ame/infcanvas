@@ -20,6 +20,7 @@ import type { ExpansionPlan } from '../systems/autonomousBuildSystem';
 import { DESIRES } from '../core/desires';
 import type { DesireId } from '../core/desires';
 import { TRAITS as BUILTIN_TRAITS, type TraitDef } from '../defs/traits';
+import { INTERESTS as BUILTIN_INTERESTS, type InterestDef } from '../defs/interests';
 import { MARKOV_BIAS as BUILTIN_MARKOV, SERIES_TO_DESIRE as BUILTIN_SERIES } from '../defs/behavior';
 import { JOBS as BUILTIN_JOBS } from '../defs/jobs';
 import { LEANS as BUILTIN_LEANS, type LeanDef, type LeanKey } from '../defs/leans';
@@ -261,6 +262,8 @@ export class ModRegistry {
 
   // 天赋表（跨实例共享，与 DESIRES 同策略）：registerTrait 直接写 BUILTIN_TRAITS
   private static traitStore: Record<string, TraitDef> = BUILTIN_TRAITS;
+  // 兴趣表（v2026-08-13 兴趣驱动娱乐，跨实例共享）：registerInterest 直接写 BUILTIN_INTERESTS
+  private static interestStore: Record<string, InterestDef> = BUILTIN_INTERESTS;
   // 马尔可夫偏置表（跨实例共享）：overrideMarkovBias 以"来源系列"为单位合并
   private static markovStore: Record<string, Record<string, number>> = BUILTIN_MARKOV;
   // 系列→欲望默认映射（跨实例共享）
@@ -270,6 +273,9 @@ export class ModRegistry {
 
   get traits(): Record<string, TraitDef> {
     return ModRegistry.traitStore;
+  }
+  get interests(): Record<string, InterestDef> {
+    return ModRegistry.interestStore;
   }
   get markovBias(): Record<string, Record<string, number>> {
     return ModRegistry.markovStore;
@@ -288,6 +294,24 @@ export class ModRegistry {
       throw new Error(`mod: trait "${def.id}" 已存在，请用 overrideTrait 或不同 id`);
     }
     ModRegistry.traitStore[def.id] = def;
+    return this;
+  }
+
+  // 注册新兴趣（v2026-08-13）：写共享表（generateDna/initSlots/ruleInterest 自动接入）
+  registerInterest(def: InterestDef): this {
+    const old = ModRegistry.interestStore[def.id];
+    if (old && JSON.stringify(old) !== JSON.stringify(def)) {
+      throw new Error(`mod: interest "${def.id}" 已存在，请用 overrideInterest 或不同 id`);
+    }
+    ModRegistry.interestStore[def.id] = def;
+    return this;
+  }
+
+  // 覆盖兴趣（部分字段合并）
+  overrideInterest(id: string, patch: Partial<InterestDef>): this {
+    const old = ModRegistry.interestStore[id];
+    if (!old) throw new Error(`mod: 覆盖目标 interest "${id}" 不存在，请先 registerInterest`);
+    ModRegistry.interestStore[id] = { ...old, ...patch };
     return this;
   }
 

@@ -32,6 +32,14 @@ import { jobLabelOf } from './defs/jobs';
 import { SYSTEM_DEFS } from './defs/systems';
 import { BehaviorSystem } from './systems/cardSystem';
 import { SocialUnitSystem } from './systems/socialUnitSystem';
+import { INTERESTS } from './defs/interests';
+
+// 兴趣卡静态表（id → 卡）：存档 load 按卡 id 还原用（与 TRAIT_CARDS 同策略）。
+// 背景：兴趣休闲卡（interest:xxx）是 initSlots 注入卡槽的，不属于 mods.cards/基础卡/天赋卡，
+// load 时若不查此表 → 还原成 null → 娱乐活动丢失（存档往返测试暴露）。v2026-08-13。
+const INTEREST_CARDS: Map<string, BehaviorCard> = new Map(
+  Object.values(INTERESTS).filter((i) => i.card).map((i) => [i.card!.id, cardFromDef(i.card!)]),
+);
 
 // ---- ECS 组件定义 ----
 export interface PositionData { x: number; y: number }
@@ -1027,7 +1035,7 @@ export class Sim implements SimContext {
           if (!slot) return null;
           // 旧档：纯 id 字符串（无熟练度）；新档：{ id, m, u }
           const id = typeof slot === 'string' ? slot : slot.id;
-          const found = this.mods.cards.get(id) ?? BASE_CARDS.find((b) => b.id === id) ?? Object.values(TRAIT_CARDS).find((c) => c.id === id) ?? null;
+          const found = this.mods.cards.get(id) ?? BASE_CARDS.find((b) => b.id === id) ?? Object.values(TRAIT_CARDS).find((c) => c.id === id) ?? INTEREST_CARDS.get(id) ?? null;
           if (!found) return null;
           const card = { ...found }; // 克隆（防共享单例 mastery 串）
           if (typeof slot === 'object') {

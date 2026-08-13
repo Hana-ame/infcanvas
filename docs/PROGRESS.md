@@ -134,3 +134,4 @@
 
 - IndexedDB 库名 `infcanvas-db`，store `saves`，key `autosave`
 - 旧 localStorage `infcanvas-save*` 已不再读写（版本切换，旧存档作废）
+| 兴趣驱动娱乐 | §6 娱乐 | ✅ **已落地**（2026-08-13）：娱乐从固定小卡池（闲逛/探索）改为**开放活动空间**——做什么由 pawn **兴趣属性**决定。起因：试玩发现 toy 被反复建 39 次吃光木头（toy:39/well:2/house:1）；先试「buildMinWood 游牧期门槛」拦截全部科技建造被用户否决（治标），改为兴趣属性治本。每人随机 1-3 个兴趣（`defs/interests.ts` 表驱动，gather/mine/fish/build/pray/wander/rest），兴趣带专属休闲卡进卡槽（initSlots）；带 `interest` 标记的卡（探索卡标 `build`）由 `ruleInterest` 按有无该兴趣调制权重（有兴趣 ×weightMul / 无兴趣 ÷weightMul）。效果：toy 建造 39→4 次，house 2、well 5，终局木 392（不再枯竭）。`techBuildChance` 同门控（无 build 兴趣不主动建科技建筑）。mod 可 `registerInterest`（或 `.mod.json` defs 声明 `interests`）扩展 |

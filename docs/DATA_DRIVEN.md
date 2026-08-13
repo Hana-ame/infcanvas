@@ -387,3 +387,33 @@ overrideTuning(patch: DeepPartial<TuningConfig>): this  // 覆盖平衡参数（
 - 打包：`npm run mod:pack [名]` → 根 `mods/*.mod.json`（分发物）
 - 服务端：`MODS_DIR`（默认 `mods/`）扫描所有 `.mod.json` → `loadModsFromDir` 挂载到 `ModRegistry.default()` → `new Sim({ registry })`（`SimOptions.registry` 预建表，卡/世界/装配表在构造期就读到 mod）；坏包报错拒服，好包不受影响
 - 客户端单机：`?mods=/mods/demo-berry.mod.json`（.mod.json 走 fetch→parse→buildModMount；其余走 ESM 源码 import，双通道共存）
+
+## 14. 兴趣属性表（2026-08-13 兴趣驱动娱乐）
+
+### 14.1 起因
+
+试玩发现 toy 被反复建造 39 次吃光木头（toy:39/well:2/house:1）。根因：娱乐活动被写死成固定小卡池
+（idle + explore 探索卡），探索卡人人权重一致，建筑被狼拆后谓词转 true 又重建 → 全营地统一反复建 toy。
+曾试「buildMinWood 游牧期门槛」拦截全部科技建造，被用户否决（治标不治本）——正确做法是**娱乐开放、
+由兴趣属性决定做什么**。
+
+### 14.2 数据表 `defs/interests.ts`
+
+- `INTERESTS: Record<InterestId, InterestDef>`，`InterestDef = { id, label, weight(出生抽选), card?(专属休闲卡), weightMul?(兴趣相关卡权重倍率), desc? }`
+- 内建：gather 采集 / mine 采矿 / fish 钓鱼 / build 建造（无专属卡，靠 explore 卡高权重）/ pray 祈祷 / wander 漫游 / rest 休憩
+- 卡声明 `interest` 字段（如 explore 卡标 `build`）→ `ruleInterest`（weightRules.ts 规则表第 1 位）按 pawn.interests 调制：
+  有兴趣 ×weightMul，无兴趣 ÷weightMul
+
+### 14.3 机制挂接
+
+- `generateDna`：按 INTERESTS weight 抽 1~3 个兴趣（`tuning.pawn.interestsMin/interestsRange`）写入 `dna.interests`
+- `initSlots`：兴趣专属休闲卡（`INTERESTS[id].card`）进卡槽（克隆实例，mastery 不串人）
+- `ruleInterest`：兴趣调制权重（最先应用）
+- `techBuildChance`（cardSystem）：无 build 兴趣不主动规划科技建筑
+- `sim.load`：存档还原兴趣卡查 `INTEREST_CARDS` 静态表（与 TRAIT_CARDS 同策略）
+
+### 14.4 mod 扩展
+
+- `registerInterest(def)` / `overrideInterest(id, patch)`（registry.ts，跨实例共享表）
+- 新兴趣自动接入：抽选 / 休闲卡进槽 / 兴趣调制 / 存档还原
+- `.mod.json` 的 defs 白名单：`interests` 字段（loader 待补充，当前走源码 registerInterest 通道）

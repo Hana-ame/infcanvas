@@ -15,9 +15,15 @@ export function makeExploreCard(buildingId: string, techId: string): BehaviorCar
     id: `explore:${buildingId}`,
     name: `探索·${TECHS[techId]?.name ?? buildingId}`,
     series: 'leisure',
-    weight: 8,
+    weight: 4,
     when: [`hasTech-${techId}`, `noBuilding-${buildingId}`],
-    utilityFixed: 40, // 娱乐语境下的探索冲动：抽到即可执行（高于其他娱乐卡，低于生存需求卡）
+    interest: 'build', // 兴趣调制（v2026-08-13 兴趣驱动娱乐落地）：
+    // 起因：toy 被全营地反复建造 39 次吃光木头（toy:39/well:2/house:1，试玩统计）；
+    //       初版尝试「buildMinWood 游牧门槛」拦截全部科技建造被否决，改为治本——兴趣属性。
+    // 经过：探索卡是「建造兴趣」的娱乐活动。有 build 兴趣的 pawn 权重 ×3，无兴趣 ÷3，
+    //       不感兴趣就不探索建造 → 从架构杜绝全营地统一反复建同一建筑的循环。
+    // 结果：只有少数（约 1/4）有建造兴趣的人会「灵光一现」规划科技建筑蓝图。
+    utilityFixed: 14, // 探索冲动适中：仅在有建造兴趣时抽到并执行
     action: 'explore',
     label: `探索:${buildingId}`, // label 机器可解析（执行器 split(':') 取建筑 id）；显示名用 name
     satisfies: [{ desire: 'sloth', amount: 1 }],

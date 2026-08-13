@@ -311,6 +311,8 @@ export interface PawnTuning {
   attrMax: number;         // 八属性生成上限
   traitCountMin: number;   // 天赋数量下限
   traitCountMax: number;   // 天赋数量上限
+  interestsMin: number;    // 兴趣数量下限（用户设计：娱乐活动由兴趣决定）
+  interestsRange: number;  // 兴趣数量随机增量（0..N 附加）
   maxSlotsMin: number;     // 卡槽基础数
   maxSlotsRand: number;    // 卡槽随机增量（0..N）
   moodSpeedBase: number;   // 移动速度心情系数 = base + mood/100 × scale
@@ -754,6 +756,8 @@ export const TUNING: TuningConfig = {
     attrMax: 70,
     traitCountMin: 1,        // 天赋数量
     traitCountMax: 3,
+    interestsMin: 1,        // 兴趣数量（娱乐活动由兴趣决定）
+    interestsRange: 2,
     maxSlotsMin: 2,          // 卡槽基础数
     maxSlotsRand: 2,         // 卡槽随机增量
     moodSpeedBase: 0.6,      // 移动速度心情系数

@@ -47,10 +47,14 @@ describe('sim.printCard（LLM 印卡 API：DESIGN §6 只印卡不进选择链�
       },
     } as never;
     const pawn = { dna: st.dna, slots: st.slots };
+    // 抽卡命中率统计：drawCards 是加权不放回抽 3，权重 10 的卡被抽进 3 张里的概率很高但非必然
+    //（背景：interest 卡加入后权重合成变化，原断言"每轮必中"曾在第 12 次 miss——概率性测试改统计）
+    let hit = 0;
     for (let i = 0; i < 20; i++) {
       const drawn = drawCards(pawn as never, sim.rng, sim.tuning.card.drawCount, ctx as never);
-      expect(drawn.some((c) => c.id === 'dummy:chop')).toBe(true);
+      if (drawn.some((c) => c.id === 'dummy:chop')) hit++;
     }
+    expect(hit).toBeGreaterThanOrEqual(15); // 高权重卡高命中（>75%），非 100%
     expect(sim.events.some((e) => e.text.includes('收到策略卡'))).toBe(true);
   });
 
