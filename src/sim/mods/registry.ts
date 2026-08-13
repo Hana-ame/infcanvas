@@ -34,7 +34,6 @@ import { makeExploreCard } from '../defs/explore';
 import { BUILTIN_WEIGHT_RULES, type WeightRule } from '../defs/weightRules';
 import { SOCIAL_LINES, type SocialLineTable, type TopicTemplate } from '../defs/socialLines';
 import type { CardContext } from '../ai/pawn';
-import { registerUnitLevel as _registerUnitLevel } from '../core/socialUnit';
 
 // 生命周期钩子上下文（step:before / step:after，见 sim.step）
 export interface HookContext {
@@ -241,12 +240,6 @@ export class ModRegistry {
       throw new Error(`mod: desire "${id}" 冲突（已定义为「${DESIRES[id].label}」）`);
     }
     DESIRES[id] = { label };
-    return this;
-  }
-
-  // 新单位等级（DESIGN §7）：mod 建"神庙"等新派系建筑时，注册等级 + 记忆/看法容量
-  registerUnitLevel(id: string, capacity: number): this {
-    _registerUnitLevel(id, capacity);
     return this;
   }
 

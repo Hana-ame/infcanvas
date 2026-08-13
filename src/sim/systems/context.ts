@@ -11,8 +11,6 @@ import type { TuningConfig } from '../defs/tuning';
 import type { RecipeDef } from '../defs/recipes';
 import type { BuildingDef } from '../defs';
 import type { ModRegistry } from '../mods/registry';
-import type { SocialUnit } from '../core/socialUnit';
-
 export interface Hostile {
   x: number; y: number;
   hp: number; maxHp: number;
@@ -62,16 +60,13 @@ export interface SimContext {
   // 神谕设定目标（策略卡 = 神谕目标：只调制工作系列权重 ×oracleGoalMul，不插小人卡槽、不碰选择链）
   setOracleGoal(def: { workType?: string; label: string; duration: number }): void;
   socialUnits: {
-    units: Map<string, SocialUnit>;
-    membership: Map<number, string>;
-    onBuildingBuilt(key: number, defId: string, now: number): void;
+    // 2026-08-14 重构：派系实体层删除，只剩"篝火记忆 + 归属"工具
+    onCampfireBuilt(key: number): void;
     assignPawn(eid: number): void;
     unassignPawn(eid: number): void;
     // 篝火区域历史（B 方案：交流篝火情况 = 读这份历史推断伙伴/敌人）
-    fireHistory(fireId: string, limit?: number): string[];
+    fireHistory(key: number, limit?: number): string[];
   };
-  // 征服（Q9）：核心建筑被毁 → 吞并该派系
-  conquestOf(coreKey: number, conquerorName: string): void;
   addProductionNear(x: number, y: number, item: string, amount: number, faction?: string): void;
   // 建筑升级（篝火→教堂等）
   upgradeBuilding(x: number, y: number, defId: string, faction: string): boolean;

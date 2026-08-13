@@ -426,24 +426,22 @@ export function createHud(
       const b = sim.buildingAt(selectedBuildingRef.current.x, selectedBuildingRef.current.y);
       if (!b) { selectedBuildingRef.current = null; return; }
       const def = b.def;
-      const unit = sim.unitAt(selectedBuildingRef.current.x, selectedBuildingRef.current.y);
+      // 派系 = 涌现展示（2026-08-14 重构）：篝火区域记忆 + 归属该火的小人，无库存/看法
+      const selKey = selectedBuildingRef.current.y * sim.world.width + selectedBuildingRef.current.x;
+      const unit = sim.factionsView().find((f) => f.key === selKey);
       selPanel.dataset.eid = '-1';
       selJobs.style.display = 'none';
       selOracle.style.display = def.capabilities?.includes('oracle') ? '' : 'none';
       selTitle.innerHTML = `<b>${buildIcon(def ?? { id: b.defId })} ${def?.name ?? b.defId}</b> (${selectedBuildingRef.current.x},${selectedBuildingRef.current.y})`;
       selBody.innerHTML =
-        `耐久 ${nf(b.hp)}/${b.maxHp}<br>派系：${b.faction}` +
+        `耐久 ${nf(b.hp)}/${b.maxHp}<br>` +
         (unit
-          ? `<br>${icon('factions')} <b>${unit.name}</b>（${unit.level === 'church' ? '教堂' : '篝火'}）成员 ${unit.members.length} 人<br>` +
-            `库存：${icon('wood', 13)}${nf(unit.resources.wood)} ${icon('ore', 13)}${nf(unit.resources.ore)} ${icon('food', 13)}${nf(unit.resources.food)} ${icon('tools', 13)}${nf(unit.resources.tools)}<br>` +
-            `记忆：${unit.memory.slice(-2).map((m) => m.text).join(' / ') || '暂无'}<br>` +
-            (unit.opinions.size > 0
-              ? `看法：${[...unit.opinions.entries()].map(([id, op]) => {
-                  const u = sim.socialUnits.units.get(id);
-                  return `${u?.name ?? id} ${op.value > 0 ? '+' : ''}${Math.round(op.value)}`;
-                }).join('、')}`
-              : '看法：暂无邻近势力')
-          : '');
+          ? `${icon('factions')} <b>${unit.label}</b> 营地 · ${unit.members.length} 人归属<br>` +
+            `成员：#${unit.members.join('、') || '无'}<br>` +
+            `记忆：${unit.memory.slice(-2).map((m) => m.text).join(' / ') || '暂无'}`
+          : def.tags?.includes('anchor')
+            ? '🔥 篝火（暂无归属者）'
+            : '');
       selPanel.style.display = 'block';
       return;
     }
@@ -460,20 +458,16 @@ export function createHud(
       histPanel.innerHTML = `<b>📜 结构化历史（仿真日志）</b><br>` + rows.join('');
     }
 
-    // 🌍 派系概览（Q9 观察模拟器）
+    // 🌍 派系概览（2026-08-14 用户裁决：派系 = 涌现展示，按篝火归属聚合；无库存/贸易/战争）
     if (facPanel.style.display === 'block') {
-      const units = [...sim.socialUnits.units.values()];
+      const units = sim.factionsView();
       const rows = units.map((u) => {
-        const cap = u.level === 'church' ? (sim.tuning.faction?.unitCapChurch ?? 10) : (sim.tuning.faction?.unitCapCampfire ?? 3);
-        const opinions = [...u.opinions.entries()].map(([id, op]) => {
-          const other = sim.socialUnits.units.get(id);
-          return `${other?.name ?? id} ${op.value > 0 ? '+' : ''}${Math.round(op.value)}`;
-        }).join('、') || '无';
         const mem = u.memory.slice(-2).map((m) => m.text).join(' / ') || '无';
-        return `<div><b>${u.name}</b>（${u.level === 'church' ? '教堂' : '篝火'}，记忆${cap}）成员${u.members.length} · 库存🌲${nf(u.resources.wood)}🪨${nf(u.resources.ore)}🍖${nf(u.resources.food)}<br>` +
-          `<span style="color:#aaa">看法：${opinions}<br>记忆：${mem}</span></div>`;
+        const members = u.members.map((e) => `#${e}`).join('、') || '无';
+        return `<div>🔥 <b>${u.label}</b> 营地 · ${u.members.length} 人归属<br>` +
+          `<span style="color:#aaa">成员：${members}<br>记忆：${mem}</span></div>`;
       }).join('<hr>');
-      facPanel.innerHTML = `<b>🌍 世界派系（${units.length}）</b><br>` + (rows || '暂无');
+      facPanel.innerHTML = `<b>🌍 篝火聚居（${units.length}）</b><br>` + (rows || '暂无营地');
     }
 
     // 🔬 科技面板：已解锁 / 下一张候选 / 科技锁建筑

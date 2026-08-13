@@ -103,8 +103,8 @@ export function spawnWildCamp(ctx: SimContext): boolean {
     const y = cy + Math.round(Math.sin(a) * r);
     if (!w.inBounds(x, y) || !w.canBuildAt(x, y)) continue;
     if (w.placeBuilding(x, y, 'campfire', 'wild')) {
-      // 创建野生派系单位
-      ctx.socialUnits.onBuildingBuilt(w.buildKey(x, y), 'campfire', ctx.time);
+      // 陌生篝火建成（2026-08-14 重构：无派系实体，只建建筑 + 初始化记忆）
+      ctx.socialUnits.onCampfireBuilt(w.buildKey(x, y));
       ctx.bus.emit({ type: 'building_built', x, y, defId: 'campfire' });
       return true;
     }
@@ -115,8 +115,8 @@ export function spawnWildCamp(ctx: SimContext): boolean {
 export const SCRIPTED_EVENTS: ScriptedEvent[] = [
   {
     id: 'wild_camp', name: '发现陌生篝火', weight: 4, cooldown: 300, minTime: 300,
-    // 状况：已有稳定营地（有派系单位）且派系不算太多 → 才可能冒出陌生势力
-    condition: (ctx) => ctx.socialUnits.units.size > 0 && ctx.socialUnits.units.size < 4,
+    // 状况：已有营地（出生点有 campfire）→ 才可能冒出陌生篝火
+    condition: (ctx) => ctx.world.hasBuildingWithTag('campfire'),
     run(ctx) {
       if (spawnWildCamp(ctx)) {
         ctx.logEvent('🔥 荒野深处升起陌生炊烟——一个独立势力出现了');

@@ -196,13 +196,7 @@ export interface DesireTuning {
 }
 
 export interface FactionTuning {
-  warAt: number;           // 双向看法 ≤ 此值 = 开战
-  tradeAt: number;         // 双向看法 ≥ 此值 = 贸易
-  deficitAt: number;       // 逆差 ≤ 此值 = 怨恨
-  tradeRateNormal: number; // 正常汇率（1 木 = x 食）
-  tradeRateShort: number;  // 缺粮时汇率
-  tradeWood: number;       // 每次贸易交换的木量
-  tradeFoodScarceAt: number; // 缺粮判定库存阈值（< 此值 → 高汇率）
+  // 2026-08-14 重构：派系实体层删除。以下仅保留"篝火归属 + 迁徙"涌现层参数。
   migrateCheckEvery: number;  // 另起篝火判定周期（秒）
   migrateMaxPerCheck: number; // 每周期最多迁移几人
   migrateHostileRadius: number; // 区域内有敌人视为遭袭的半径
@@ -210,32 +204,9 @@ export interface FactionTuning {
   reassignInterval: number;    // 归属重算周期（秒）
   migrateMinDist: number;      // 新篝火最小距离
   migrateWoodNeeded: number;  // 起新篝火所需木头门槛
-  raidCooldown: number;    // 派系袭击冷却
-  tradeCooldown: number;
-  msgCooldown: number;
-  unitRaidCountMin: number;
-  unitRaidCountMax: number;
-  resourceGrowthWood: number; // 野生单位被动资源增速
-  resourceGrowthFood: number;
-  resourceGrowthOre: number;
-  resourceCap: number;     // 单位库存上限
-  opinionFriendly: number; // 协作看法增量
-  opinionMsgFriendly: number; // 友善传话看法增量
-  opinionRaid: number;     // 袭击看法损失
-  opinionTrade: number;    // 贸易看法变化（顺差方）
-  namePrefixes?: string[]; // 部落/派系名前缀覆盖（缺省用 defs/factionNames.ts 内置表）
-  nameSuffixes?: string[];
-  opinionTradeRecipient: number; // 贸易看法变化（逆差方）
-  opinionThreat: number;   // 威胁传话看法变化
-  opinionDeficit: number;  // 逆差怨恨看法下滑
-  trustTimer: number;      // 信任评估周期
   priorityTimer: number;   // 派系工作优先级评估周期（秒）
-  upgradeNearDist: number; // 升级判定：教堂附近多少格内的篝火单位可升级
-  unitStartResources: Record<string, number>; // 派系初始库存
-  trustMeetDist: number;   // 跨单位成员协作相遇距离
-  unitCapChurch: number;   // 教堂单位成员上限（客户端 UI 也读它）
-  unitCapCampfire: number; // 篝火单位成员上限
-  unitReassignMargin: number;   // 成员归属切换门槛：新单位比旧归属明显更近（格）才切换（防开局假团灭）
+  upgradeNearDist: number; // 归属判定：篝火记忆记入半径
+  resourceCap: number;     // 全局仓库单资源上限
 }
 
 export interface PopulationTuning {
@@ -657,40 +628,7 @@ export const TUNING: TuningConfig = {
     envyFulfillPerWork: 2,   // 嫉妒满足：完成一次劳动 +2（存在更强同伴时）
   },
   faction: {
-    warAt: -40,
-    tradeAt: 40,
-    deficitAt: -20,
-    tradeRateNormal: 1.5,
-    tradeRateShort: 3,
-    tradeWood: 4,
-    raidCooldown: 45,
-    tradeCooldown: 60,
-    msgCooldown: 90,
-    unitRaidCountMin: 2,
-    unitRaidCountMax: 4,
-    resourceGrowthWood: 0.4,
-    resourceGrowthFood: 0.3,
-    resourceGrowthOre: 0.15,
-    resourceCap: 500,
-    opinionFriendly: 0.5,
-    opinionRaid: -5,
-    opinionTrade: 1,
-    opinionTradeRecipient: -0.5,
-    opinionThreat: -1.5,
-    opinionDeficit: -0.8,
-    trustTimer: 8,
-    priorityTimer: 10,
-    upgradeNearDist: 4,      // 附近多少格内的篝火单位可升级为教堂
-    unitStartResources: { wood: 30, ore: 5, food: 25, tools: 0 },
-    trustMeetDist: 4,        // 跨单位成员协作相遇距离
-    unitCapChurch: 10,
-    unitCapCampfire: 3,
-    unitReassignMargin: 10,  // 成员归属切换门槛：新单位比旧归属明显更近（格）才切换
-    //（防开局假团灭 + 防误伤：小人日常工作走开 10 格 + 邻居营地建成 → 不能算迁徙；
-    //  必须 > autobuild 营间距上限（spotRingMax 6）的平方差；真迁徙者站在新营地旁必切）
-    opinionMsgFriendly: 1,   // 友善传话看法增量
-    tradeFoodScarceAt: 40,   // 缺粮判定库存阈值
-    // 另起篝火（用户 2026-08-13 B 方案：不舒适的环境下可另起篝火）
+    // 2026-08-14 重构：派系实体层删除。仅保留篝火归属 + 迁徙参数。
     migrateCheckEvery: 30,   // 迁移判定周期（秒）
     migrateMaxPerCheck: 1,   // 每周期最多迁移几人（防连锁崩盘）
     migrateHostileRadius: 10, // 区域内有狼/敌人（此半径内）→ 视为遭袭（累计计数）
@@ -698,6 +636,9 @@ export const TUNING: TuningConfig = {
     reassignInterval: 20,    // 归属低频重算周期（秒）：小人走到营地旁自然划入（防游牧幽灵）
     migrateMinDist: 10,      // 新篝火与旧篝火最小曼哈顿距离（防连锁再迁雪崩）
     migrateWoodNeeded: 10,   // 迁移起新篝火的木头门槛（全局库存）
+    priorityTimer: 10,       // 派系工作优先级评估周期（秒）
+    upgradeNearDist: 4,      // 篝火记忆记入半径（事件记入附近篝火）
+    resourceCap: 500,        // 全局仓库单资源上限
   },
   population: {
     maxPawns: 12,

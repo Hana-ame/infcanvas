@@ -94,7 +94,7 @@ function buildWelcome(clientId: number): WelcomeMsg {
     type: 'welcome', you: clientId, seed: SEED, tickHz: TICK_HZ, dayLength: sim.dayLength,
     tuning: {
       needs: { foodMoodLow: t.needs.foodMoodLow },
-      faction: { unitCapChurch: t.faction.unitCapChurch, unitCapCampfire: t.faction.unitCapCampfire },
+      faction: {},
       env: { dayLength: t.env.dayLength, baseTemp: t.env.baseTemp },
     },
     world: { width: w.width, height: w.height },

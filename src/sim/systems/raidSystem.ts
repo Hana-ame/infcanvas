@@ -104,11 +104,7 @@ export class RaidSystem implements GameSystem {
           const r = this.ctx.world.damageBuilding(b.x, b.y, t.buildingDmg * dt);
           if (r.destroyed) {
             this.ctx.logEvent('💥 建筑被野狼摧毁！');
-            // 征服（Q9）：若被毁的是某派系核心篝火/教堂，且攻击者是派系 → 吞并
-            if (h.faction === 'unit' && h.name) {
-              const key = this.ctx.world.buildKey(b.x, b.y);
-              this.ctx.conquestOf(key, h.name);
-            }
+            // 征服已删除（2026-08-14 重构：派系实体层删除，无单位可吞并）
           }
           continue;
         }

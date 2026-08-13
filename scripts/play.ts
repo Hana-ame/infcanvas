@@ -44,9 +44,9 @@ function statusLine(): string {
 function showState(): void {
   const s = sim.stockpile;
   console.log(`\n=== 状态 ${statusLine()} ===`);
-  console.log(`派系 ${sim.socialUnits.units.size} 个：`);
-  for (const u of sim.socialUnits.units.values()) {
-    console.log(`  ${u.id === sim.playerUnitId ? '👁' : ' '} ${u.name}（${u.level}）成员${u.members.length} @(${u.key % sim.world.width},${Math.floor(u.key / sim.world.width)}) 库存🌲${fmt(u.resources.wood)}🪨${fmt(u.resources.ore)}🍖${fmt(u.resources.food)}`);
+  console.log(`篝火聚居 ${sim.factionsView().length} 处：`);
+  for (const f of sim.factionsView()) {
+    console.log(`  🔥 营地@(${f.key % sim.world.width},${Math.floor(f.key / sim.world.width)}) 成员${f.members.length}：${f.members.map((e) => `#${e}`).join('、') || '暂无'}`);
   }
   console.log(`建筑 ${sim.world.buildings.size} 座：`);
   for (const [k, b] of sim.world.buildings) {

@@ -6,6 +6,7 @@ import type { BehaviorCard } from '../sim/ai/pawn';
 import type { TileDef, BuildingDef, ItemDef } from '../sim/defs';
 import type { EnvTuning } from '../sim/defs/tuning';
 import type { WelcomeTuning } from '../shared/protocol';
+import type { FactionTuning } from '../sim/defs/tuning';
 import type { Command } from '../sim/sim';
 import type { ServerMsg, WelcomeMsg, SnapshotMsg, DeltaMsg } from '../shared/protocol';
 
@@ -36,9 +37,8 @@ export interface SimViewPawn {
 }
 
 export interface SimViewUnit {
-  id: string; name: string; level: string; members: number[];
-  resources: Record<string, number>; memory: { text: string }[];
-  opinions: Map<string, { value: number }>; createdAt: number;
+  key: number; members: number[]; memory: { time: number; text: string }[];
+  label: string; // 篝火名（2026-08-14 重构：派系=涌现展示，无 id/name/level/资源/看法）
 }
 
 export interface SimViewBuilding { def: BuildingDef; defId: string; hp: number; maxHp: number; faction: string }
@@ -50,7 +50,7 @@ export interface SimView {
   hostiles: SimViewHostile[];
   paused: boolean; speed: number; time: number; dayLength: number; tickHz: number;
   env: { raining: boolean; temperature: number; rainLeft: number };
-  tuning: { env?: EnvTuning; needs?: WelcomeTuning['needs']; faction?: WelcomeTuning['faction'] };
+  tuning: { env?: EnvTuning; needs?: WelcomeTuning['needs']; faction?: Partial<FactionTuning> };
   isNight(): boolean;
   /**
    * 渲染播放时钟：消息驱动的视图（RemoteSim）用它给出帧间连续时间做插值；
@@ -79,8 +79,7 @@ export interface SimView {
   buildQueueItems: { x: number; y: number; defId: string }[];
   events: { time: number; text: string }[];
   historyRecent: { id: number; time: number; day: number; type: string; eid?: number; x?: number; y?: number; cause?: string; data?: Record<string, unknown> }[];
-  socialUnits: { units: Map<string, SimViewUnit> };
-  unitAt(x: number, y: number): SimViewUnit | null;
+  factionsView(): SimViewUnit[]; // 派系 = 涌现展示（按 fireId 聚合，纯只读）
   buildingAt(x: number, y: number): SimViewBuilding | null;
   buildingDef(id: string): BuildingDef | undefined;
   issueCommand(cmd: Command): void;
@@ -172,7 +171,7 @@ export class RemoteSim {
   speed = 1;
   day = 1;
   env = { raining: false, temperature: 18, rainLeft: 0 };
-  tuning = { env: undefined } as { env?: EnvTuning; needs?: WelcomeTuning['needs']; faction?: WelcomeTuning['faction'] };
+  tuning = { env: undefined } as { env?: EnvTuning; needs?: WelcomeTuning['needs']; faction?: Partial<FactionTuning> };
   // 渲染用播放时钟：权威消息把 t 锚定到墙钟，帧间 extrapolate（t + 墙钟流逝 × speed），
   // 让插值渲染有连续的 sim 时间（消息 500ms 一跳，直接读 time 则每帧恒等）
   private anchorT = 0;
@@ -187,8 +186,6 @@ export class RemoteSim {
   pawnPositions = new Map<number, { x: number; y: number }>();
   events: { time: number; text: string }[] = [];
   historyRecent: { id: number; time: number; day: number; type: string; eid?: number; x?: number; y?: number; cause?: string; data?: Record<string, unknown> }[] = [];
-  socialUnits = { units: new Map<string, SimViewUnit>() };
-
   mods: {
     tiles: Record<string, TileDef>;
     buildings: Record<string, BuildingDef>;
@@ -499,7 +496,7 @@ export class RemoteSim {
 
   buildingDef(id: string): BuildingDef | undefined { return this.mods.buildings[id]; }
 
-  unitAt(): null { return null; }
+  factionsView(): SimViewUnit[] { return []; } // 远端无实时涌现派系（HUD 用建筑/个体数据）
 
   issueCommand: (cmd: Command) => void = () => {};
 

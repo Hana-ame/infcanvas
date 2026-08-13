@@ -12,7 +12,7 @@ export type ClientMsg = HelloMsg | CmdMsg;
 // 服务端下发的客户端 UI 常量（与 server 同一份 tuning，消除双真值源）
 export interface WelcomeTuning {
   needs: { foodMoodLow: number };               // 食物告急阈值
-  faction: { unitCapChurch: number; unitCapCampfire: number }; // 派系单位成员上限
+  faction: Record<string, number>; // 2026-08-14 重构：派系实体删除，预留参数槽
   env: { dayLength: number; baseTemp: number }; // 昼夜时长/基础气温
 }
 

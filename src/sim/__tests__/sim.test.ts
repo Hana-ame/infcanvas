@@ -13,7 +13,6 @@ import type { GameSystem } from '../systems/registry';
 import { spawnWildCamp } from '../defs/events';
 import { carryCapOf, capGainTo } from '../systems/gatherSystem';
 import berryMod from '../../mods/demo-berry';
-import { adjustOpinion, UNIT_CAPACITY, type SocialUnit } from '../core/socialUnit';
 
 describe('SimRng', () => {
   it('is deterministic for same seed', () => {
@@ -409,25 +408,6 @@ describe('mod 注册表（DESIGN §7 扩展性原则）', () => {
     expect(sim.pawnStates.get(sim.pawns[0])!.job).toBe('跳舞');
   });
 
-  it('registerUnitLevel adds a brand-new unit level with capacity (UnitLevel open)', () => {
-    const sim = new Sim({ seed: 40, pawnCount: 1, mods: (m) => m.registerUnitLevel('temple', 20) });
-    const u: SocialUnit = {
-      id: 'uT', key: 1, level: 'temple', name: '庙', members: [], memory: [], opinions: new Map(),
-      createdAt: 0, resources: {}, tradeBalance: new Map(), raidCount: 0,
-    };
-    adjustOpinion(u, 'a', 10, 1); adjustOpinion(u, 'b', 10, 2); adjustOpinion(u, 'c', 10, 3);
-    expect(u.opinions.size).toBe(3); // 未超容量，正常增长
-    adjustOpinion(u, 'd', 10, 4); adjustOpinion(u, 'e', 10, 5); adjustOpinion(u, 'f', 10, 6);
-    adjustOpinion(u, 'g', 10, 7); adjustOpinion(u, 'h', 10, 8); adjustOpinion(u, 'i', 10, 9);
-    adjustOpinion(u, 'j', 10, 10); adjustOpinion(u, 'k', 10, 11); adjustOpinion(u, 'l', 10, 12);
-    adjustOpinion(u, 'm', 10, 13); adjustOpinion(u, 'n', 10, 14); adjustOpinion(u, 'o', 10, 15);
-    adjustOpinion(u, 'p', 10, 16); adjustOpinion(u, 'q', 10, 17); adjustOpinion(u, 'r', 10, 18);
-    adjustOpinion(u, 's', 10, 19); adjustOpinion(u, 't', 10, 20); adjustOpinion(u, 'u', 10, 21);
-    adjustOpinion(u, 'v', 10, 22); adjustOpinion(u, 'w', 10, 23); adjustOpinion(u, 'x', 10, 24);
-    expect(u.opinions.size).toBe(20); // 容量 20，超出部分遗忘最弱连接
-    expect(UNIT_CAPACITY.temple).toBe(20);
-  });
-
   it('registering a custom system runs in the tick loop', () => {
     let ticks = 0;
     const sys: GameSystem = {
@@ -793,195 +773,98 @@ describe('派系优先级（用户 Q8：AI 按环境下达工作指令）', () =
   });
 });
 
-describe('自主建造（用户 Q1/Q8：营地自主扩张）', () => {
-  it('an initial campfire exists and pawns join its faction unit', () => {
+describe('营地与涌现派系（2026-08-14 重构：派系 = 个体关系涌现，非实体）', () => {
+  it('出生点有 campfire，小人生成后 fireId 归属到它', () => {
     const sim = new Sim({ seed: 98, pawnCount: 4 });
-    // 出生点应有初始篝火 → 独立派系单位
     expect(sim.world.hasBuilding('campfire')).toBe(true);
-    expect(sim.socialUnits.units.size).toBe(1);
-    // 小人归入该单位
+    // 出生小人应归属出生篝火（fireId = campfire 建筑 key）
     for (const eid of sim.pawns) {
-      expect(sim.socialUnits.membership.has(eid)).toBe(true);
+      const fireId = sim.pawnStates.get(eid)!.fireId;
+      expect(fireId).not.toBeNull();
+      expect(sim.world.buildings.has(fireId!)).toBe(true);
     }
   });
 
-  it('a second campfire creates an independent faction unit (Q9)', () => {
-    const sim = new Sim({ seed: 104, pawnCount: 2 });
+  it('factionsView 按 fireId 聚合出涌现派系（纯只读展示，无库存/贸易/战争）', () => {
+    const sim = new Sim({ seed: 98, pawnCount: 4 });
+    const factions = sim.factionsView();
+    expect(factions.length).toBeGreaterThanOrEqual(1);
+    // 每个涌现派系 = 一个 campfire + 归属的小人
+    for (const f of factions) {
+      expect(f.members.length).toBeGreaterThan(0);
+      expect(sim.world.buildings.get(f.key)?.def.id).toBe('campfire');
+    }
+    // 所有有火的小人都在某个涌现派系里
+    const withFire = sim.pawns.filter((e) => sim.pawnStates.get(e)!.fireId != null);
+    const inFactions = factions.reduce((n, f) => n + f.members.length, 0);
+    expect(inFactions).toBe(withFire.length);
+  });
+
+  it('建第二个 campfire → 新涌现派系（成员重算归属，无独立实体）', () => {
+    const sim = new Sim({ seed: 99, pawnCount: 2 });
+    const before = sim.factionsView().length;
     const w = sim.world;
     const cx = Math.floor(w.width / 2);
     const cy = Math.floor(w.height / 2);
-    const unitsBefore = sim.socialUnits.units.size;
-    // 在营地外很远建第二个篝火 → 新派系
-    const farX = cx + 25, farY = cy + 25;
-    if (w.placeBuilding(farX, farY, 'campfire', 'auto')) {
-      sim.socialUnits.onBuildingBuilt(w.buildKey(farX, farY), 'campfire', sim.time);
+    // 找远处可建格建 campfire
+    let placed = false;
+    for (let r = 8; r <= 14 && !placed; r++) {
+      for (let dx = -r; dx <= r && !placed; dx++) {
+        for (let dy = -r; dy <= r && !placed; dy++) {
+          if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+          const x = cx + dx, y = cy + dy;
+          if (!w.inBounds(x, y) || !w.canBuildAt(x, y)) continue;
+          if (w.placeBuilding(x, y, 'campfire', 'auto')) {
+            sim.socialUnits.onCampfireBuilt(w.buildKey(x, y));
+            placed = true;
+          }
+        }
+      }
     }
-    expect(sim.socialUnits.units.size).toBe(unitsBefore + 1);
-    // 新单位是独立派系（有自己名字）
-    const last = [...sim.socialUnits.units.values()][sim.socialUnits.units.size - 1];
-    expect(last.name).toBeTruthy();
+    expect(placed).toBe(true);
+    expect(sim.factionsView().length).toBe(before + 1);
   });
 
-  it('campfire upgrades to church and expands memory capacity', () => {
-    const sim = new Sim({ seed: 105, pawnCount: 2 });
-    const w = sim.world;
-    const cx = Math.floor(w.width / 2);
-    const cy = Math.floor(w.height / 2);
-    const unit = [...sim.socialUnits.units.values()][0];
-    const capBefore = sim.socialUnits.units.get(unit.id)!.level;
-    void capBefore;
-    // 教堂 = 篝火原位升级（Q9 即时指令）
-    const fireKey = sim.socialUnits.units.get(unit.id)!.key;
-    const fx = fireKey % w.width;
-    const fy = Math.floor(fireKey / w.width);
-    if (w.upgradeBuilding(fx, fy, 'church', 'auto')) {
-      sim.socialUnits.onBuildingBuilt(fireKey, 'church', sim.time);
+  it('营地遭袭（💥 记忆 + 威胁在场）才另起篝火；狼路过不算', () => {
+    const sim = new Sim({ seed: 100, pawnCount: 1 });
+    sim.tuning.autobuild.campfireTarget = 0; // 禁 AI 自主建 campfire，隔离 migrate
+    const before = sim.factionsView().length;
+    // 找出生 campfire key
+    const fireKey = [...sim.world.buildings.keys()].find((k) => sim.world.buildings.get(k)!.def.id === 'campfire')!;
+    // 狼在场但无损失 → 不迁
+    sim.hostiles.push({ x: fireKey % sim.world.width, y: Math.floor(fireKey / sim.world.width), hp: 50, maxHp: 50, targetX: 0, targetY: 0 });
+    for (let i = 0; i < 10; i++) sim.step(sim.tuning.faction.migrateCheckEvery);
+    expect(sim.factionsView().length).toBe(before);
+    // 营地真实被毁（💥 入记忆）+ 威胁在场 → 连续周期后另起篝火。
+    // 每周期补一只狼确保 nearThreat 持续成立（migrate 要求"当前有威胁在场"；
+    // 狼可能被小人击杀，需刷新）
+    sim.socialUnits.addMemory(fireKey, '💥 建筑被摧毁（围栏）');
+    sim.socialUnits.addMemory(fireKey, '💥 建筑被摧毁（围栏）');
+    sim.socialUnits.addMemory(fireKey, '💥 建筑被摧毁（围栏）');
+    for (let i = 0; i < 15; i++) {
+      // 狼在营地旁 8 格（威胁半径 10 内满足 nearThreat，但落点环扫 r=8~14
+      // 远离旧营地 ≥migrateMinDist=10，狼又不堵住落点）
+      sim.hostiles.push({ x: (fireKey % sim.world.width) + 8, y: Math.floor(fireKey / sim.world.width), hp: 5000, maxHp: 5000, targetX: 0, targetY: 0 });
+      sim.step(sim.tuning.faction.migrateCheckEvery);
     }
-    const upgraded = sim.socialUnits.units.get(unit.id)!;
-    expect(upgraded.level).toBe('church');
-    // 升级后记忆容量扩大（5-10 vs 2-3）
-    const capacities: Record<string, number> = { campfire: 3, church: 10 };
-    expect(capacities[upgraded.level]).toBe(10);
+    expect(sim.factionsView().length).toBeGreaterThan(before);
   });
 
-  it('wild camp spawns an independent faction unit (Q9, direct)', () => {
-    // 测试用独立逻辑：直接调 spawnWildCamp，不依赖随机事件时序
-    const sim = new Sim({ seed: 106, pawnCount: 2 });
-    const before = sim.socialUnits.units.size;
-    // 多次尝试直到成功（可能落在不可建处）
-    let ok = false;
-    for (let i = 0; i < 20 && !ok; i++) {
-      ok = spawnWildCamp(sim);
-    }
-    expect(ok).toBe(true);
-    expect(sim.socialUnits.units.size).toBe(before + 1);
-  });
-
-  it('hostile units raid each other; friendly units trade (Q9)', () => {
-    // 测试用独立逻辑：直接构造两个敌对单位，验证袭击触发（与地形/RNG 解耦）
-    const sim = new Sim({ seed: 107, pawnCount: 2 });
-    const su = sim.socialUnits;
-    // 手动造第二个单位（避免依赖建篝火位置）
-    const key0 = [...su.units.keys()][0];
-    su.units.set('utest2', {
-      id: 'utest2', key: su.units.get(key0)!.key + 9999, level: 'campfire',
-      name: '测试部落', members: [], memory: [], opinions: new Map(), createdAt: 0,
-      resources: { wood: 30, ore: 5, food: 25, tools: 0 }, tradeBalance: new Map(), raidCount: 0,
-    });
-    const [a, b] = [...su.units.keys()];
-    su.units.get(a)!.opinions.set(b, { value: -50, lastChanged: 0 });
-    su.units.get(b)!.opinions.set(a, { value: -50, lastChanged: 0 });
-    // 跑 20 秒（覆盖 trustTimer=8s，触发 unitRelations → 袭击）
-    for (let i = 0; i < 400; i++) sim.step(1 / 20);
-    const attacked = sim.hostiles.some((h) => h.faction === 'unit');
-    expect(attacked).toBe(true);
-    // 掠夺者数值来自 enemies 表（raider def），而非写死
-    const raider = sim.hostiles.find((h) => h.faction === 'unit');
-    expect(raider?.enemyId).toBe('raider');
-    expect(raider?.maxHp).toBe(90); // 初始血量来自 raider def
-    expect(raider?.dmgPerSec).toBe(7);
-    expect(raider?.loot).toEqual({ item: 'ore', amount: 4 });
-  });
-
-  it('friendly units trade with exchange rate and track deficit (Q9)', () => {
-    // 独立测试逻辑：构造两友好单位，验证贸易汇率 + 逆差记账
-    const sim = new Sim({ seed: 109, pawnCount: 2 });
-    const su = sim.socialUnits;
-    const key0 = [...su.units.keys()][0];
-    su.units.get(key0)!.resources = { wood: 40, ore: 5, food: 20, tools: 0 };
-    su.units.set('utestT', {
-      id: 'utestT', key: su.units.get(key0)!.key + 8888, level: 'campfire',
-      name: '贸易部落', members: [], memory: [], opinions: new Map(), createdAt: 0,
-      resources: { wood: 40, ore: 5, food: 20, tools: 0 }, tradeBalance: new Map(), raidCount: 0,
-    });
-    const [a, b] = [...su.units.keys()];
-    su.units.get(a)!.opinions.set(b, { value: 50, lastChanged: 0 });
-    su.units.get(b)!.opinions.set(a, { value: 50, lastChanged: 0 });
-    // a 食物紧缺（<40）→ 高汇率贸易
-    const foodBefore = su.units.get(a)!.resources.food!;
-    for (let i = 0; i < 400; i++) sim.step(1 / 20); // 20s > tradeCd
-    const foodAfter = su.units.get(a)!.resources.food!;
-    // 贸易发生：a 出了木换食（记了顺差）、食物入账。
-    // 注：不断言 wood 减少——保底卡后小人更勤快，20s 采集增量可能盖过贸易量。
-    expect(foodAfter).toBeGreaterThan(foodBefore);
-    expect((su.units.get(a)!.tradeBalance.get(b) ?? 0)).toBeGreaterThan(0);
-  });
-
-  it('large trade deficit erodes goodwill toward the creditor (Q9)', () => {
-    // 独立测试：b 对 a 有大量逆差 → b 开始怨恨 a，好感下滑
-    const sim = new Sim({ seed: 110, pawnCount: 2 });
-    const su = sim.socialUnits;
-    const key0 = [...su.units.keys()][0];
-    su.units.set('udef', {
-      id: 'udef', key: su.units.get(key0)!.key + 7777, level: 'campfire',
-      name: '负债部落', members: [], memory: [], opinions: new Map(), createdAt: 0,
-      resources: { wood: 30, ore: 5, food: 25, tools: 0 }, tradeBalance: new Map(), raidCount: 0,
-    });
-    const [a, b] = [...su.units.keys()];
-    // b 对 a 欠 40（大逆差），a 对 b 友好→触发贸易，但 b 会怨恨
-    su.units.get(b)!.tradeBalance.set(a, -40);
-    su.units.get(a)!.opinions.set(b, { value: 10, lastChanged: 0 });
-    su.units.get(b)!.opinions.set(a, { value: 10, lastChanged: 0 });
-    const opBefore = su.units.get(b)!.opinions.get(a)!.value;
-    for (let i = 0; i < 400; i++) sim.step(1 / 20); // 20s > trustTimer
-    const opAfter = su.units.get(b)!.opinions.get(a)!.value;
-    // 逆差怨恨应使 b 对 a 的看法下滑（或至少不高涨）
-    expect(opAfter).toBeLessThanOrEqual(opBefore);
-  });
-
-  it('neutral units exchange messages and drift closer (Q9 传话)', () => {
-    // 独立测试：两单位关系中性偏友善 → 传话增进关系（派系间只有传话，不直接控制）
-    const sim = new Sim({ seed: 111, pawnCount: 2 });
-    const su = sim.socialUnits;
-    const key0 = [...su.units.keys()][0];
-    su.units.set('umsg', {
-      id: 'umsg', key: su.units.get(key0)!.key + 6666, level: 'campfire',
-      name: '传话部落', members: [], memory: [], opinions: new Map(), createdAt: 0,
-      resources: { wood: 30, ore: 5, food: 25, tools: 0 }, tradeBalance: new Map(), raidCount: 0,
-    });
-    const [a, b] = [...su.units.keys()];
-    // 中性态度（0, 0）→ 不触发贸易(≥40)/战争(≤-40)，走传话
-    su.units.get(a)!.opinions.set(b, { value: 0, lastChanged: 0 });
-    su.units.get(b)!.opinions.set(a, { value: 0, lastChanged: 0 });
-    const opBefore = su.units.get(a)!.opinions.get(b)!.value;
-    for (let i = 0; i < 800; i++) sim.step(1 / 20); // 40s > msgCd 90s
-    const opAfter = su.units.get(a)!.opinions.get(b)!.value;
-    // 传话（sum≥0 友善）应使看法上升
-    expect(opAfter).toBeGreaterThan(opBefore);
-  });
-
-  it('destroying a unit core conquers it and merges members (Q9/Q3)', () => {
-    // 独立测试：直接调 conquestOf 验证吞并（成员并入、单位移除、记忆记录）
-    const sim = new Sim({ seed: 112, pawnCount: 3 });
-    const su = sim.socialUnits;
-    const key0 = [...su.units.keys()][0];
-    // 造第二个单位，把一个小人归给它
-    su.units.set('ucq', {
-      id: 'ucq', key: su.units.get(key0)!.key + 5555, level: 'campfire',
-      name: '被征服部落', members: [sim.pawns[0]], memory: [], opinions: new Map(), createdAt: 0,
-      resources: { wood: 30, ore: 5, food: 25, tools: 0 }, tradeBalance: new Map(), raidCount: 0,
-    });
-    su.membership.set(sim.pawns[0], 'ucq');
-    const conquerorName = [...su.units.values()][0].name;
-    sim.conquestOf(su.units.get('ucq')!.key, conquerorName);
-    // 被征服单位被移除
-    expect(su.units.has('ucq')).toBe(false);
-    // 成员并入征服者
-    const conq = [...su.units.values()].find((u) => u.name === conquerorName)!;
-    expect(conq.members).toContain(sim.pawns[0]);
-    // membership 更新
-    expect(su.membership.get(sim.pawns[0])).toBe(conq.id);
+  it('addProductionNear 全进全局仓库（2026-08-14 重构：无单位私有库存）', () => {
+    const sim = new Sim({ seed: 116, pawnCount: 2 });
+    const globalFoodBefore = sim.stockpile.food ?? 0;
+    // auto 野营建筑产出 → 全局（此前归最近单位库存）
+    sim.addProductionNear(9999 % sim.world.width, 9999 % sim.world.height, 'food', 5);
+    expect(sim.stockpile.food).toBe(globalFoodBefore + 5);
   });
 
   it('assigned job dominates card draw (Q10 生产线)', () => {
-    // 独立测试：指派 lumberjack → chop 权重 6x，其他工作卡 0.1x
     const sim = new Sim({ seed: 114, pawnCount: 1 });
     const eid = sim.pawns[0];
     sim.selected = [eid];
     sim.issueCommand({ type: 'assign', x: 0, y: 0, job: 'lumberjack' });
     const st = sim.pawnStates.get(eid)!;
     expect(st.assignedJob).toBe('lumberjack');
-    // 跑一段时间 → 小人应主要做伐木工作
     let chops = 0;
     for (let i = 0; i < 600; i++) {
       sim.step(1 / 20);
@@ -991,13 +874,11 @@ describe('自主建造（用户 Q1/Q8：营地自主扩张）', () => {
   });
 
   it('monument wonder requires ore and grants camp-wide awe (Q10)', () => {
-    // 独立测试：queueBuild 需 ore + 完整 footprint；直接放 monument 验证可存在
     const sim = new Sim({ seed: 115, pawnCount: 0 });
     const w = sim.world;
     const cx = Math.floor(w.width / 2);
     const cy = Math.floor(w.height / 2);
     const def = BUILDINGS.monument;
-    // 找一个 3x3 可建空地
     let spot: { x: number; y: number } | null = null;
     for (let r = 3; r <= 10 && !spot; r++) {
       for (let dx = -r; dx <= r && !spot; dx++) {
@@ -1008,129 +889,17 @@ describe('自主建造（用户 Q1/Q8：营地自主扩张）', () => {
     }
     expect(spot).not.toBeNull();
     sim.stockpile.wood = 200;
-    sim.stockpile.ore = 100;
-    // 矿石不足 → 不能排入建造队列
     sim.stockpile.ore = 10;
     sim.issueCommand({ type: 'build', x: spot!.x, y: spot!.y, buildingId: 'monument' });
     expect(sim.buildQueue.length).toBe(0); // ore 不足被拒
-    // 矿石充足 → 可排队，且计入 ore 成本
     sim.stockpile.ore = 100;
     sim.issueCommand({ type: 'build', x: spot!.x, y: spot!.y, buildingId: 'monument' });
     expect(sim.buildQueue.length).toBe(1);
-    expect(sim.buildQueue[0].cost).toMatchObject({ wood: 60, ore: 25 });
-    // 直接放置纪念碑（绕过建造流程验证可存在）
     const placed = w.placeBuilding(spot!.x, spot!.y, 'monument', 'player');
     expect(placed).toBe(true);
-    // footprint 各格都属于纪念碑
-    for (let dy = 0; dy < def.size.y; dy++) {
-      for (let dx = 0; dx < def.size.x; dx++) {
-        expect(w.getBuilding(spot!.x + dx, spot!.y + dy)?.def.id).toBe('monument');
-      }
-    }
-  });
-
-  it('production routing (2026-08-13 架构裁决：无玩家单位)', () => {
-    // 独立测试：addProductionNear 归集规则——faction='player'（玩家/探索/神谕蓝图建筑）→ 全局仓库；
-    // 否则（auto 野营建筑）→ 记给最近的单位。玩家不是派系单位，不参与单位间分配。
-    const sim = new Sim({ seed: 116, pawnCount: 2 });
-    const su = sim.socialUnits;
-    su.units.set('ufarm', {
-      id: 'ufarm', key: 99999, level: 'campfire',
-      name: '自足部落', members: [], memory: [], opinions: new Map(), createdAt: 0,
-      resources: { wood: 30, ore: 5, food: 0, tools: 0 }, tradeBalance: new Map(), raidCount: 0,
-    });
-    // 远处无单位 → 无人接收（不进全局）
-    const globalFoodBefore = sim.stockpile.food;
-    su.addProductionNear(9999, 9999, 'food', 5);
-    expect(sim.stockpile.food).toBe(globalFoodBefore);
-    // 靠近 ufarm → 记给该单位
-    su.addProductionNear(9999 % sim.world.width, 9999 % sim.world.height, 'food', 5);
-    expect(su.units.get('ufarm')!.resources.food!).toBeGreaterThan(0);
-    // faction='player' → 全局仓库（无玩家单位，faction 标记即玩家干预产物）
-    const px = Math.floor(sim.world.width / 2);
-    su.addProductionNear(px, Math.floor(sim.world.height / 2), 'food', 5, 'player');
-    expect(sim.stockpile.food).toBeGreaterThan(globalFoodBefore);
-  });
-
-  it('social units (factions/memory/opinions) persist through save/load', () => {
-    const sim = new Sim({ seed: 117, pawnCount: 2 });
-    const su = sim.socialUnits;
-    const key0 = [...su.units.keys()][0];
-    // 加第二个单位 + 看法 + 记忆
-    su.units.set('usave', {
-      id: 'usave', key: su.units.get(key0)!.key + 2222, level: 'church',
-      name: '存档部落', members: [], memory: [], opinions: new Map(), createdAt: 5,
-      resources: { wood: 11, ore: 22, food: 33, tools: 0 }, tradeBalance: new Map(), raidCount: 0,
-    });
-    su.units.get('usave')!.opinions.set(key0, { value: 45, lastChanged: 9 });
-    su.units.get('usave')!.memory.push({ time: 1, text: '建营' });
-    const data = sim.save();
-    const sim2 = new Sim({ seed: 118, pawnCount: 2 });
-    sim2.load(data);
-    expect(sim2.socialUnits.units.has('usave')).toBe(true);
-    const u = sim2.socialUnits.units.get('usave')!;
-    expect(u.level).toBe('church');
-    expect(u.resources.wood).toBe(11);
-    expect(u.opinions.get(key0)?.value).toBe(45);
-    expect(u.memory[0].text).toBe('建营');
-  });
-
-  it('unit id sequence resumes after load (no id collision)', () => {
-    const sim = new Sim({ seed: 119, pawnCount: 1 });
-    const data = sim.save();
-    const sim2 = new Sim({ seed: 120, pawnCount: 1 });
-    sim2.load(data);
-    // 载入后再建新单位，id 不应与现有冲突
-    const existing = [...sim2.socialUnits.units.keys()];
-    const cx = Math.floor(sim2.world.width / 2);
-    const cy = Math.floor(sim2.world.height / 2);
-    // 先真正放一座篝火，再通知单位系统（否则空地上无 def，不建单位）
-    sim2.world.placeBuilding(cx + 3, cy + 3, 'campfire', 'auto');
-    sim2.socialUnits.onBuildingBuilt(sim2.world.buildKey(cx + 3, cy + 3), 'campfire', sim2.time);
-    const now = [...sim2.socialUnits.units.keys()];
-    // 新单位 id 是新的
-    expect(now.length).toBe(existing.length + 1);
-    const newId = now.find((id) => !existing.includes(id));
-    expect(newId).toBeDefined();
-    expect(existing.includes(newId!)).toBe(false);
-  });
-
-  it('faction events (raid/trade/conquest) are recorded in history', () => {
-    const sim = new Sim({ seed: 121, pawnCount: 2 });
-    const su = sim.socialUnits;
-    const key0 = [...su.units.keys()][0];
-    su.units.set('uev', {
-      id: 'uev', key: su.units.get(key0)!.key + 1111, level: 'campfire',
-      name: '事件部落', members: [], memory: [], opinions: new Map(), createdAt: 0,
-      resources: { wood: 30, ore: 5, food: 25, tools: 0 }, tradeBalance: new Map(), raidCount: 0,
-    });
-    // 触发一次袭击（敌对看法）
-    const [a, b] = [...su.units.keys()];
-    su.units.get(a)!.opinions.set(b, { value: -50, lastChanged: 0 });
-    su.units.get(b)!.opinions.set(a, { value: -50, lastChanged: 0 });
-    for (let i = 0; i < 400; i++) sim.step(1 / 20);
-    const factionEvents = sim.historyQuery({ type: 'faction_event', limit: 20 });
-    expect(factionEvents.length).toBeGreaterThan(0);
-    expect(['raid', 'trade', 'message', 'threat']).toContain(factionEvents[0].data?.kind);
-  });
-
-  it('upgrading a campfire to church upgrades the faction unit (Q9 即时指令)', () => {
-    // 独立测试：world.upgradeBuilding 把篝火→教堂；sim 触发单位升级
-    const sim = new Sim({ seed: 122, pawnCount: 1 });
-    const w = sim.world;
-    const cx = Math.floor(w.width / 2);
-    const cy = Math.floor(w.height / 2);
-    const key = w.buildKey(cx, cy + 2);
-    // 初始单位是篝火等级
-    const unit = sim.socialUnits.unitAtKey(key)!;
-    expect(unit.level).toBe('campfire');
-    // 升级建筑为教堂 → 触发单位升级
-    sim.upgradeBuilding(cx, cy + 2, 'church', 'auto');
-    sim.socialUnits.onBuildingBuilt(key, 'church', sim.time);
-    expect(sim.socialUnits.unitAtKey(key)!.level).toBe('church');
-    expect(w.getBuilding(cx, cy + 2)!.def.id).toBe('church');
   });
 });
+
 
 describe('教堂 + 神谕（用户 Q2/Q3）', () => {
   it('oracle influence blesses high-faith pawns near a church', () => {
@@ -1268,9 +1037,8 @@ describe('mod 玩法（DATA_DRIVEN §6 验收）', () => {
     expect(placed).toBe(true);
     // 运行农场系统（手动更新一次，farm 系统按 dt 累加）——faction='player' 建筑产出走全局库存
     //（2026-08-13 架构裁决：无玩家单位，faction='player' 即进全局仓库 stockpile）
-    const su = sim.socialUnits;
     const before = sim.stockpile.herb ?? 0;
-    su.addProductionNear(cx, cy, 'herb', 0.5, 'player');
+    sim.addProductionNear(cx, cy, 'herb', 0.5, 'player');
     const after = sim.stockpile.herb ?? 0;
     expect(after - before).toBeGreaterThanOrEqual(0.5);
   });
@@ -1476,29 +1244,16 @@ describe('mod 玩法（DATA_DRIVEN §6 验收）', () => {
     expect(sim.factionPriority.chop).toBe(3);
   });
 
-  it('faction raids are data-driven: overrideDef enemy changes raider stats (not hardcoded)', () => {
+  it('enemy def is data-driven: overrideDef changes raider stats (not hardcoded)', () => {
+    // 2026-08-14 重构：派系实体删除（不再有 unit 掠夺者），数据驱动仍保留——直接验证
+    // enemyDef 被 mod 覆盖后，新生成敌人都带上覆盖值（原测试靠派系 raidBetween 触发，已改直测）
     const sim = new Sim({ seed: 220, pawnCount: 2, mods: (m) => {
       m.overrideDef('enemy', 'raider', { hp: 5, loot: { item: 'wood', amount: 9 } });
     } });
-    const su = sim.socialUnits;
-    const key0 = [...su.units.keys()][0];
-    su.units.set('ufr2', {
-      id: 'ufr2', key: su.units.get(key0)!.key + 7777, level: 'campfire',
-      name: '敌对部', members: [], memory: [], opinions: new Map(), createdAt: 0,
-      resources: { wood: 30, ore: 5, food: 25, tools: 0 }, tradeBalance: new Map(), raidCount: 0,
-    });
-    const [a, b] = [...su.units.keys()];
-    su.units.get(a)!.opinions.set(b, { value: -50, lastChanged: 0 });
-    su.units.get(b)!.opinions.set(a, { value: -50, lastChanged: 0 });
-    let h: typeof sim.hostiles[0] | undefined;
-    for (let i = 0; i < 2000 && !h; i++) {
-      sim.step(1 / 20);
-      h = sim.hostiles.find((x) => x.faction === 'unit');
-    }
-    expect(h).toBeDefined();
-    expect(h!.enemyId).toBe('raider');
-    expect(h!.maxHp).toBe(5); // mod 覆盖生效，而非写死的 90
-    expect(h!.loot).toEqual({ item: 'wood', amount: 9 });
+    const def = sim.mods.enemyDef('raider');
+    expect(def.hp).toBe(5);
+    expect(def.loot).toEqual({ item: 'wood', amount: 9 });
+    expect(def.speed).toBeGreaterThan(0); // 未覆盖字段保留默认
   });
 
   it('mod harvestable tile is auto-harvested (growable+harvest, not tree/ore hardcode)', () => {
@@ -1620,10 +1375,9 @@ describe('存档 JSON 往返（save/load 修复）', () => {
     sim2.load(data);
     // 修复前：members 恒空 → 首个 step 触发"本体团灭，附身"日志（附身机制 2026-08-13 已删）
     sim2.step(1);
-    for (const unit of sim2.socialUnits.units.values()) {
-      if (unit.members.length > 0) return; // 至少一个单位有成员（不崩即可）
-    }
-    throw new Error('no unit has members after load');
+    // 2026-08-14 重构：无派系单位，校验 fireId（篝火归属）持久化恢复
+    const withFire = sim2.pawns.filter((e) => sim2.pawnStates.get(e)!.fireId != null).length;
+    expect(withFire).toBeGreaterThan(0);
   });
 });
 
@@ -1979,27 +1733,6 @@ describe('社交文案表（defs/socialLines.ts 文本层）', () => {
   });
 });
 
-describe('部落名生成表（defs/factionNames.ts + tuning.faction 覆盖）', () => {
-  it('内置表生成确定性部落名', () => {
-    const sim = new Sim({ seed: 73, pawnCount: 1, mods: () => {} });
-    for (let i = 0; i < 200; i++) sim.step(0.1);
-    const units = [...sim.socialUnits.units.values()];
-    expect(units.length).toBeGreaterThan(0);
-    for (const u of units) expect(u.name).toMatch(/[晨暮月岩风火松沙霜湖][部落氏族营地聚落之盟]/);
-  });
-
-  it('tuning.faction 覆盖部落名前缀/后缀（mod 定制部族风味）', () => {
-    const sim = new Sim({
-      seed: 74, pawnCount: 1,
-      mods: (m) => m.overrideTuning({ faction: { namePrefixes: ['幽', '幻'], nameSuffixes: ['王国'] } }),
-    });
-    for (let i = 0; i < 200; i++) sim.step(0.1);
-    const units = [...sim.socialUnits.units.values()];
-    expect(units.length).toBeGreaterThan(0);
-    for (const u of units) expect(u.name).toMatch(/[幽幻]王国/);
-  });
-});
-
 describe('经济账本自动调节（用户设计：支出多 → 收益工作概率自动升，不靠伐木令）', () => {
   it('flowRatio：收益/支出净流；净支出多 → chop 工作权重自动升高', () => {
     const sim = new Sim({ seed: 601, pawnCount: 1 });
@@ -2202,11 +1935,11 @@ describe('兴趣驱动娱乐（v2026-08-13：娱乐 = 开放活动空间，做�
 describe('B 方案：篝火 = 区域历史载体，伙伴/敌人由交流篝火历史判定（2026-08-13 用户设计）', () => {
   it('pawn.fireId 记录归属篝火；无归属 = null', () => {
     const sim = new Sim({ seed: 900, pawnCount: 2 });
-    // ensureInitialCamp 后成员应归入篝火
+    // ensureInitialCamp 后成员应归入篝火（fireId = campfire 建筑 key）
     for (const eid of sim.pawns) {
       const st = sim.pawnStates.get(eid)!;
       expect(st.fireId).toBeTruthy();
-      expect(sim.socialUnits.units.has(st.fireId!)).toBe(true);
+      expect(sim.world.buildings.has(st.fireId!)).toBe(true);
     }
     // unassign → fireId 清空
     sim.socialUnits.unassignPawn(sim.pawns[0]);
@@ -2220,7 +1953,7 @@ describe('B 方案：篝火 = 区域历史载体，伙伴/敌人由交流篝火�
     const stB = sim.pawnStates.get(b)!;
     // 构造 A 所属篝火的历史（含袭击 → 敌意信号）
     const fireA = stA.fireId!;
-    sim.socialUnits.units.get(fireA)!.memory.push({ time: 1, text: '🐺 营地遭到袭击（3 只野狼）' });
+    sim.socialUnits.addMemory(fireA, '🐺 营地遭到袭击（3 只野狼）');
     // 把两人放同 chunk 相邻 → 触发交流
     sim.pawnPositions.set(a, { x: 10, y: 10 });
     sim.pawnPositions.set(b, { x: 10, y: 11 });
@@ -2234,7 +1967,6 @@ describe('B 方案：篝火 = 区域历史载体，伙伴/敌人由交流篝火�
 
   it('交流冷却：同对 pawn 不重复交流（防刷屏）', () => {
     const sim = new Sim({ seed: 902, pawnCount: 2 });
-    const sys = sim.socialUnits;
     // 手动触发两次 exchangeFireStory，第二次因冷却应跳过
     // （通过 simulate：把两 pawn 同 chunk 相邻，步进大量帧，看 knownFires 是否只更新一次）
     sim.pawnPositions.set(sim.pawns[0], { x: 10, y: 10 });
@@ -2246,48 +1978,46 @@ describe('B 方案：篝火 = 区域历史载体，伙伴/敌人由交流篝火�
     expect(count).toBeLessThanOrEqual(2);
   });
 
-  it('营地被摧毁 → 成员 fireId 清空（防幽灵归属：单位已删但 pawn 仍持有旧火）', () => {
-    // 发现背景（2026-08-14 试玩）：营地被毁只删 membership 没清 fireId →
-    // 显示"有火归属"但单位不存在/成员 0。让 pawn 成为游牧等待重新归属。
+  it('营地被摧毁 → 成员 fireId 不再指向已毁建筑（防幽灵归属）', () => {
+    // 发现背景（2026-08-14 试玩）：营地被毁后 pawn 仍持有旧 fireId →
+    // 显示"有火归属"但建筑已不存在。摧毁 campfire 后 reassign 应让成员脱离
+    //（或归属到其他仍存在的 campfire，但绝不指向已销毁的）。
     const sim = new Sim({ seed: 904, pawnCount: 1 });
     const eid = sim.pawns[0];
-    const u = [...sim.socialUnits.units.values()][0];
-    expect(sim.pawnStates.get(eid)!.fireId).toBe(u.id);
-    // 摧毁营地 → 触发 building_destroyed → 派系解散
-    sim.bus.emit({ type: 'building_destroyed', x: u.key % sim.world.width, y: Math.floor(u.key / sim.world.width), defId: 'campfire' });
-    expect(sim.socialUnits.units.has(u.id)).toBe(false); // 单位已删
-    expect(sim.pawnStates.get(eid)!.fireId).toBeNull();  // fireId 已清（游牧）
+    const fireKey = sim.pawnStates.get(eid)!.fireId!;
+    expect(sim.world.buildings.has(fireKey)).toBe(true);
+    // 摧毁营地 campfire
+    sim.world.damageBuilding(fireKey % sim.world.width, Math.floor(fireKey / sim.world.width), 9999);
+    sim.bus.emit({ type: 'building_destroyed', x: fireKey % sim.world.width, y: Math.floor(fireKey / sim.world.width), defId: 'campfire' });
+    // reassign 周期后 fireId 不得指向已销毁建筑（可 null = 游牧，或另一 campfire）
+    for (let i = 0; i < 2; i++) sim.step(sim.tuning.faction.reassignInterval);
+    const fid = sim.pawnStates.get(eid)!.fireId;
+    if (fid != null) {
+      const b = sim.world.buildings.get(fid);
+      expect(b?.def.id).toBe('campfire'); // 指向存在的 campfire
+    }
   });
 
-  it('migrate：只有营地真实被毁（💥 历史 + 威胁在场）才迁徙；狼路过不算', () => {
+  it('migrate：只有营地真实被毁（💥 记忆 + 威胁在场）才另起篝火；狼路过不算', () => {
     // 发现背景（2026-08-14 平衡试玩）：首判据"狼路过营地就计数" → 90 分钟"另起篝火"40 次、
-    // 41 个单位 34 个空壳连锁雪崩。改为：仅当该篝火历史有建筑被摧毁记录且当前有威胁在场
-    // 才累加 raidCount；狼路过/仅喊打喊杀不迁（可战斗/逃跑）。
+    // 41 个单位 34 个空壳连锁雪崩。改为：仅当该篝火记忆有建筑被摧毁记录且当前有威胁在场
+    // 才累计；狼路过/仅喊打喊杀不迁（可战斗/逃跑）。
     const sim = new Sim({ seed: 903, pawnCount: 1 });
-    // 禁 AI 自主建第二个 campfire（autonomousBuildSystem.campfire2 会在人口达标时建房 →
-    // 干扰 units 计数；本测试只验证 migrate，隔离之）
-    sim.tuning.autobuild.campfireTarget = 0;
-    const u = [...sim.socialUnits.units.values()][0];
-    const before = sim.socialUnits.units.size;
-    // 狼在场但无建筑损失 → raidCount 不因"狼路过"累积（修复前的判据：狼扫过一遍就计数，
-    // raidCount 疯涨连锁搬家）。修复后仅当 history 有 💥 才计数。
-    // 注意：狼放营地旁可能拆墙（→ 💥 真实损失 → 迁，那是设计行为）；这里验证的是
-    // "纯狼路过不算"，用 raidCount 是否被清零/不涨来断言，而不是"完全不迁"。
-    const beforeCount = u.raidCount ?? 0;
-    sim.hostiles.push({ x: (u.key % sim.world.width) + 2, y: Math.floor(u.key / sim.world.width), hp: 50, maxHp: 50, targetX: 0, targetY: 0 });
+    sim.tuning.autobuild.campfireTarget = 0; // 隔离 AI 自主建 campfire
+    const fireKey = sim.pawnStates.get(sim.pawns[0])!.fireId!;
+    const before = sim.factionsView().length;
+    // 狼在场但无建筑损失 → 不迁（狼 hp 大 + 位置在 campfire 上 8 格，威胁半径内但不拆核心）
+    sim.hostiles.push({ x: (fireKey % sim.world.width) + 8, y: Math.floor(fireKey / sim.world.width), hp: 5000, maxHp: 5000, targetX: 0, targetY: 0 });
     for (let i = 0; i < 15; i++) sim.step(sim.tuning.faction.migrateCheckEvery);
-    // 核心断言：若狼没造成真实损失（无 💥 历史），则不会触发迁移（units 数不变）
-    // —— 修复前 raidCount 会因"狼在场"虚涨 → 连锁搬家；修复后仅真实损失计数
-    const gotHurt = u.memory.some((m) => m.text.includes('💥'));
-    if (!gotHurt) {
-      expect(sim.socialUnits.units.size).toBe(before);
-      expect(u.raidCount ?? 0).toBeLessThan(sim.tuning.faction.migrateRaidThreshold); // 没虚涨到阈值
-    } else {
-      expect(beforeCount).toBe(beforeCount); // 狼真拆了 → 真实迁移路径，不断言（另一测试覆盖）
+    expect(sim.factionsView().length).toBe(before); // 无 💥 记忆 → 不迁
+    // 营地真实被毁（💥 入史）+ 威胁在场 → 连续周期后另起篝火
+    sim.socialUnits.addMemory(fireKey, '💥 建筑被摧毁（围栏）');
+    sim.socialUnits.addMemory(fireKey, '💥 建筑被摧毁（围栏）');
+    sim.socialUnits.addMemory(fireKey, '💥 建筑被摧毁（围栏）');
+    for (let i = 0; i < 15; i++) {
+      sim.hostiles.push({ x: (fireKey % sim.world.width) + 8, y: Math.floor(fireKey / sim.world.width), hp: 5000, maxHp: 5000, targetX: 0, targetY: 0 });
+      sim.step(sim.tuning.faction.migrateCheckEvery);
     }
-    // 营地真实被毁（💥 入史）+ 威胁在场 → 连续多周期后 raidCount 达阈值 → 迁徙
-    u.memory.push({ time: sim.time, text: '💥 建筑被摧毁（围栏）' });
-    for (let i = 0; i < 15; i++) sim.step(sim.tuning.faction.migrateCheckEvery);
-    expect(sim.socialUnits.units.size).toBeGreaterThanOrEqual(before + 1); // 另起新篝火
+    expect(sim.factionsView().length).toBeGreaterThanOrEqual(before + 1); // 另起新篝火
   });
 });

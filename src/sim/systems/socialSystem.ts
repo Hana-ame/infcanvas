@@ -61,7 +61,7 @@ export class SocialSystem implements GameSystem {
     const stB = this.ctx.pawnStates.get(b);
     // 从 heard stance 判定（B 方案：历史叙事驱动）
     const fireB = stB?.fireId ?? null;
-    const heard = fireB ? (stA.knownFires?.[fireB]?.stance ?? 'unknown') : 'unknown';
+    const heard = fireB != null ? (stA.knownFires?.[fireB]?.stance ?? 'unknown') : 'unknown';
     if (heard === 'enemy') {
       // 听说对方营地有敌意历史 → 敌意：把数值关系压到敌对区，走数值敌意路径（口角/动手）
       const rel2 = stA.relationships ?? new Map<number, number>();
@@ -138,7 +138,7 @@ export class SocialSystem implements GameSystem {
     if ((this.fireTalkCd.get(pair) ?? 0) > this.ctx.time) return;
     this.fireTalkCd.set(pair, this.ctx.time + this.ctx.tuning.social.fireTalkCooldown);
     const fireA = stA.fireId;
-    if (!fireA) return; // A 无篝火（游牧）无故事可讲
+    if (fireA == null) return; // A 无篝火（游牧）无故事可讲
     const history = this.ctx.socialUnits.fireHistory(fireA, 5);
     if (history.length === 0) return;
     const s = this.ctx.tuning.social;

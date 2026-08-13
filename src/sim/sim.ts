@@ -15,7 +15,7 @@ import { HistoryLog } from './core/history';
 import { generateDna, initSlots, type Dna, type SkillId, BASE_CARDS, TRAIT_CARDS } from './ai/pawn';
 import { initDesires, type DesireId } from './core/desires';
 import { initEnv, tickEnv, type EnvState } from './core/env';
-import { addMemory, setUnitSeq, type SocialUnit } from './core/socialUnit';
+
 import { initLean, recordOutcome, weightMulOf, type LeanKey, type LeanDef } from './core/lean';
 import { BUILDINGS, TILES, ITEMS, type BuildingDef } from './defs';
 import { ENEMIES } from './defs/enemies';
@@ -109,10 +109,10 @@ export interface PawnState {
   gossip?: { text: string; heardAt: number }; // 听到的八卦（社交网络传播，TTL 内可转述）
   // 关联篝火（用户 2026-08-13 B 方案：每个人保存一个篝火，在篝火周围生存；
   // 不舒适可另起篝火）。null = 游牧（暂无营地归属）
-  fireId?: string | null;
+  fireId?: number | null; // 关联篝火建筑 key（2026-08-14 重构：无派系单位，指向 campfire 主格）
   // 对"听说的篝火"的看法（B 方案：通过交流篝火历史判断伙伴/敌人）
   // stance: friend/enemy/unknown；basis = 判断依据（听到的历史事件描述）
-  knownFires?: Record<string, { stance: 'friend' | 'enemy' | 'unknown'; basis: string; at: number }>;
+  knownFires?: Record<number, { stance: 'friend' | 'enemy' | 'unknown'; basis: string; at: number }>;
   onArriveWork?: () => void; // mod 工作的到达回执（非序列化，仅当 tick 行为态：走到点后调用）
 }
 
@@ -150,17 +150,8 @@ export interface SaveData {
     desires?: Record<DesireId, number>;
     oracleBuff?: { until: number; mood: number };
     assignedJob?: string;
-    fireId?: string | null; // 关联篝火（B 方案）
-    knownFires?: Record<string, { stance: 'friend' | 'enemy' | 'unknown'; basis: string; at: number }>;
-  }[];
-  units?: {
-    id: string; key: number; level: string; name: string;
-    members: number[]; memory: { time: number; text: string }[];
-    raidCount?: number; // 遭袭计数（B 方案）
-    opinions: [string, { value: number; lastChanged: number }][];
-    resources: Record<string, number>;
-    tradeBalance: [string, number][];
-    createdAt: number;
+    fireId?: number | null; // 关联篝火建筑 key（2026-08-14 重构：无派系单位，指向 campfire 主格）
+    knownFires?: Record<number, { stance: 'friend' | 'enemy' | 'unknown'; basis: string; at: number }>;
   }[];
 }
 
@@ -283,11 +274,10 @@ export class Sim implements SimContext {
     this.world.onTileChange = (x, y, tileId) => this.bus.emit({ type: 'tile_changed', x, y, tileId });
     // 所有事件 → 结构化历史
     this.bus.onAny((ev) => this.history.record(ev, this.time, this.time / this.dayLength));
-    // 建篝火/教堂 → 创建/升级派系单位
+    // 建篝火 → 初始化区域记忆 + 全员重算归属（2026-08-14 重构：无派系实体）
     this.bus.on('building_built', (ev) => {
-      if (ev.type === 'building_built') {
-        const key = this.world.buildKey(ev.x, ev.y);
-        this.socialUnits.onBuildingBuilt(key, ev.defId, this.time);
+      if (ev.type === 'building_built' && ev.defId === this.mods.tuning.autobuild.starterBuilding) {
+        this.socialUnits.onCampfireBuilt(this.world.buildKey(ev.x, ev.y));
       }
     });
 
@@ -661,7 +651,7 @@ export class Sim implements SimContext {
     const cy = Math.floor(this.world.height / 2);
     const starter = this.mods.tuning.autobuild.starterBuilding; // 出生建筑（mod 可换基地建筑）
     if (this.world.placeBuilding(cx, cy + 2, starter, 'auto')) {
-      this.socialUnits.onBuildingBuilt(this.world.buildKey(cx, cy + 2), starter, this.time);
+      this.socialUnits.onCampfireBuilt(this.world.buildKey(cx, cy + 2));
       this.bus.emit({ type: 'building_built', x: cx, y: cy + 2, defId: starter });
     }
     // 出生小人归入最近的派系单位
@@ -720,9 +710,10 @@ export class Sim implements SimContext {
     return jobLabelOf(job);
   }
 
-  // 产出归集（Q9）：建筑附近单位获得产出（faction='player' 进全局仓库）
-  addProductionNear(x: number, y: number, item: string, amount: number, faction?: string): void {
-    this.socialUnits.addProductionNear(x, y, item, amount, faction);
+  // 产出归集（2026-08-14 重构：派系实体删除，无单位私有库存；全部进全局仓库）
+  addProductionNear(x: number, y: number, item: string, amount: number, _faction?: string): void {
+    const f = this.mods.tuning.faction;
+    this.stockpile[item] = Math.min(f.resourceCap, (this.stockpile[item] ?? 0) + amount);
   }
 
   // 建筑升级（篝火→教堂）
@@ -873,34 +864,38 @@ export class Sim implements SimContext {
     return { def: b.def, defId: b.def.id, hp: Math.round(b.hp), maxHp: b.def.hp, faction: b.faction };
   }
 
-  // 篝火/教堂 → 所属派系单位（部落记忆/看法）
+  // 该位置的篝火记忆（2026-08-14 重构：无派系单位，返回区域记忆文本）
   unitAt(x: number, y: number) {
     const key = this.world.buildKey(x, y);
-    return this.socialUnits.unitAtKey(key);
+    return this.socialUnits.fireHistory(key, 5);
   }
 
-  // 征服（Q9：战争征服/吞并）：敌方摧毁某单位核心篝火/教堂 → 该单位被吞并
-  // 成员并入征服者，记忆记录，地图标记征服
-  conquestOf(coreKey: number, conquerorName: string): void {
-    const victim = this.socialUnits.unitAtKey(coreKey);
-    if (!victim) return;
-    // 找征服者单位（按名字）
-    let conqueror: SocialUnit | null = null;
-    for (const u of this.socialUnits.units.values()) {
-      if (u.name === conquerorName && u.id !== victim.id) { conqueror = u; break; }
+  // 派系 = 涌现展示（2026-08-14 用户裁决：派系不是系统，只是个体关系的浮现）。
+  // 遍历所有 campfire 建筑（含空营地），成员 = 按 pawn.fireId 归属的小人。
+  // 无库存/无贸易/无战争，纯只读。供 HUD/客户端展示。
+  factionsView() {
+    const byFire = new Map<number, number[]>();
+    for (const eid of this.pawnList) {
+      const fireId = this.pawnStates.get(eid)?.fireId;
+      if (fireId == null) continue;
+      const arr = byFire.get(fireId) ?? [];
+      arr.push(eid);
+      byFire.set(fireId, arr);
     }
-    if (!conqueror) return;
-    // 吞并：victim 成员并入 conqueror，victim 移除
-    for (const eid of victim.members) {
-      if (!conqueror.members.includes(eid)) conqueror.members.push(eid);
-      this.socialUnits.membership.set(eid, conqueror.id);
+    const out: { key: number; members: number[]; memory: { time: number; text: string }[]; label: string }[] = [];
+    for (const [key, b] of this.world.buildings) {
+      if (b.def.id !== 'campfire') continue;
+      out.push({
+        key,
+        members: byFire.get(key) ?? [],
+        memory: (this.world.fireMemory.get(key) ?? []).slice(-3),
+        label: b.def.name,
+      });
     }
-    addMemory(conqueror, this.time, `⚔ 征服了 ${victim.name}，部族并入`);
-    addMemory(victim, this.time, `🏳 ${victim.name} 被 ${conqueror.name} 征服`);
-    this.socialUnits.units.delete(victim.id);
-    this.logEvent(`🏳 ${victim.name} 被 ${conqueror.name} 征服吞并！`);
-    this.bus.emit({ type: 'faction_event', kind: 'conquest', from: conqueror.name, to: victim.name });
+    return out;
   }
+
+  // 征服已删除（2026-08-14 重构：派系实体层删除，无单位可吞并）
   pawnJob(eid: number): string { return this.pawnStates.get(eid)?.job ?? ''; }
   healthOf(eid: number) { return this.readHealth(eid); }
   get selectedIds(): number[] { return this.selected; }
@@ -945,15 +940,6 @@ export class Sim implements SimContext {
       stockpile: { ...this.stockpile },
       tiles: this.world.serializeTiles(),
       buildings: this.world.serializeBuildings(),
-      units: [...this.socialUnits.units.values()].map((u) => ({
-        id: u.id, key: u.key, level: u.level, name: u.name,
-        members: [...u.members], memory: [...u.memory],
-        opinions: [...u.opinions.entries()],
-        resources: { ...u.resources },
-        tradeBalance: [...u.tradeBalance.entries()],
-        createdAt: u.createdAt,
-        raidCount: u.raidCount,
-      })),
       techs: [...this.techs],
       pawns: this._pawnList.map((eid) => {
         const st = this.pawnStates.get(eid)!;
@@ -984,31 +970,13 @@ export class Sim implements SimContext {
     if (data.stockpile) this.stockpile = { ...TUNING.population.startStockpile, ...data.stockpile };
     if (data.tiles) this.world.loadTiles(data.tiles);
     if (data.buildings) this.world.loadBuildings(data.buildings);
-    // 恢复社会单位（派系记忆/看法/库存）
-    this.socialUnits.units.clear();
-    this.socialUnits.membership.clear();
-    if (data.units) {
-      for (const u of data.units) {
-        this.socialUnits.units.set(u.id, {
-          id: u.id, key: u.key, level: u.level, name: u.name,
-          // members/membership 由下方重新 spawn 小人时填充（旧 eid 作废）
-          members: [],
-          memory: [...u.memory],
-          opinions: new Map(u.opinions),
-          resources: { ...u.resources },
-          tradeBalance: new Map(u.tradeBalance),
-          createdAt: u.createdAt,
-          raidCount: u.raidCount ?? 0, // 旧档缺省 0（B 方案遭袭计数）
-        });
+    // 篝火区域记忆随建筑重建（loadBuildings 已恢复建筑；旧档无 fireMemory，从空开始）
+    this.world.fireMemory.clear();
+    for (const [key, b] of this.world.buildings) {
+      if (b.def.id === 'campfire' || b.def.tags?.includes('anchor')) {
+        this.world.fireMemory.set(key, [{ time: this.time, text: '🏕 营地重建' }]);
       }
     }
-    // 恢复单位 id 序列，避免新单位 id 冲突
-    let maxSeq = 0;
-    for (const id of this.socialUnits.units.keys()) {
-      const m = /^u(\d+)$/.exec(id);
-      if (m) maxSeq = Math.max(maxSeq, parseInt(m[1], 10));
-    }
-    setUnitSeq(maxSeq);
     // 重建小人（拷贝列表遍历，否则 killPawn 的 splice 会跳过隔一个）
     for (const eid of [...this._pawnList]) this.killPawn(eid);
     if (data.pawns) {

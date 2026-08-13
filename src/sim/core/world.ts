@@ -261,6 +261,9 @@ export class World {
 
   // P0 简化：建筑占位，直接存 Map（后期进 ECS）
   buildings = new Map<number, { def: (typeof BUILDINGS)[string]; hp: number; faction: string }>();
+  // 篝火区域记忆（2026-08-14 重构：派系实体层删除后，区域历史改挂在 campfire 建筑上；
+  // key = 篝火主格，供交流篝火情况读取。无派系单位 id 可指）
+  fireMemory = new Map<number, { time: number; text: string }[]>();
   buildingVersion = 0; // 建筑版本号，渲染层据此重绘
   // 格子 → 建筑主格 key（多格 footprint 反向索引）
   private gridToBuilding = new Map<number, number>();

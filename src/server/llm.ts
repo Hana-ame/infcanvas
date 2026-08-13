@@ -31,15 +31,24 @@ export interface LlmEventJson {
 // 世界摘要（user 消息）：把当前局面喂给 LLM，让它生成合乎情境的事件
 function buildWorldPrompt(ctx: SimContext): string {
   const s = ctx.stockpile;
-  const units = [...ctx.socialUnits.units.values()];
-  const mem = units
-    .map((u) => `${u.name}(${u.level})成员${u.members.length} 库存🌲${Math.round(u.resources.wood ?? 0)}🍖${Math.round(u.resources.food ?? 0)}`)
+  // 2026-08-14 重构：派系 = 涌现展示，LLM 上下文给篝火记忆 + 归属人数
+  const byFire = new Map<number, number[]>();
+  for (const eid of ctx.pawnList) {
+    const fireId = ctx.pawnStates.get(eid)?.fireId;
+    if (fireId != null) {
+      const arr = byFire.get(fireId) ?? [];
+      arr.push(eid);
+      byFire.set(fireId, arr);
+    }
+  }
+  const mem = [...byFire.entries()]
+    .map(([key, members]) => `营地@(${key % ctx.world.width},${Math.floor(key / ctx.world.width)}) ${members.length}人`)
     .join('；');
   return [
     `第 ${Math.floor(ctx.time / ctx.dayLength) + 1} 天，时间 ${Math.floor(ctx.time / 60)} 分，${ctx.isNight() ? '夜晚' : '白天'}，${ctx.env.raining ? '下雨' : '晴朗'} ${Math.round(ctx.env.temperature)}°C。`,
     `库存：🌲木 ${s.wood ?? 0} 🪨矿 ${s.ore ?? 0} 🍖食物 ${s.food ?? 0} 🛠️ ${s.tools ?? 0}`,
     `人口 ${ctx.pawnList.length}，建筑 ${ctx.world.buildings.size} 座（含 ${[...ctx.world.buildings.values()].map((b) => b.def.name).slice(0, 6).join('、')}）。`,
-    units.length > 0 ? `派系：${mem}` : '尚无派系。',
+    byFire.size > 0 ? `聚居：${mem}` : '尚无营地归属。',
   ].join('\n');
 }
 

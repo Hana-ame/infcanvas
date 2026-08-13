@@ -12,16 +12,12 @@ const mkCtx = (over: Record<string, unknown>) => ({
   isNight: () => false,
   tuning: { population: { foodThreshold: 50 } },
   world: { buildings: new Map() },
-  socialUnits: { units: new Map() },
   techs: new Set(),
   pawnList: [],
   mods: { strategyCards: STRATEGY_CARDS },
   rng: { next: () => 0.5, weightedPick: (pool: unknown[]) => pool[0] } as never,
   ...over,
 }) as never as Parameters<typeof feedbackPlanner>[0];
-
-// 构造一个带成员的社交单位（用于迁徙分支）
-const mkUnit = (members: number) => new Map([[ 'u1', { members: Array.from({ length: members }, (_, i) => i) } ]]);
 
 describe('sim.printCard（LLM 印卡 API：DESIGN §6 只印卡不进选择链路）', () => {
   it('印卡插入目标小人槽位，抽卡可命中', () => {
@@ -104,18 +100,16 @@ describe('dummy planner（feedback / random）', () => {
     // 农田 ≥3 → 不再垦田（经济由账本调节，神谕不降"缺粮伐木令"）
     const farms = new Map([[1, { def: { id: 'farm' } }], [2, { def: { id: 'farm' } }], [3, { def: { id: 'farm' } }]]);
     expect(feedbackPlanner(mkCtx({ stockpile: { wood: 100, ore: 100, food: 1 }, world: { buildings: farms } }))).toBeNull();
-    // 迁徙：成员 5 + 木足 + 单营地
+    // 迁徙：人丁旺（4 人）+ 木足 + 单营地
     const camps = new Map([[10, { def: { id: 'campfire' } }]]);
     expect(feedbackPlanner(mkCtx({
       stockpile: { wood: 400, ore: 100, food: 1000 },
-      socialUnits: { units: mkUnit(5) },
-      pawnList: [1, 2, 3, 4, 5],
+      pawnList: [1, 2, 3, 4],
       world: { buildings: camps },
     }))?.label).toBe('拓荒令');
-    // 成员不足 → 不迁徙
+    // 人丁不足（2 人）→ 不迁徙
     expect(feedbackPlanner(mkCtx({
       stockpile: { wood: 400, ore: 100, food: 1000 },
-      socialUnits: { units: mkUnit(2) },
       pawnList: [1, 2],
       world: { buildings: camps },
     }))).toBeNull();
@@ -211,13 +205,10 @@ describe('dummy planner（feedback / random）', () => {
     expect([...sim.world.buildings.values()].some((b) => b.def.tags?.includes('farm'))).toBe(true);
   });
 
-  it('拓荒令副作用：远处营地蓝图入队 → 建成形成第二派系（迁徙闭环）', () => {
+  it('拓荒令副作用：远处营地蓝图入队 → 建成形成新涌现聚居（迁徙闭环）', () => {
     const sim = new Sim({ seed: 29, pawnCount: 4 });
-    // 人丁兴旺（成员多）+ 木足 + 单营地条件：模拟单位+migration 局面
-    sim.spawnPawn(3, 3);
-    sim.step(120); // autobuild 已建 campfire，派系成员逐步加入
+    sim.step(120); // autobuild 已建 campfire
     const planner = makeDummyCardPlanner(sim, { mode: 'feedback', interval: 60 });
-    // 直接构造迁徙局面：多人入派系 + 木足
     const p = sim;
     const campKey = [...p.world.buildings.keys()].find((k) => p.world.buildings.get(k)!.def.id === 'campfire');
     expect(campKey).toBeDefined();
@@ -226,16 +217,15 @@ describe('dummy planner（feedback / random）', () => {
     p.stockpile.food = 999;
     p.stockpile.ore = 999;
     planner.tick(60);
-    // 拓荒令或由于木足后沿用队里已有 blueprint 等情况 → 至少蓝图出现 campfire
     if (planner.printed > 0) {
       expect(p.buildQueue.some((b) => b.defId === 'campfire')).toBe(true);
     }
   });
 
-  it('迁徙闭环（内核）：新营地建成 → 附近的拓荒者自动划入新派系', () => {
+  it('迁徙闭环（内核）：新营地建成 → 附近的拓荒者归属到新篝火', () => {
     const sim = new Sim({ seed: 31, pawnCount: 2 });
-    sim.step(120); // 初始 campfire + 派系
-    expect(sim.socialUnits.units.size).toBe(1);
+    sim.step(120); // 初始 campfire + 归属
+    expect(sim.factionsView().length).toBe(1);
     const w = sim.world;
     // 远处找合法落点（环形扫描 canBuildFootprint，避开水面/岩石/已有建筑）
     let spot: { x: number; y: number } | null = null;
@@ -254,18 +244,18 @@ describe('dummy planner（feedback / random）', () => {
     // 远处造一个新营地（模拟拓荒蓝图被小人建成）
     const key = w.buildKey(spot!.x, spot!.y);
     expect(w.placeBuilding(spot!.x, spot!.y, 'campfire', 'player')).toBe(true);
-    sim.socialUnits.onBuildingBuilt(key, 'campfire', sim.time);
-    // 第二派系自动形成；出生小人仍在旧营地 → 新派系空
-    expect(sim.socialUnits.units.size).toBe(2);
-    const newUnit = [...sim.socialUnits.units.values()].find((u) => u.key === key)!;
-    expect(newUnit.members.length).toBe(0);
-    // 拓荒者抵达新营地 → 重算归属时划入新派系（迁徙者）
+    sim.socialUnits.onCampfireBuilt(key);
+    // 新涌现聚居形成；出生小人仍归旧营地 → 新聚居空
+    expect(sim.factionsView().length).toBe(2);
+    const newF = sim.factionsView().find((f) => f.key === key)!;
+    expect(newF.members.length).toBe(0);
+    // 拓荒者抵达新营地 → 重算归属时划入新聚居（迁徙者）
     sim.pawnPositions.set(sim.pawns[0], { x: spot!.x, y: spot!.y });
-    sim.socialUnits.onBuildingBuilt(key, 'campfire', sim.time);
-    expect(newUnit.members).toContain(sim.pawns[0]);
-    // 旧营地的小人仍留在原派系（只有拓荒者一个离开）
-    const oldUnit = [...sim.socialUnits.units.values()].find((u) => u.key !== key)!;
-    expect(oldUnit.members).not.toContain(sim.pawns[0]);
-    expect(oldUnit.members.length).toBe(sim.pawns.length - 1);
+    sim.socialUnits.assignPawn(sim.pawns[0]);
+    expect(sim.pawnStates.get(sim.pawns[0])!.fireId).toBe(key);
+    // 旧营地的小人仍留在原聚居（只有拓荒者一个离开）
+    const oldFire = sim.factionsView().find((f) => f.key !== key)!;
+    expect(oldFire.members).not.toContain(sim.pawns[0]);
+    expect(oldFire.members.length).toBe(sim.pawns.length - 1);
   });
 });
