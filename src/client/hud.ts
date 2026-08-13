@@ -343,7 +343,7 @@ export function createHud(
     `📋 <b>指派职业</b>：选中小人 → 面板按钮指派伐木工/矿工/农民/工匠/渔民（或自由）<br>` +
     `🏕 <b>派系</b>：有篝火=独立派系；篝火间会贸易/传话/袭击/吞并；🌍 面板看世界派系<br>` +
     `⛪ <b>神谕</b>：信仰高时 AI 建教堂；选教堂点"发布神谕"祝福信众；神谕会降下策略卡（顶部横幅）<br>` +
-    `⚔ <b>威胁</b>：野狼会袭击！建墙保护，受伤要治疗；团灭后神谕会附身他派系`;
+    `⚔ <b>威胁</b>：野猫会袭击！建墙保护，受伤要治疗`;
   root.appendChild(helpPanel);
   const histPanel = document.createElement('div');
   histPanel.className = 'hud-pop';
@@ -377,7 +377,7 @@ export function createHud(
     const s = sim.stockpile;
     const foodLow = sim.tuning.needs?.foodMoodLow ?? 30;
     const raidWarn = sim.hostiles.length > 0
-      ? `袭击！${sim.hostiles.length}${sim.hostiles[0]?.faction === 'unit' ? ' 名掠夺者' : ' 只野狼'}`
+      ? `袭击！${sim.hostiles.length}${sim.hostiles[0]?.faction === 'unit' ? ' 名掠夺者' : ' 只野猫'}`
       : '';
     const pauseMark = sim.paused ? ' ⏸暂停' : ` ${sim.speed}x`;
     if (tTime.img) tTime.img.src = svgDataUri(HUD_SVG[sim.isNight() ? 'night' : 'day']);

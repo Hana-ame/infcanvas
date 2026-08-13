@@ -21,7 +21,7 @@ export const SOCIAL_LINES: SocialLineTable = {
   topics: [
     { event: 'work_completed', text: (d) => `说他昨天${d.success ? '干成了' : '没干成'}一单活` },
     { event: 'pawn_died', text: () => '议论昨天死的那个' },
-    { event: 'raid_started', text: () => '聊起野狼袭击的事' },
+    { event: 'raid_started', text: () => '聊起野猫袭击的事' },
     { event: 'building_built', text: (d) => `说新盖了个${d.defId}` },
     { event: 'resource_gained', text: (d) => `说他攒了点${d.item}` },
   ],

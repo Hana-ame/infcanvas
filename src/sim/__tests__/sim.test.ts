@@ -978,11 +978,11 @@ describe('叙事压力（DESIGN §6）', () => {
 });
 
 describe('mod 玩法（DATA_DRIVEN §6 验收）', () => {
-  it('overrideEnemy changes raid difficulty (wolf hp)', () => {
+  it('overrideEnemy changes raid difficulty (cat hp)', () => {
     const sim = new Sim({ seed: 200, pawnCount: 2, mods: (m) => {
-      m.overrideDef('enemy', 'wolf', { hp: 10 });
+      m.overrideDef('enemy', 'cat', { hp: 10 });
     } });
-    expect(sim.mods.enemies['wolf'].hp).toBe(10);
+    expect(sim.mods.enemies['cat'].hp).toBe(10);
     // 触发一波袭击 → 狼血量应为 10*压力
     let hp = 0;
     for (let i = 0; i < 8000 && hp === 0; i++) {
@@ -1953,7 +1953,7 @@ describe('B 方案：篝火 = 区域历史载体，伙伴/敌人由交流篝火�
     const stB = sim.pawnStates.get(b)!;
     // 构造 A 所属篝火的历史（含袭击 → 敌意信号）
     const fireA = stA.fireId!;
-    sim.socialUnits.addMemory(fireA, '🐺 营地遭到袭击（3 只野狼）');
+    sim.socialUnits.addMemory(fireA, '🐱 营地遭到野猫袭击（3 只）');
     // 把两人放同 chunk 相邻 → 触发交流
     sim.pawnPositions.set(a, { x: 10, y: 10 });
     sim.pawnPositions.set(b, { x: 10, y: 11 });

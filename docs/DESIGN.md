@@ -963,3 +963,9 @@ registerHook('beforeRoll', (prob, ctx) => ...);          // check 流程阶段�
 - **互助卡**（`help`，base 卡常驻槽位）：condition = 附近有弱势邻人（缺食/受伤/低落）+ 我对 TA 好感 ≥ `helpFriendAt` + 自身不危急（先自救）。utility 随弱势程度放大（濒死邻人 > 工作）。execHelp 送食（个人口袋转移）/疗伤/陪伴；受助方好感 +`helpGiveRel`（互惠）。
 - **需求写篝火历史**（`needsSystem.recordNeed`）：濒死/低落 → 记入附近 campfire 记忆（节流：跨越危急等级才写），交流传播（exchangeFireStory 读取）。
 - **解耦**：互助完全走卡系统（condition/utility/action 声明式），mod 可禁用/覆盖 `help` 卡或注册新互助意图。
+
+### 15. 世界观：鼠鼠 vs 野猫（2026-08-14）
+
+- 小人是**鼠鼠**（渲染/SVG 本来就是"正面鼠"，与 HUD 共用映射），天敌是**野猫**。
+- 早期实现的"野狼"是设定幻觉（`enemies.ts` 拍脑袋写的默认敌人），用户指出后全部替换为 `cat`（野猫）。
+- 敌人表数据驱动不变：`registerEnemy`/`overrideTuning({combat:{raidEnemy:'cat'}})` 可换袭击类型；`raider`（鼠族掠夺者）保留为鼠族内部冲突。

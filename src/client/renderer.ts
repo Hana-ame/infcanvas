@@ -10,7 +10,7 @@ import { pawnAssetIdFor } from './svgAssets';
 const TILE = 32;
 
 // 敌人种类 → 稳定染色（内置两个暖色，mod 新敌人自动散列取值，可辨）
-const ENEMY_TINTS: Record<string, number> = { wolf: 0xff5555, raider: 0xff6688, boar: 0xcc8855 };
+const ENEMY_TINTS: Record<string, number> = { cat: 0xff5555, raider: 0xff6688, boar: 0xcc8855 };
 function hostileTint(enemyId: string): number {
   const fixed = ENEMY_TINTS[enemyId];
   if (fixed) return fixed;
@@ -394,7 +394,7 @@ export class Renderer {
     return { x: a.x0 + (a.x1 - a.x0) * k, y: a.y0 + (a.y1 - a.y0) * k };
   }
 
-  // 渲染入侵者（红色敌对）—— 用狼 SVG
+  // 渲染入侵者（红色敌对）—— 用野猫 SVG
   private renderHostiles(): void {
     let idx = 0;
     for (const h of this.sim.hostiles) {
@@ -408,7 +408,7 @@ export class Renderer {
         this.hostileSprites.set(idx, g);
       }
       // 按敌人种类稳定着色（enemyId 散列；未带 id 时按阵营兜底），mod 新敌人自动可辨
-      g.tint = hostileTint(h.enemyId ?? (h.faction === 'unit' ? 'raider' : 'wolf'));
+      g.tint = hostileTint(h.enemyId ?? (h.faction === 'unit' ? 'raider' : 'cat'));
       g.visible = true;
       const pos = this.interpPos(idx, { x: h.x, y: h.y }, this.hostileAnim);
       this.placeEntity(g, pos.x, pos.y);

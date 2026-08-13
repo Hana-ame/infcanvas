@@ -291,7 +291,7 @@ export class BehaviorSystem implements GameSystem {
       if (b.def.id === 'campfire') { camp = { x: k % c.world.width, y: Math.floor(k / c.world.width) }; break; }
     }
     if (!camp) { st.job = '闲逛'; return; }
-    // 环扫找落点（2→5 回退；靠营地内圈，减少外围被狼拆）
+    // 环扫找落点（2→5 回退；靠营地内圈，减少外围被猫拆）
     for (let r = 3; r <= 6; r++) {
       for (let dy = -r; dy <= r; dy++) {
         for (let dx = -r; dx <= r; dx++) {

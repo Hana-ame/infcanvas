@@ -48,9 +48,9 @@ const buildBasePlans = (ctx: SimContext): ExpansionPlan[] => {
     { id: 'church', defId: 'church', minWood: t.churchWood, onExisting: true, need: (c) => avgFaith(c) >= t.faithThreshold && countBuilding(c, 'church') < 1 },
     // 资源富余 → 围营地墙
     { id: 'wall', defId: 'wall', minWood: t.wallWood, need: (c) => c.stockpile.wood > t.wallWood && countBuilding(c, 'wall') < t.wallTarget },
-    // 篱笆：早期便宜圈地（低 HP 挡一挡，狼拆完有缓冲）
+    // 篱笆：早期便宜圈地（低 HP 挡一挡，猫拆完有缓冲）
     { id: 'fence', defId: 'fence', minWood: t.fenceWood, need: (c) => c.stockpile.wood > t.fenceWood && countBuilding(c, 'fence') < t.fenceTarget },
-    // 城墙：更富余 + 城墙不足 → 营地周边筑城墙（高 HP 防御，缓解狼拆核心建筑）
+    // 城墙：更富余 + 城墙不足 → 营地周边筑城墙（高 HP 防御，缓解猫拆核心建筑）
     { id: 'rampart', defId: 'rampart', minWood: t.rampartWood, need: (c) => c.stockpile.wood > t.rampartWood && c.stockpile.ore >= t.rampartOre && countBuilding(c, 'rampart') < t.rampartTarget },
   ];
 };

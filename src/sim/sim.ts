@@ -375,7 +375,7 @@ export class Sim implements SimContext {
   // 工作移动（寻路风暴修复，用户要求）：
   //  1) 限定最大距离 maxWorkDist——超距目标不寻路（工作限距；玩家 move 命令走 moveTo 不限）
   //  2) 寻路节流 pathCd——两次寻路最小间隔；路径缓存后按步走完（path 存在时决策层直接 walk 不重寻）
-  //  根因记录：狼袭击中 path 被频繁打断重建 → 每帧寻路风暴（findPathRaw 75%，50ms/步）；
+  //  根因记录：野猫袭击中 path 被频繁打断重建 → 每帧寻路风暴（findPathRaw 75%，50ms/步）；
   //  修复后：被打断的小人在 pathCd 内不重寻，路径稳定走完，寻路频率回归常数级
   moveAdjacent(eid: number, tx: number, ty: number): boolean {
     const pos = this.readPosition(eid);

@@ -95,9 +95,9 @@ export interface FaithTuning {
 export interface CombatTuning {
   raidEnemy: string;         // 自然袭击刷的敌人种类 id（查 enemies 表；mod 可切换/注册新敌人）
   unitRaidEnemy: string;     // 派系袭击（掠夺者）刷的敌人种类 id
-  wolfSpeed: number;         // 敌人表缺 speed 字段时的兜底
-  wolfLootItem: string;      // 敌人表缺 loot 字段时的兜底
-  wolfLootAmount: number;
+  catSpeed: number;  // 敌人表缺 speed 字段时的兜底（天敌=野猫）         // 敌人表缺 speed 字段时的兜底
+  catLootItem: string;      // 敌人表缺 loot 字段时的兜底
+  catLootAmount: number;
   pawnDmg: number;           // 小人近战每秒伤害
   initialRaidDelay: number;  // 开局首波前等待
   baseInterval: number;      // 基线袭击间隔
@@ -536,11 +536,11 @@ export const TUNING: TuningConfig = {
     oracleTrustAt: 0.3,
   },
   combat: {
-    raidEnemy: 'wolf',
+    raidEnemy: 'cat',  // 天敌=野猫（2026-08-14 世界观修正）
     unitRaidEnemy: 'raider',
-    wolfSpeed: 3.5,
-    wolfLootItem: 'ore',
-    wolfLootAmount: 2,
+    catSpeed: 3.5,
+    catLootItem: 'ore',
+    catLootAmount: 2,
     pawnDmg: 8,
     initialRaidDelay: 90, //（试玩后调整，待定稿：开局喘息）
     baseInterval: 75,

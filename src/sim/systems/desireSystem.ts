@@ -82,7 +82,7 @@ export class DesireSystem implements GameSystem {
       if (s.food > t.stealThreshold) { s.food -= t.stealAmount; this.ctx.adjustMood(eid, t.malintentMoodGain); this.ctx.logEvent('😈 小人偷吃食物！'); fulfill(d, 'gluttony', t.malintentFulfill); }
       else if (s.wood > t.stealThreshold) { s.wood -= t.stealAmount; this.ctx.adjustMood(eid, t.malintentMoodGain); this.ctx.logEvent('😈 小人私藏木头！'); fulfill(d, 'greed', t.malintentFulfill); }
     } else if (first === 'wrath') {
-      // 暴怒：随机打碎一件附近建筑（或攻击野狼发泄）
+      // 暴怒：随机打碎一件附近建筑（或攻击野猫发泄）
       const pos = this.ctx.pawnPositions.get(eid);
       if (pos) {
         const b = this.ctx.world.getBuilding(Math.round(pos.x), Math.round(pos.y));

@@ -23,9 +23,9 @@ export class SocialUnitSystem implements GameSystem {
       if (key !== null) this.addMemory(key, text);
     };
     bus.on('raid_started', (ev) => {
-      // 狼袭记入营地篝火记忆（敌意信号，交流推断 enemy）
+      // 野猫袭击记入营地篝火记忆（敌意信号，交流推断 enemy）
       const d = ev as Extract<import('../core/events').GameEvent, { type: 'raid_started' }>;
-      recordNearby(this.ctx.world.width / 2, this.ctx.world.height / 2, `🐺 营地遭到袭击（${d.count} 只野狼）`);
+      recordNearby(this.ctx.world.width / 2, this.ctx.world.height / 2, `🐱 营地遭到野猫袭击（${d.count} 只）`);
     });
     bus.on('building_built', (ev) => {
       const d = ev as Extract<import('../core/events').GameEvent, { type: 'building_built' }>;
@@ -117,9 +117,9 @@ export class SocialUnitSystem implements GameSystem {
   }
 
   // 另起篝火（B 方案）：某篝火区域"持续不舒适"→ 附近另起新篝火（纯建筑，无单位）
-  // 判据（v2026-08-14 三修）：迁徙 = 营地真实"不舒适"，不是"狼路过"。
+  // 判据（v2026-08-14 三修）：迁徙 = 营地真实"不舒适"，不是"猫路过"。
   //   - 遭袭计数只算"该篝火附近确有建筑被摧毁"（💥 记忆行）
-  //   - 狼路过营地不算（可以战斗/逃跑），否则狼群扫过一遍 → 连锁搬家雪崩
+  //   - 猫路过营地不算（可以战斗/逃跑），否则猫群扫过一遍 → 连锁搬家雪崩
   private migrateIfUncomfortable(): void {
     const f = this.ctx.tuning.faction;
     const w = this.ctx.world;

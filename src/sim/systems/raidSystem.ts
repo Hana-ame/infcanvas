@@ -1,4 +1,4 @@
-// 袭击 + 战斗系统：刷狼群 → 移动 → 接敌 → 战死掉落
+// 袭击 + 战斗系统：刷野猫群 → 移动 → 接敌 → 战死掉落（天敌=野猫，2026-08-14 世界观修正）
 // 数据驱动：数值全读 tuning.combat（mod 可覆盖）；叙事压力（DESIGN §6）：和平越久袭击越猛
 import type { GameSystem } from './registry';
 import type { SimContext } from './context';
@@ -46,7 +46,7 @@ export class RaidSystem implements GameSystem {
         this.spawnRaid(count, pressure);
         this.peaceTime = 0;
         this.ctx.bus.emit({ type: 'raid_started', count });
-        this.ctx.logEvent(`⚠ 野狼来袭！${count} 只${pressure > 1.3 ? '（积怨已久，规模更大）' : ''}`);
+        this.ctx.logEvent(`⚠ 野猫来袭！${count} 只${pressure > 1.3 ? '（积怨已久，规模更大）' : ''}`);
       }
     }
   }
@@ -81,7 +81,7 @@ export class RaidSystem implements GameSystem {
       const dx = h.targetX - h.x;
       const dy = h.targetY - h.y;
       const d = Math.hypot(dx, dy);
-      const step = (h.speed ?? this.ctx.tuning.combat.wolfSpeed) * dt;
+      const step = (h.speed ?? this.ctx.tuning.combat.catSpeed) * dt;
       if (d > step) {
         h.x += (dx / d) * step;
         h.y += (dy / d) * step;
@@ -103,7 +103,7 @@ export class RaidSystem implements GameSystem {
         if (b) {
           const r = this.ctx.world.damageBuilding(b.x, b.y, t.buildingDmg * dt);
           if (r.destroyed) {
-            this.ctx.logEvent('💥 建筑被野狼摧毁！');
+            this.ctx.logEvent('💥 建筑被野猫摧毁！');
             // 征服已删除（2026-08-14 重构：派系实体层删除，无单位可吞并）
           }
           continue;
@@ -114,7 +114,7 @@ export class RaidSystem implements GameSystem {
         this.ctx.growSkill(nearest, 'fight');
         if (h.hp <= 0) {
           this.ctx.hostiles.splice(i, 1);
-          const loot = h.loot ?? { item: this.ctx.tuning.combat.wolfLootItem, amount: this.ctx.tuning.combat.wolfLootAmount };
+          const loot = h.loot ?? { item: this.ctx.tuning.combat.catLootItem, amount: this.ctx.tuning.combat.catLootAmount };
           this.ctx.stockpile[loot.item] = (this.ctx.stockpile[loot.item] ?? 0) + loot.amount;
           this.ctx.bus.emit({ type: 'resource_gained', eid: nearest, item: loot.item, amount: loot.amount });
           // 战斗结果反馈（EWA）：击杀战利品量 → fight 吸引力（被杀的小人已死，不需记录）
@@ -123,7 +123,7 @@ export class RaidSystem implements GameSystem {
         }
         const hk = this.ctx.readHealth(nearest);
         if (hk) {
-          // DEX 敏捷闪避（COC §3）：高敏捷有一定几率闪开野狼咬
+          // DEX 敏捷闪避（COC §3）：高敏捷有一定几率闪开野猫扑咬
           const dna = this.ctx.dnaOf(nearest);
           const dodgeChance = dna ? Math.max(t.minDodge, (dna.dex - t.dodgeBase) * t.dodgePerPoint) : 0;
           const dodge = dna && this.ctx.rng.next() < dodgeChance;
@@ -142,7 +142,7 @@ export class RaidSystem implements GameSystem {
     }
   }
 
-  // 半径内最近的建筑（野狼拆家；被毁建筑若为核心 → 触发征服吞并，见 updateCombat）
+  // 半径内最近的建筑（野猫拆家；被毁建筑若为核心 → 触发征服吞并，见 updateCombat）
   private nearestBuilding(h: { x: number; y: number }, radius: number): { x: number; y: number } | null {
     const w = this.ctx.world;
     let best: { x: number; y: number } | null = null;

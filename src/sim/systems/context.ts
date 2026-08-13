@@ -15,11 +15,11 @@ export interface Hostile {
   x: number; y: number;
   hp: number; maxHp: number;
   targetX: number; targetY: number;
-  name?: string;      // 敌对势力身份（部落/狼群）
+  name?: string;      // 敌对势力身份（部落/猫群）
   faction?: string;   // 派系 id
   enemyId?: string;   // 敌对种类 id（查 enemies 表：speed/dmg/loot 数据驱动）
   speed?: number;     // 移速（enemy def 快照，避免每帧查表）
-  dmgPerSec?: number; // 攻击力（部落战士比狼强）
+  dmgPerSec?: number; // 攻击力（部落战士比野猫强）
   loot?: { item: string; amount: number }; // 击杀掉落
 }
 
