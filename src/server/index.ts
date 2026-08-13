@@ -148,7 +148,7 @@ function buildSnapshot(): SnapshotMsg {
     weather: { raining: sim.env.raining, temperature: sim.env.temperature },
     stockpile: { ...sim.stockpile },
     pawns, hostiles, buildings,
-    buildQueue: sim.buildQueueItems.map((b) => ({ x: b.x, y: b.y, defId: b.defId })),
+    buildQueue: sim.buildQueueItems.map((b) => ({ x: b.x, y: b.y, defId: b.defId, progress: Math.round(b.progress) })),
     buildingVersion: w.buildingVersion,
   };
 }

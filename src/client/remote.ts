@@ -76,7 +76,7 @@ export interface SimView {
     canBuildFootprint(x: number, y: number, def: BuildingDef): boolean;
   };
   buildCount: number;
-  buildQueueItems: { x: number; y: number; defId: string }[];
+  buildQueueItems: { x: number; y: number; defId: string; progress: number }[];
   events: { time: number; text: string }[];
   historyRecent: { id: number; time: number; day: number; type: string; eid?: number; x?: number; y?: number; cause?: string; data?: Record<string, unknown> }[];
   factionsView(): SimViewUnit[]; // 派系 = 涌现展示（按 fireId 聚合，纯只读）
@@ -462,7 +462,7 @@ export class RemoteSim {
   isNight(): boolean { return this.snap?.isNight ?? false; }
 
   get buildCount(): number { return this.snap?.buildQueue.length ?? 0; }
-  get buildQueueItems(): { x: number; y: number; defId: string }[] { return this.snap?.buildQueue ?? []; }
+  get buildQueueItems(): { x: number; y: number; defId: string; progress: number }[] { return this.snap?.buildQueue ?? []; }
   get selectedIds(): number[] { return this.selected; }
 
   healthOf(eid: number): { hp: number; maxHp: number } | null {

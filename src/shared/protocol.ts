@@ -57,7 +57,7 @@ export interface SnapshotMsg {
   }[];
   hostiles: { i: number; enemyId?: string; x: number; y: number; hp: number; maxHp: number; faction?: string }[];
   buildings: { defId: string; x: number; y: number; hp: number; maxHp: number; faction: string; footprint: { x: number; y: number }[] }[];
-  buildQueue: { x: number; y: number; defId: string }[];
+  buildQueue: { x: number; y: number; defId: string; progress: number }[];
   buildingVersion: number;
 }
 
@@ -94,7 +94,7 @@ export interface DeltaMsg {
   hostiles?: { i: number; enemyId?: string; x: number; y: number; hp: number; maxHp: number; faction?: string }[];
   buildings?: { key: number; defId: string; hp: number; maxHp: number; faction: string; footprint: { x: number; y: number }[]; removed?: boolean }[];
   buildingVersion?: number;
-  buildQueue?: { x: number; y: number; defId: string }[];
+  buildQueue?: { x: number; y: number; defId: string; progress: number }[];
 }
 
 // 增量（快照之间的小事件：采集换 tile、资源获得飘字、社交/袭击等文本）

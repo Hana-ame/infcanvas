@@ -139,7 +139,7 @@ function attachScene(
     // 移动选中 pawn。带 pawnId：远程模式 server 无 selected 镜像，显式指定
     } else if (sim.selectedIds.length > 0) {
       sim.issueCommand({ type: 'move', x: world.x, y: world.y, pawnId: sim.selectedIds[0] });
-      renderer.showMoveMarker(world.x, world.y);
+      renderer.showMoveMarker(sim.pawnPositions.get(sim.selectedIds[0]) ?? null, world);
     }
   };
 

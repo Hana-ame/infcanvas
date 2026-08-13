@@ -51,6 +51,13 @@ export class Renderer {
   private markerLife = 0;
   // 飘字反馈（资源获得等）
   private floaters: { text: Text; life: number; vy: number }[] = [];
+  // UIUX 2026-08-14：小人头顶状态图标（饿/困/伤/狂乱）——worldLayer 顶层
+  private statusLayer: Container;
+  private pawnStatus = new Map<number, Text>();
+  // 选中高亮圆环（跟随选中 pawn，黄色脉冲）
+  private selectedRing: Graphics;
+  // 状态阈值（对齐 tuning：hungerAt=30 / crazyAt=25；rest 无 urgentAt 暴露给渲染层，取 20）
+  private static STATUS_THRESHOLD = { hungry: 30, sleepy: 20, crazy: 25, hurt: 0.4 } as const;
 
   constructor(sim: SimView, assets: SvgAssets) {
     this.sim = sim;
@@ -67,10 +74,16 @@ export class Renderer {
     this.blueprintLayer.eventMode = 'none';
     this.markerLayer = new Graphics();
     this.markerLayer.eventMode = 'none';
+    this.statusLayer = new Container();
+    this.statusLayer.eventMode = 'none';
+    this.selectedRing = new Graphics();
+    this.selectedRing.eventMode = 'none';
     this.worldContainer.addChild(this.terrainLayer);
     this.worldContainer.addChild(this.entityLayer);
     this.worldContainer.addChild(this.blueprintLayer);
     this.worldContainer.addChild(this.markerLayer);
+    this.worldContainer.addChild(this.statusLayer); // 状态图标随世界 y 排（2.5D 遮挡自然）
+    this.worldContainer.addChild(this.selectedRing);
     this.worldContainer.addChild(this.pawnLayer); // 飘字等屏幕上层
     this.worldContainer.addChild(this.ghost);
   }
@@ -157,6 +170,60 @@ export class Renderer {
     t.position.set(wx * TILE, wy * TILE);
     this.pawnLayer.addChild(t);
     this.floaters.push({ text: t, life: 1.2, vy: -30 }); // 飘字 1.2s 寿命、每秒上飘 30px（淡出按 life/1.2 比例）
+  }
+
+  // 小人头顶状态图标（UIUX 2026-08-14）：伤 > 狂乱 > 饿 > 困，一次只显示最紧急一个。
+  // 阈值对齐 tuning（hungerAt=30/crazyAt=25）；rest 无 urgentAt 暴露给渲染层，取 20。
+  // 状态图标用 Text 池（Map<eid, Text>），增删随小人生命周期，不每帧新建对象。
+  private renderPawnStatus(): void {
+    const th = Renderer.STATUS_THRESHOLD;
+    const alive = new Set(this.sim.pawns);
+    for (const [eid, t] of this.pawnStatus) if (!alive.has(eid)) { this.statusLayer.removeChild(t); this.pawnStatus.delete(eid); }
+    for (const eid of this.sim.pawns) {
+      const p = this.sim.pawnProfile(eid);
+      const pos = this.sim.pawnPositions.get(eid);
+      if (!p || !pos) continue;
+      let icon: string | null = null;
+      const h = p.health;
+      if (h && h.hp / h.maxHp < th.hurt) icon = '❤️🩹';
+      else if (p.needs && p.needs.san < th.crazy) icon = '😵';
+      else if (p.needs && p.needs.food < th.hungry) icon = '🍗';
+      else if (p.needs && p.needs.rest < th.sleepy) icon = '😴';
+      if (icon) {
+        let t = this.pawnStatus.get(eid);
+        if (!t) {
+          t = new Text({ text: icon, style: new TextStyle({ fontSize: 13, fontFamily: 'system-ui' }) });
+          t.resolution = this.app.renderer.resolution;
+          t.anchor.set(0.5, 1);
+          this.statusLayer.addChild(t);
+          this.pawnStatus.set(eid, t);
+        }
+        // 头顶偏移：2.5D 锚格底，图标顶在脚部 y 之上 0.9 格；2D 锚格中，偏移 0.7 格
+        const lift = this.viewMode === 'iso' ? -0.95 : -0.7;
+        t.position.set(pos.x * TILE + TILE / 2, pos.y * TILE + TILE / 2 + lift * TILE);
+        t.zIndex = Math.round(pos.y) * 10 + 20;
+        t.visible = true;
+      } else {
+        const t = this.pawnStatus.get(eid);
+        if (t) t.visible = false;
+      }
+    }
+    this.statusLayer.sortChildren();
+  }
+
+  // 选中高亮圆环（UIUX 2026-08-14）：黄色圆环跟随选中 pawn，替代原来仅 scale 的弱反馈
+  private renderSelectedRing(): void {
+    this.selectedRing.clear();
+    const eid = this.sim.selectedIds[0];
+    if (eid === undefined) return;
+    const pos = this.sim.pawnPositions.get(eid);
+    if (!pos) return;
+    const interp = this.interpPos(eid, { x: pos.x, y: pos.y }, this.pawnAnim);
+    const cx = interp.x * TILE + TILE / 2;
+    const cy = this.viewMode === 'iso' ? interp.y * TILE + TILE : interp.y * TILE + TILE / 2;
+    const r = TILE * 0.72;
+    this.selectedRing.circle(cx, cy, r);
+    this.selectedRing.stroke({ color: 0xffd966, width: 3, alpha: 0.95 });
   }
 
   private updateMarker(dt: number): void {
@@ -271,6 +338,8 @@ export class Renderer {
     }
     this.renderPawns();
     this.renderHostiles();
+    this.renderPawnStatus();
+    this.renderSelectedRing();
     this.sortEntities();
     this.renderGhost();
     this.updateFloaters(dt);
@@ -317,7 +386,7 @@ export class Renderer {
     }
   }
 
-  // 蓝图（排队中的建造）半透明显示
+  // 蓝图（排队中的建造）半透明显示 + 底部进度条（UIUX 2026-08-14：progress/buildTime 实时可见）
   private drawBlueprints(): void {
     this.blueprintLayer.clear();
     const w = this.sim.world;
@@ -327,6 +396,15 @@ export class Renderer {
       this.blueprintLayer.rect(x + 1, y + 1, TILE - 2, TILE - 2);
       this.blueprintLayer.fill(0x4cf);
       this.blueprintLayer.alpha = 0.45;
+      // 进度条：底色 + 按 progress/buildTime 填充（buildTime 查 def，mod 建筑同样生效）
+      const def = this.sim.buildingDef(b.defId);
+      const total = def?.buildTime ?? 1;
+      const k = Math.min(1, Math.max(0, (b.progress ?? 0) / total));
+      this.blueprintLayer.rect(x + 2, y + TILE - 6, TILE - 4, 4);
+      this.blueprintLayer.fill(0x112233);
+      this.blueprintLayer.rect(x + 2, y + TILE - 6, (TILE - 4) * k, 4);
+      this.blueprintLayer.fill(0x4cf);
+      this.blueprintLayer.alpha = 1;
     }
     void w;
   }
@@ -441,10 +519,36 @@ export class Renderer {
   }
 
   // 移动目标标记（右键/触摸移动后显示，1.2s 淡出）
-  showMoveMarker(wx: number, wy: number): void {
+  // UIUX 2026-08-14：从起点的 pawn 位置画箭头线到目标点（方向感），末端圆环 + 箭簇
+  showMoveMarker(from: { x: number; y: number } | null, to: { x: number; y: number }): void {
     this.markerLayer.clear();
-    const gx = wx * TILE + TILE / 2;
-    const gy = wy * TILE + TILE / 2;
+    const gx = to.x * TILE + TILE / 2;
+    const gy = to.y * TILE + TILE / 2;
+    if (from) {
+      const fx = from.x * TILE + TILE / 2;
+      const fy = this.viewMode === 'iso' ? from.y * TILE + TILE : from.y * TILE + TILE / 2;
+      const dx = gx - fx;
+      const dy = gy - fy;
+      const len = Math.hypot(dx, dy);
+      if (len > TILE * 0.4) {
+        // 线略短于目标点（避免盖住目标圆环），末端画箭簇三角
+        const ux = dx / len;
+        const uy = dy / len;
+        const t = Math.min(len - 14, len * 0.8);
+        this.markerLayer.moveTo(fx + ux * t, fy + uy * t);
+        this.markerLayer.lineTo(gx - ux * 14, gy - uy * 14);
+        this.markerLayer.stroke({ color: 0x4cf, width: 3, alpha: 0.9 });
+        const ax = gx - ux * 16;
+        const ay = gy - uy * 16;
+        const px = -uy * 6;
+        const py = ux * 6;
+        this.markerLayer.moveTo(gx - ux * 10, gy - uy * 10);
+        this.markerLayer.lineTo(ax + px, ay + py);
+        this.markerLayer.lineTo(ax - px, ay - py);
+        this.markerLayer.closePath();
+        this.markerLayer.fill(0x4cf);
+      }
+    }
     this.markerLayer.circle(gx, gy, TILE * 0.45);
     this.markerLayer.stroke({ color: 0x4cf, width: 3, alpha: 0.9 });
     this.markerLayer.circle(gx, gy, 3);
