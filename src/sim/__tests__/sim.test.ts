@@ -2088,10 +2088,11 @@ describe('经济预期驱动行为（心理预期 → 工作选择）', () => {
 describe('探索卡机制（用户设计：科技建筑只有娱乐卡能抽到建造意图）', () => {
   it('科技解锁后：探索卡在娱乐抽卡中触发 → 蓝图入队 → 建筑建成', () => {
     const sim = new Sim({ seed: 701, pawnCount: 4 });
-    sim.unlockTech('toyTech');
+    sim.unlockTech('craft:toy');
     // 推进：小人在娱乐抽卡时可能抽到 explore:toy → 蓝图入队 → 建造
+    //（世界生成含天然洞穴 → rng 序列随 seed 变化，探索抽卡是统计性 → 跑足够长）
     let toyBuilt = false;
-    for (let i = 0; i < 6000 && !toyBuilt; i++) {
+    for (let i = 0; i < 12000 && !toyBuilt; i++) {
       sim.step(1 / 20);
       toyBuilt = [...sim.world.buildings.values()].some((b) => b.def.id === 'toy');
     }
@@ -2101,7 +2102,7 @@ describe('探索卡机制（用户设计：科技建筑只有娱乐卡能抽到�
   it('未解锁科技时探索卡不可抽（condition 不满足）', () => {
     const sim = new Sim({ seed: 702, pawnCount: 1 });
     const st = sim.pawnStates.get(sim.pawns[0])!;
-    // 卡在池中（静态注册），但 condition（hasTech-wellTech）不满足 → 抽不到
+    // 卡在池中（静态注册），但 condition（hasTech-water:well）不满足 → 抽不到
     expect(sim.mods.cards.has('explore:well')).toBe(true);
     const well = sim.mods.cards.get('explore:well')!;
     const ctx = {
@@ -2110,7 +2111,66 @@ describe('探索卡机制（用户设计：科技建筑只有娱乐卡能抽到�
     } as never;
     expect(well.condition ? well.condition(ctx) : true).toBe(false);
     // 解锁后满足
-    sim.unlockTech('wellTech');
+    sim.unlockTech('water:well');
     expect(well.condition ? well.condition(ctx) : true).toBe(true);
+  });
+});
+
+describe('洞穴庇护与改造（用户设计：天然洞穴有房屋属性；洞穴改造科技资源少）', () => {
+  it('天然洞穴 tile 有 shelter 属性 → 洞穴中休息恢复', () => {
+    const sim = new Sim({ seed: 801, pawnCount: 1 });
+    // 找一处 cave tile
+    let cave: { x: number; y: number } | null = null;
+    for (let y = 5; y < sim.world.height - 5 && !cave; y++) {
+      for (let x = 5; x < sim.world.width - 5; x++) {
+        if (sim.world.getTile(x, y) === 'cave') { cave = { x, y }; break; }
+      }
+    }
+    expect(cave).not.toBeNull();
+    expect(sim.world.getTileDef(cave!.x, cave!.y).shelter).toBe(true);
+    const eid = sim.pawns[0];
+    const rest0 = sim.readNeeds(eid)!.rest;
+    sim.pawnPositions.set(eid, cave!);
+    for (let i = 0; i < 40; i++) sim.step(1 / 20); // 2s 洞穴庇护恢复
+    expect((sim.readNeeds(eid)?.rest ?? 0)).toBeGreaterThan(rest0 ?? 90); // shelterRestPerSec 生效
+  });
+
+  it('洞穴改造：caveHouse 只能建在洞穴上、资源少（木 5 < 木屋 30）', () => {
+    const sim = new Sim({ seed: 802, pawnCount: 1 });
+    sim.unlockTech('shelter:cave');
+    const caveHouse = sim.mods.buildings.caveHouse;
+    expect(caveHouse.costWood).toBeLessThan(sim.mods.buildings.house.costWood); // 改造便宜
+    expect(caveHouse.onCave).toBe(true);
+    // 找洞穴格 → 可建；草地格 → 不可建
+    let cave: { x: number; y: number } | null = null;
+    let grass: { x: number; y: number } | null = null;
+    for (let y = 5; y < sim.world.height - 5; y++) {
+      for (let x = 5; x < sim.world.width - 5; x++) {
+        if (sim.world.getTile(x, y) === 'cave' && !cave) cave = { x, y };
+        if (sim.world.getTile(x, y) === 'grass' && !sim.world.getBuilding(x, y) && !grass) grass = { x, y };
+      }
+    }
+    expect(cave).not.toBeNull();
+    expect(grass).not.toBeNull();
+    expect(sim.world.canBuildFootprint(cave!.x, cave!.y, caveHouse)).toBe(true);
+    expect(sim.world.canBuildFootprint(grass!.x, grass!.y, caveHouse)).toBe(false); // onCave 校验
+  });
+});
+
+describe('科技 DLC（registerTech / defs.techs：.mod.json 加科技 = 探索卡自动接入）', () => {
+  it('registerTech 追加科技 → 探索卡自动生成、解锁后可建', () => {
+    const sim = new Sim({ seed: 803, pawnCount: 1, mods: (m) => {
+      m.registerTech({ id: 'test:totem2', name: '图腾工艺', unlocks: ['totem'], desc: '测试 DLC 科技' });
+      m.registerBuilding({ id: 'totem', name: '图腾', size: { x: 1, y: 1 }, hp: 100, color: '#7a4a6a', passable: false, buildTime: 2, costWood: 5, tech: 'test:totem2', tags: ['totem'] });
+    } });
+    // 探索卡自动生成（DLC 科技接入）
+    expect(sim.mods.cards.has('explore:totem')).toBe(true);
+    // 未解锁不可建；解锁后可建
+    const spot = { x: 96, y: 96 };
+    sim.issueCommand({ type: 'build', x: spot.x, y: spot.y, buildingId: 'totem' });
+    expect(sim.buildQueue.some((b) => b.defId === 'totem')).toBe(false);
+    sim.unlockTech('test:totem2');
+    sim.issueCommand({ type: 'build', x: spot.x, y: spot.y, buildingId: 'totem' });
+    expect(sim.buildQueue.some((b) => b.defId === 'totem')).toBe(true);
   });
 });

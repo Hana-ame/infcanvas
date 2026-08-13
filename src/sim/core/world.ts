@@ -5,9 +5,10 @@ import { generateBiomeMap } from './noise';
 import { TUNING, type WorldTuning } from '../defs/tuning';
 
 // 世界生成参数（数据驱动：默认取 tuning.world；Sim 构造时传入可被 mod 覆盖的副本）
-type WorldGenTuning = Pick<WorldTuning, 'spawnClearRadius' | 'spawnTries' | 'spawnDistMin' | 'spawnDistRand' | 'spawnCounts'>;
+type WorldGenTuning = Pick<WorldTuning, 'spawnClearRadius' | 'caveCount' | 'spawnTries' | 'spawnDistMin' | 'spawnDistRand' | 'spawnCounts'>;
 const DEFAULT_WORLD_GEN: WorldGenTuning = {
   spawnClearRadius: TUNING.world.spawnClearRadius,
+  caveCount: TUNING.world.caveCount,
   spawnTries: TUNING.world.spawnTries,
   spawnDistMin: TUNING.world.spawnDistMin,
   spawnDistRand: TUNING.world.spawnDistRand,
@@ -77,6 +78,8 @@ export class World {
     }
     // 出生点近圈资源保证（饥荒式开局）：树/矿/石/水，确定性
     this.ensureSpawnResources(cx, cy);
+    // 天然洞穴：石头/山地附近确定性撒布（shelter 地形——洞穴有天然庇护属性，可被改造科技利用）
+    this.ensureCaves(cx, cy);
     // 出生点连通性保证：BFS 从出生点算可达面积，被水域/森林环围时破口为草地
     this.ensureSpawnConnectivity(cx, cy);
   }
@@ -147,6 +150,31 @@ export class World {
     // 至少各放几处，保证开局资源不枯竭（数量表驱动）
     for (const [id, n] of Object.entries(g.spawnCounts)) {
       for (let i = 0; i < n; i++) place(id);
+    }
+  }
+
+  // 天然洞穴生成：以石头/山地格为锚点，邻格撒 cave tile（shelter）
+  // 数量/距离读 tuning.world（caveCount），确定性（SimRng）
+  private ensureCaves(cx: number, cy: number): void {
+    const g = this.gen;
+    const rng = new SimRng(this.seed ^ 0xcafe);
+    let placed = 0;
+    for (let y = 4; y < this.height - 4 && placed < g.caveCount; y++) {
+      for (let x = 4; x < this.width - 4 && placed < g.caveCount; x++) {
+        const t = this.getTile(x, y);
+        if (t !== 'stone' && t !== 'mountain') continue;
+        // 锚点邻格随机选一个放洞穴（不覆盖出生圈）
+        const dx = rng.int(-1, 1);
+        const dy = rng.int(-1, 1);
+        const nx = x + dx;
+        const ny = y + dy;
+        if (Math.abs(nx - cx) < 3 && Math.abs(ny - cy) < 3) continue; // 出生圈附近不撒
+        if (!this.inBounds(nx, ny)) continue;
+        if (this.getTile(nx, ny) === 'grass' || this.getTile(nx, ny) === 'dirt' || this.getTile(nx, ny) === 'sand') {
+          this.setTile(nx, ny, 'cave');
+          placed++;
+        }
+      }
     }
   }
 
@@ -403,6 +431,17 @@ export class World {
   canBuildFootprint(x: number, y: number, def: (typeof BUILDINGS)[string]): boolean {
     // 水上建筑（竹筏/渡船/木桥）：footprint 全为水面 + 至少一格邻接陆地或已有水上建筑
     //（从岸边/筏链逐步铺 → 渡水玩法闭环；孤水中央不可凭空建）
+    if (def.onCave) {
+      // 洞穴改造（caveHouse）：footprint 全为天然洞穴格
+      for (const key of this.footprintKeys(x, y, def)) {
+        const gx = key % this.width;
+        const gy = Math.floor(key / this.width);
+        if (!this.inBounds(gx, gy)) return false;
+        if (this.getTile(gx, gy) !== 'cave') return false;
+        if (this.getBuilding(gx, gy)) return false;
+      }
+      return true;
+    }
     if (def.onWater) {
       const keys = this.footprintKeys(x, y, def);
       for (const key of keys) {

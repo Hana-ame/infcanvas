@@ -50,6 +50,13 @@ export class NeedsSystem implements GameSystem {
         if (aura.moodPerSec) n.mood = Math.min(100, n.mood + aura.moodPerSec * dt);
         if (aura.restPerSec) n.rest = Math.min(100, n.rest + aura.restPerSec * dt);
       }
+      // 天然庇护（洞穴 tile shelter）：洞穴里休息恢复（未改造也有房屋属性——用户设计）
+      // 数据驱动：TileDef.shelter；改造后的洞穴居所走建筑 aura（更强）
+      const pos = this.ctx.pawnPositions.get(eid);
+      if (pos && this.ctx.world.getTileDef(Math.round(pos.x), Math.round(pos.y)).shelter) {
+        n.rest = Math.min(100, n.rest + this.ctx.tuning.needs.shelterRestPerSec * dt);
+        n.mood = Math.min(100, n.mood + this.ctx.tuning.needs.shelterMoodPerSec * dt);
+      }
       // 神谕祝福（buff 持续期间心情加成）
       if (st.oracleBuff && st.oracleBuff.until > this.ctx.time) {
         n.mood = Math.min(100, n.mood + st.oracleBuff.mood * dt);

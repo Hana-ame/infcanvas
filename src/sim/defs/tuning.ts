@@ -24,6 +24,8 @@ export interface NeedsTuning {
   sanTraumaThreshold: number; // 重伤/低满足动摇理智的阈值
   sanTraumaDrain: number;
   auraScanRadius: number;  // nearAura 光环建筑扫描半径（生效距离由 def.aura.radius 决定）
+  shelterRestPerSec: number; // 天然庇护（洞穴）休息恢复（试玩后调整）
+  shelterMoodPerSec: number; // 天然庇护（洞穴）心情恢复
 }
 
 export interface SanTuning {
@@ -326,6 +328,7 @@ export interface PawnTuning {
 
 export interface WorldTuning {
   spawnClearRadius: number; // 出生点清场半径（正整数，清 (2r+1)²）
+  caveCount: number;        // 天然洞穴数量（石头/山地锚点撒布）
   spawnTries: number;      // 出生点资源撒布尝试次数
   spawnDistMin: number;    // 资源撒布距离下限
   spawnDistRand: number;   // 资源撒布距离随机区间
@@ -477,6 +480,8 @@ export const TUNING: TuningConfig = {
     sanTraumaThreshold: 15,
     sanTraumaDrain: 0.03,
     auraScanRadius: 6,
+    shelterRestPerSec: 0.25, // 洞穴天然庇护恢复（试玩后调整）
+    shelterMoodPerSec: 0.1,
   },
   san: {
     crazyAt: 25,
@@ -545,14 +550,14 @@ export const TUNING: TuningConfig = {
     wolfLootItem: 'ore',
     wolfLootAmount: 2,
     pawnDmg: 8,
-    initialRaidDelay: 90,
+    initialRaidDelay: 90, //（试玩后调整，待定稿：开局喘息）
     baseInterval: 75,
     pressureCap: 2,
     pressureScale: 3,
     raidCountBase: 2,
     raidCountPerPawn: 0.35,
     meleeRange: 5,
-    buildingDmg: 3,   // 建筑抗拆：80HP 建筑 ≈ 27s 拆（再下调：重玩发现 well 被 5 狼 3 秒拆 → 反复重建循环，水维度迟迟不起）
+    buildingDmg: 3,   // 建筑抗拆（试玩后调整，待定稿）：80HP ≈ 27s 拆——重玩发现 well 被 5 狼 3 秒拆 → 反复重建循环
     buildingRadius: 6,
     minDodge: 0.05,
     dodgeBase: 30,
@@ -765,6 +770,7 @@ export const TUNING: TuningConfig = {
   },
   world: {
     spawnClearRadius: 3,     // 出生点清场半径（7x7）
+    caveCount: 8,            // 天然洞穴 8 处（可改造为居所）
     spawnTries: 24,          // 资源撒布尝试次数
     spawnDistMin: 3,         // 撒布距离环
     spawnDistRand: 5,

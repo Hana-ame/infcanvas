@@ -24,6 +24,7 @@ export interface TileDef {
   mineral?: boolean; // 是否可开采资源
   resourceYield?: string; // 开采产出物品 id（兼容旧引用，新逻辑走 harvest）
   growable?: boolean; // 是否可收获（如树）
+  shelter?: boolean;  // 天然庇护（洞穴等）：休息/心情恢复（needsSystem 消费；未改造也有房屋属性）
   moveCost?: number; // 寻路代价（默认 1）
   harvest?: HarvestDef; // 采集定义（树/矿），生产数值进数据
   harvestReplaces?: string; // 采集后替换的 tile id（缺省：growable→'grass'，mineral→'dirt'）
@@ -43,6 +44,7 @@ export interface BuildingDef {
   costWood?: number; // 额外木成本（奇观，默认 = size.x*size.y*2）
   costOre?: number; // 矿石成本（奇观）
   onWater?: boolean; // 只能建在水面（竹筏）：footprint 全水 + 邻接陆地/已有筏
+  onCave?: boolean;   // 只能建在天然洞穴上（洞穴改造：caveHouse）
   replacesTile?: string; // 地形改造：完成后把 footprint 格替换为该 tile（修桥 = 水格变桥面）
   tags?: string[]; // 语义标签（数据驱动：mod 新建筑打标签即接入系统行为）
   recipe?: string; // 生产配方 id（引用 RECIPES，农田/工作台/矿洞）
@@ -75,6 +77,7 @@ export const TILES: Record<string, TileDef> = {
   water: { id: 'water', name: '水', z: 0, passable: false, buildable: false, color: '#2a6bb0', emoji: '💧' },
   bridge: { id: 'bridge', name: '桥面', z: 1, passable: true, buildable: false, moveCost: 2, color: '#8a6432', emoji: '🌉' },
   stone: { id: 'stone', name: '石头', passable: true, buildable: true, color: '#8a8a8a', emoji: '🪨' },
+  cave: { id: 'cave', name: '洞穴', passable: true, buildable: false, shelter: true, moveCost: 1.5, color: '#3a2a1a', emoji: '🕳️' },
   mountain: { id: 'mountain', name: '山地', passable: false, buildable: false, color: '#4a4a4a' },
   tree: {
     id: 'tree', name: '树木', passable: false, buildable: false, color: '#2e5d2e', emoji: '🌳',
@@ -101,13 +104,16 @@ export const BUILDINGS: Record<string, BuildingDef> = {
   cave: { id: 'cave', name: '矿洞', size: { x: 1, y: 1 }, hp: 500, color: '#3a2a1a', emoji: '⛰️', passable: false, buildTime: 6, workRadius: 1, tags: ['mine'], recipe: 'cave' },
   church: { id: 'church', name: '教堂', size: { x: 2, y: 2 }, hp: 600, color: '#5a3a6a', emoji: '⛪', passable: false, buildTime: 12, workRadius: 5, tags: ['faith', 'anchor', 'oracle'], capabilities: ['oracle'] },
   monument: { id: 'monument', name: '纪念碑', size: { x: 3, y: 3 }, hp: 1200, color: '#8a7a5a', emoji: '🗿', passable: false, buildTime: 40, workRadius: 6, costWood: 60, costOre: 25, tags: ['wonder'], aura: { radius: 6, moodPerSec: 0.3 } },
-  raft: { id: 'raft', name: '竹筏', size: { x: 1, y: 1 }, hp: 40, color: '#8a6a3a', emoji: '🛶', passable: true, buildTime: 2, onWater: true, recipe: 'fishing', tech: 'raftTech', tags: ['raft', 'water'] },
+  raft: { id: 'raft', name: '竹筏', size: { x: 1, y: 1 }, hp: 40, color: '#8a6a3a', emoji: '🛶', passable: true, buildTime: 2, onWater: true, recipe: 'fishing', tech: 'transport:raft', tags: ['raft', 'water'] },
   // 实验分支：四维度建筑（娱乐/取水/庇护）
-  toy: { id: 'toy', name: '玩具', size: { x: 1, y: 1 }, hp: 40, color: '#c8605a', emoji: '🧸', passable: true, buildTime: 2, costWood: 4, tech: 'toyTech', tags: ['toy', 'fun'], aura: { radius: 5, moodPerSec: 0.3 } },
-  well: { id: 'well', name: '水井', size: { x: 1, y: 1 }, hp: 80, color: '#5a7a9a', emoji: '⛲', passable: true, buildTime: 3, costWood: 6, tech: 'wellTech', recipe: 'well', tags: ['well', 'water'] },
-  house: { id: 'house', name: '木屋', size: { x: 2, y: 2 }, hp: 150, color: '#7a5a3a', emoji: '🏠', passable: true, buildTime: 6, costWood: 12, tech: 'houseTech', tags: ['house', 'shelter'], aura: { radius: 4, restPerSec: 0.5, moodPerSec: 0.2 } },
-  boat: { id: 'boat', name: '渡船', size: { x: 2, y: 2 }, hp: 120, color: '#7a5a2a', emoji: '⛵', passable: true, buildTime: 6, costWood: 12, onWater: true, tech: 'boatTech', tags: ['raft', 'water'] },
-  bridge: { id: 'bridge', name: '木桥', size: { x: 1, y: 1 }, hp: 60, color: '#8a6432', emoji: '🌉', passable: true, buildTime: 3, onWater: true, replacesTile: 'bridge', tech: 'bridgeTech', tags: ['raft', 'water'] },
+  toy: { id: 'toy', name: '玩具', size: { x: 1, y: 1 }, hp: 40, color: '#c8605a', emoji: '🧸', passable: true, buildTime: 2, costWood: 4, tech: 'craft:toy', tags: ['toy', 'fun'], aura: { radius: 5, moodPerSec: 0.3 } },
+  well: { id: 'well', name: '水井', size: { x: 1, y: 1 }, hp: 80, color: '#5a7a9a', emoji: '⛲', passable: true, buildTime: 3, costWood: 6, tech: 'water:well', recipe: 'well', tags: ['well', 'water'] },
+  // 房屋造价高（用户定案：房屋造价要高）——木屋 = 昂贵庇护
+  house: { id: 'house', name: '木屋', size: { x: 2, y: 2 }, hp: 150, color: '#7a5a3a', emoji: '🏠', passable: true, buildTime: 8, costWood: 30, tech: 'shelter:house', tags: ['house', 'shelter'], aura: { radius: 4, restPerSec: 0.5, moodPerSec: 0.2 } },
+  // 洞穴居所：只能建在天然洞穴上（onCave），改造资源少（木 5 ≪ 木屋 30）——用户设计
+  caveHouse: { id: 'caveHouse', name: '洞穴居所', size: { x: 1, y: 1 }, hp: 80, color: '#4a3a2a', emoji: '⛰️', passable: true, buildTime: 3, costWood: 5, onCave: true, tech: 'shelter:cave', tags: ['house', 'shelter'], aura: { radius: 3, restPerSec: 0.4, moodPerSec: 0.15 } },
+  boat: { id: 'boat', name: '渡船', size: { x: 2, y: 2 }, hp: 120, color: '#7a5a2a', emoji: '⛵', passable: true, buildTime: 6, costWood: 12, onWater: true, tech: 'transport:boat', tags: ['raft', 'water'] },
+  bridge: { id: 'bridge', name: '木桥', size: { x: 1, y: 1 }, hp: 60, color: '#8a6432', emoji: '🌉', passable: true, buildTime: 3, onWater: true, replacesTile: 'bridge', tech: 'transport:bridge', tags: ['raft', 'water'] },
 };
 
 // 物品定义表（消费方：库存/物流/堆叠与 UI 显示）

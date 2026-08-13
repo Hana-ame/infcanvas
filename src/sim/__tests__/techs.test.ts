@@ -29,22 +29,22 @@ describe('科技抽卡（神谕解锁）', () => {
     sim.issueCommand({ type: 'build', x: spot.x, y: spot.y, buildingId: 'raft' });
     expect(sim.buildQueue.length).toBe(before); // 载具也要科技锁：拒绝
     // 解锁 raftTech + bridgeTech → 均可建
-    sim.unlockTech('raftTech');
+    sim.unlockTech('transport:raft');
     sim.issueCommand({ type: 'build', x: spot.x, y: spot.y, buildingId: 'raft' });
     expect(sim.buildQueue.length).toBe(before + 1);
-    sim.unlockTech('bridgeTech');
+    sim.unlockTech('transport:bridge');
     sim.issueCommand({ type: 'build', x: spot.x, y: spot.y, buildingId: 'bridge' });
     expect(sim.buildQueue.length).toBe(before + 2);
   });
 
   it('unlockTech 幂等 + 存档往返保留', () => {
     const sim = new Sim({ seed: 43, pawnCount: 1 });
-    expect(sim.unlockTech('raftTech')).toBe(true);
-    expect(sim.unlockTech('raftTech')).toBe(false); // 幂等
+    expect(sim.unlockTech('transport:raft')).toBe(true);
+    expect(sim.unlockTech('transport:raft')).toBe(false); // 幂等
     const data = JSON.parse(JSON.stringify(sim.save()));
     const sim2 = new Sim({ seed: 44, pawnCount: 1 });
     sim2.load(data);
-    expect(sim2.techs.has('raftTech')).toBe(true);
+    expect(sim2.techs.has('transport:raft')).toBe(true);
   });
 
   // 科技来源机制待与文档核对（神谕不降科技——用户 2026-08-13 定案；
@@ -54,7 +54,7 @@ describe('科技抽卡（神谕解锁）', () => {
 describe('桥 = 地形改造（water → bridge tile）', () => {
   it('桥蓝图完成：水格变桥面 tile，小人可通行，寻路可走', () => {
     const sim = new Sim({ seed: 47, pawnCount: 1 });
-    sim.unlockTech('bridgeTech');
+    sim.unlockTech('transport:bridge');
     const spot = findWaterWithLand(sim)!;
     sim.stockpile.wood = 999;
     sim.stockpile.ore = 999;
@@ -85,7 +85,7 @@ describe('桥 = 地形改造（water → bridge tile）', () => {
 
   it('桥只能建在水面 + 邻接陆地（onWater 校验）', () => {
     const sim = new Sim({ seed: 48, pawnCount: 1 });
-    sim.unlockTech('bridgeTech');
+    sim.unlockTech('transport:bridge');
     const def = sim.mods.buildings.bridge;
     const spot = findWaterWithLand(sim)!;
     expect(sim.world.canBuildFootprint(spot.x, spot.y, def)).toBe(true);
@@ -111,7 +111,7 @@ describe('桥 = 地形改造（water → bridge tile）', () => {
 describe('竹筏捕鱼（水上建筑 + recipe）', () => {
   it('筏上工作持续产食物（recipe fishing）', () => {
     const sim = new Sim({ seed: 49, pawnCount: 3 });
-    sim.unlockTech('raftTech'); // 载具科技锁
+    sim.unlockTech('transport:raft'); // 载具科技锁
     const spot = findWaterWithLand(sim)!;
     sim.stockpile.wood = 999;
     sim.stockpile.ore = 999;

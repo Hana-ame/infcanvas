@@ -28,6 +28,7 @@ import { EVENT_PREDICATES } from '../defs/events';
 import type { StrategyCardDef } from '../defs/strategyCards';
 import { STRATEGY_CARDS } from '../defs/strategyCards';
 import { TECHS } from '../defs/techs';
+import type { TechDef } from '../defs/techs';
 import { makeExploreCard } from '../defs/explore';
 import { BUILTIN_WEIGHT_RULES, type WeightRule } from '../defs/weightRules';
 import { SOCIAL_LINES, type SocialLineTable, type TopicTemplate } from '../defs/socialLines';
@@ -83,17 +84,21 @@ export class ModRegistry {
       cards: BASE_CARDS, recipes: RECIPES, tuning: TUNING, intents: [], works: [],
     });
     for (const c of STRATEGY_CARDS) r.registerStrategyCard(c); // 内置策略卡表（神谕降旨全数据化）
-    // 探索卡（用户设计：科技建筑只有娱乐卡能抽到建造意图）：
-    // 谓词 hasTech-xxx（科技已解锁）/ noBuilding-xxx（营地还没有该建筑）+ 探索卡进卡池
-    for (const techId of Object.keys(TECHS)) {
-      const t = TECHS[techId];
-      r.registerPredicate(`hasTech-${techId}`, (c) => c.view.techs?.has(techId) ?? false);
-      for (const b of t.unlocks) {
-        r.registerPredicate(`noBuilding-${b}`, (c) => !(c.view.hasBuildingWithTag?.(b) ?? false));
-        r.registerCardDef(makeExploreCard(b, techId));
-      }
-    }
+    // 内置科技统一走 registerTech（含探索卡生成）——mod 追加科技走同一入口 = DLC 科技
+    for (const techId of Object.keys(TECHS)) r.registerTech(TECHS[techId]);
     return r;
+  }
+
+  // 科技注册（DLC 扩展口）：注册即自动接入——hasTech 谓词 / noBuilding 谓词 / 探索卡
+  //（探索卡 = 娱乐系列：科技建筑解锁初期只有娱乐抽卡能命中建造意图，用户机制）
+  registerTech(def: TechDef): this {
+    TECHS[def.id] = def;
+    this.registerPredicate(`hasTech-${def.id}`, (c) => c.view.techs?.has(def.id) ?? false);
+    for (const b of def.unlocks) {
+      this.registerPredicate(`noBuilding-${b}`, (c) => !(c.view.hasBuildingWithTag?.(b) ?? false));
+      this.registerCardDef(makeExploreCard(b, def.id));
+    }
+    return this;
   }
 
   constructor(seed: {

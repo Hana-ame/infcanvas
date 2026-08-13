@@ -14,15 +14,18 @@ export interface TechDef {
 // 顺序即抽卡解锁顺序（越靠后越高级，"往后抽卡" = 后期才抽到高级科技）
 // 科技表（消费方：sim.unlockTech 解锁 + BuildingDef.tech 门控建造；
 // 抽卡端 makeDummyCardPlanner/LLM 版都按 TECH_ORDER 顺序抽，抽到即解锁）
+// 科技 id 命名规范：`<领域>:<内容>`（shelter:house / water:well / craft:toy / transport:raft…）
+// —— 领域前缀便于扩展与 DLC：mod 注册 `registerTech`（或 defs.techs 声明）追加任意领域科技，
+//    探索卡/权重/门控全自动接入（unlocks 建筑动态生成探索卡，无需改内核）
 export const TECHS: Record<string, TechDef> = {
-  // 实验分支（feature/colony-survival-dims）：初始科技只提供娱乐属性（玩具）——
-  // 模拟探索式开局：先有娱乐，取水/房屋等生存设施需后续科技解锁，验证殖民地能否存续
-  toyTech: { id: 'toyTech', name: '玩具工艺', unlocks: ['toy'], desc: '制作玩具：提供娱乐设施' },
-  wellTech: { id: 'wellTech', name: '取水术', unlocks: ['well'], desc: '挖水井：营地持续取水' },
-  houseTech: { id: 'houseTech', name: '木屋营造', unlocks: ['house'], desc: '建造房屋：提供庇护与休息' },
-  raftTech: { id: 'raftTech', name: '竹筏工艺', unlocks: ['raft'], desc: '水面搭建竹筏：渡水捕鱼' },
-  bridgeTech: { id: 'bridgeTech', name: '桥梁工程', unlocks: ['bridge'], desc: '水上修桥：把水面铺成可通行的桥面' },
-  boatTech: { id: 'boatTech', name: '造船术', unlocks: ['boat'], desc: '建造渡船：大型水上平台' },
+  // 初始科技只提供娱乐属性（玩具）——模拟探索式开局：先有娱乐，取水/房屋等生存设施需后续科技
+  'craft:toy': { id: 'craft:toy', name: '玩具工艺', unlocks: ['toy'], desc: '制作玩具：提供娱乐设施' },
+  'water:well': { id: 'water:well', name: '取水术', unlocks: ['well'], desc: '挖水井：营地持续取水' },
+  'shelter:house': { id: 'shelter:house', name: '木屋营造', unlocks: ['house'], desc: '建造房屋：昂贵庇护与休息' },
+  'shelter:cave': { id: 'shelter:cave', name: '洞穴改造', unlocks: ['caveHouse'], desc: '改造天然洞穴为居所：资源少' },
+  'transport:raft': { id: 'transport:raft', name: '竹筏工艺', unlocks: ['raft'], desc: '水面搭建竹筏：渡水捕鱼' },
+  'transport:bridge': { id: 'transport:bridge', name: '桥梁工程', unlocks: ['bridge'], desc: '水上修桥：把水面铺成可通行的桥面' },
+  'transport:boat': { id: 'transport:boat', name: '造船术', unlocks: ['boat'], desc: '建造渡船：大型水上平台' },
 };
 
 export const TECH_ORDER: string[] = Object.keys(TECHS);
