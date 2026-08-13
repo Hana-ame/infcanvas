@@ -35,6 +35,12 @@ import { BUILTIN_WEIGHT_RULES, type WeightRule } from '../defs/weightRules';
 import { SOCIAL_LINES, type SocialLineTable, type TopicTemplate } from '../defs/socialLines';
 import type { CardContext } from '../ai/pawn';
 import { predicateStore, weightRuleStore, socialLinesStore } from './query';
+// 默认玩法包（2026-08-14 插件化重构）：玩法系统全部由玩法包提供，内核只留基础系统
+import { farmingPack } from '../../mods/packs/farming';
+import { craftingPack } from '../../mods/packs/crafting';
+import { repairPack } from '../../mods/packs/repair';
+import { techPoolPack } from '../../mods/packs/tech-pool';
+import { autobuildPack } from '../../mods/packs/autobuild';
 
 // 生命周期钩子上下文（step:before / step:after，见 sim.step）
 export interface HookContext {
@@ -80,6 +86,16 @@ export class ModRegistry {
     for (const c of STRATEGY_CARDS) r.registerStrategyCard(c); // 内置策略卡表（神谕降旨全数据化）
     // 内置科技统一走 registerTech（含探索卡生成）——mod 追加科技走同一入口 = DLC 科技
     for (const techId of Object.keys(TECHS)) r.registerTech(TECHS[techId]);
+    // 默认玩法包（2026-08-14 插件化重构：模拟器 = 内核 11 系统 + 玩法包叠加）。
+    // 默认装配全部 → new Sim() 即完整模拟器；玩法包可被 disableSystem 撤换
+    //（hunter-gatherer = 换装：卸载 5 个默认玩法系统 + 注册狩猎系统）。
+    // 注意注册顺序：before:'raid' 同锚点插入保序（sim.registerSystems 按注册序排同组），
+    // 故产出包按 farm→craft→repair 声明，最终执行序 = farm→craft→repair→raid。
+    farmingPack(r);
+    craftingPack(r);
+    repairPack(r);
+    techPoolPack(r);
+    autobuildPack(r);
     return r;
   }
 

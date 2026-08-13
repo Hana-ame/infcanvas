@@ -7,15 +7,21 @@
 // 修复：构造器不再预建实例（registerSystems 唯一实例化点）；socialUnits 字段默认 no-op 空实现
 // （NOOP_SOCIAL_UNITS，启用时回填真实例）；intents/works 挂接条件化（this.behavior 判空）。
 // 本文件即该修复的回归保护：逐系统卸载 + 组合卸载 + 全量卸载，构造即崩/步进即崩都会在此暴露。
+// 2026-08-14 玩法包化后：卸载全集 = 内核 11 + 默认玩法包 5（取 default() 装配的 systemIds）。
 import { describe, it, expect } from 'vitest';
 import { Sim } from '../sim';
 import { ModRegistry } from '../mods/registry';
-import { SYSTEM_DEFS } from '../defs/systems';
+
+// 完整装配集（内核 + 默认玩法包）：构造一次 default Sim 读取——玩法包增删后此处自动跟随
+function allSystemIds(): string[] {
+  return [...new Sim({ registry: ModRegistry.default(), pawnCount: 1, seed: 3 }).systemIds];
+}
 
 describe('插件化：卸载不破坏核心（逐个卸载 smoke）', () => {
-  // 对 SYSTEM_DEFS 里每个系统单独卸载 → 构造 + 步进 120s 不崩，且装配表确实不含它
-  for (let idx = 0; idx < SYSTEM_DEFS.length; idx++) {
-    const id = SYSTEM_DEFS[idx].id;
+  const ALL = allSystemIds();
+  // 对完整装配集里每个系统单独卸载 → 构造 + 步进 120s 不崩，且装配表确实不含它
+  for (let idx = 0; idx < ALL.length; idx++) {
+    const id = ALL[idx];
     it(`卸载 ${id}：Sim 构造 + 步进 120s 不崩`, () => {
       const mods = ModRegistry.default();
       mods.disableSystem(id);
@@ -58,9 +64,9 @@ describe('插件化：卸载不破坏核心（逐个卸载 smoke）', () => {
     expect(sim.stockpile.wood ?? 0).toBeGreaterThanOrEqual(0);
   });
 
-  it('全量卸载 16 系统：Sim 仍能构造与步进（空壳但稳定）', () => {
+  it(`全量卸载 ${ALL.length} 系统：Sim 仍能构造与步进（空壳但稳定）`, () => {
     const mods = ModRegistry.default();
-    for (const d of SYSTEM_DEFS) mods.disableSystem(d.id);
+    for (const id of ALL) mods.disableSystem(id);
     const sim = new Sim({ registry: mods, pawnCount: 2, seed: 19 });
     expect(sim.systemIds).toEqual([]);
     for (let i = 0; i < 30; i++) sim.step(1);

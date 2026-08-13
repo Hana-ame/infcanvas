@@ -319,13 +319,22 @@ export class Sim implements SimContext {
 
   private registerSystems(): void {
     // 数据驱动：系统装配表（defs/systems.ts）定义执行顺序，mod 声明项按 before 锚点插入。
-    // 2026-08-14 用户指摘"为什么不能卸载插件"：mod 可 disableSystem(id) 卸载内置/扩展系统，
-    // 装配时跳过 → "只留采集狩猎"等玩法包能撤掉 farm/techPool/autobuild 等默认系统。
+    // 2026-08-14 插件化演进（三阶段）：
+    //   ① 用户指摘"为什么不能卸载插件" → mod 可 disableSystem(id) 装配时跳过；
+    //   ② 用户裁决"最终模拟器 = mod/插件一个个添加玩法组装" → 玩法系统迁出内核为玩法包
+    //      （src/mods/packs/），内核 SYSTEM_DEFS 只剩 11 个基础系统，ModRegistry.default()
+    //      挂载默认玩法包（farm/craft/repair/techPool/autobuild）后仍为原 16 系统顺序；
+    //   ③ 同锚点保序：多个 mod 项声明同一 before 时按注册序排列（连续 splice 前插会逆序，
+    //      farming/crafting/repair 同锚 'raid' 时暴露——产出序必须 farm→craft→repair）。
     const defs = [...SYSTEM_DEFS];
     for (const m of this.mods.systemDefs) {
       const idx = defs.findIndex((d) => d.id === m.before);
-      if (m.before && idx >= 0) defs.splice(idx, 0, m);
-      else defs.push(m);
+      if (m.before && idx >= 0) {
+        // 插到锚点前、但已在锚点前的同锚点组之后（保持同组注册序）
+        let at = idx;
+        for (let j = idx; j < defs.length && defs[j].before === m.before; j++) at = j + 1;
+        defs.splice(at, 0, m);
+      } else defs.push(m);
     }
     const enabled = defs.filter((d) => this.mods.isSystemEnabled(d.id));
     for (const def of enabled) {

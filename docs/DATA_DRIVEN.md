@@ -297,6 +297,13 @@ overrideTuning(patch: DeepPartial<TuningConfig>): this  // 覆盖平衡参数（
 - **卸载不破坏核心**：① `sim.socialUnits` 字段默认回落 `NOOP_SOCIAL_UNITS` 空实现（socialUnit 系统卸载时消费方——needsSystem 记需求/socialSystem 交流历史/sim 自身归属回调——契约不变不崩，启用时回填真实例）；② `sim.behavior` 可空，mods.intents/works 挂接判空条件化；③ 构造器不再预建系统实例（曾双重实例化：禁用 behavior 时孤儿实例吞掉 intents 挂接）
 - 回归保护：`src/sim/__tests__/uninstall.test.ts` 20 用例（16 系统逐个卸载 / no-op 契约 / 组合卸载 / 全量卸载）
 
+### 10.1.2 玩法包化：内核 11 + 玩法包 5（2026-08-14 追加）
+
+- `SYSTEM_DEFS`（defs/systems.ts）现只含 **11 个内核基础系统**（needs/san/desire/behavior/socialUnit/social/gather/build/raid/population/events）
+- 玩法系统（farm/craft/repair/techPool/autobuild）全部迁出为独立玩法包（`src/mods/packs/*.ts`），经 `registerSystemDef` 注册进 `mods.systemDefs`（mod 装配面）
+- `ModRegistry.default()` 默认挂载 5 玩法包 = 完整模拟器（16 系统，执行序与原表一致：farm→craft→repair 插 raid 前、techPool/autobuild 表尾）
+- 同锚点保序：多个 mod 项同 `before` 时按注册序排（sim.registerSystems 三阶段演进注释）
+
 ### 10.2 卡条件谓词表（行为树条件节点）
 
 - `CARD_PREDICATES`（defs/cards.ts）：机制钩子集中一处（hasCave/hasCampfire/buildQueue），代码只写一次

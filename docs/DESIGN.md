@@ -998,3 +998,16 @@ registerHook('beforeRoll', (prob, ctx) => ...);          // check 流程阶段�
 - **回归保护**：`src/sim/__tests__/uninstall.test.ts` 20 用例——16 系统逐个卸载（构造+步进 120s 不崩、装配表不含该 id）、socialUnit no-op 契约、behavior 卸载、采集狩猎组合卸载（farm/craft/techPool/autobuild/repair 长跑 600s）、全量卸载（空壳稳定）。全量 296 测试通过。
 
 **已知差距（未做，待用户裁决）**：纪律"玩法应作为 mod 提供、内核只留需求/决策/采集/社交"尚未完全达成——farm/craft/techPool/autobuild/repair 仍内置在 `SYSTEM_DEFS` 内核，玩法包目前靠 `disableSystem` 卸载达成"可撤"，未迁移为"默认玩法 mod"装配。迁移成本：系统拆包 + 默认装配表 + 双端加载顺序，属独立重构。
+
+### 19. 玩法包化：最终模拟器 = 内核 + 玩法包叠加（2026-08-14）
+
+用户裁决："最终通过 mod/插件一个个添加玩法最终变成最终模拟器"——架构从"玩法内置 + 反向卸载"改为**正向组装**：
+
+- **内核收窄**：`SYSTEM_DEFS` 只剩 11 个基础系统（needs/san/desire/behavior/socialUnit/social/gather/build/raid/population/events）——需求/决策/社交/采集/建造/敌袭/人口/事件，零玩法。
+- **玩法系统迁出为 5 个独立玩法包**（`src/mods/packs/`）：
+  - `farming.ts`（farm 耕种）/ `crafting.ts`（craft 手作）/ `repair.ts`（repair 修缮）→ `before: 'raid'` 插回产出位
+  - `tech-pool.ts`（techPool 科技）/ `autobuild.ts`（autobuild 自主扩张）→ 表尾追加
+- **默认装配全部**：`ModRegistry.default()` 挂载 5 玩法包 = 原 16 系统完整模拟器（体验不变）；玩法包可 `disableSystem` 撤换（hunter-gatherer 仍为换装玩法包）。
+- **同锚点保序**：多个 mod 项声明同一 `before` 时按注册序排列（原 splice 连续前插会逆序——farming/crafting/repair 同锚 'raid' 暴露，产出序必须 farm→craft→repair）。
+- **验证**：`assembly.test.ts` 5 用例（内核 11 无玩法 / 默认 16 且序正确 / 玩法包独立加减 / 注册来源 mod 面 / 纯内核可运行）；卸载测试改为遍历完整装配集。全量 301 测试。
+- §18"已知差距"已消除：玩法系统已全部迁出内核，玩法包 = 最小"添加玩法"单位。
