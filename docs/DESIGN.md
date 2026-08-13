@@ -956,3 +956,10 @@ registerHook('beforeRoll', (prob, ctx) => ...);          // check 流程阶段�
   - 踩坑链：①"敌人离小人近" → 狼驱散文明（12 次/15 空壳）；②"敌人在营地半径内计数" → 狼扫过一遍 raidCount 疯涨（90 分钟 40 次、41 单位 34 空壳连锁雪崩）；③ 终版真实损失判据 + 新篝火离旧营地 ≥`migrateMinDist`。
 - **归属持续收敛**（`reassignInterval`）：归属在"建 campfire/出生/迁徙"是时点快照，小人走到营地旁不重算 → 游牧幽灵。加低频全量 reassign（默认 20s）让个体自然划入最近单位。
 - **营地被毁清 fireId**：`building_destroyed` 解散派系时同步清空成员 fireId（曾踩坑：只删 membership 留 fireId → 幽灵归属）。
+
+### 14. 私有食物 + 互助（2026-08-14）
+
+- **私有物品（克制版）**：`pawn.inventory` 仅装食物。主动采集（caveWork 渔获等 `item==='food'`）进个人口袋；进食 `consumeFood` 优先个人、全局粮仓兜底。木材/矿石仍全局（避免牵动建造）。**决策**：用户确认"仅食物私有化"，支撑"好感高送食/集市换粮"核心诉求。
+- **互助卡**（`help`，base 卡常驻槽位）：condition = 附近有弱势邻人（缺食/受伤/低落）+ 我对 TA 好感 ≥ `helpFriendAt` + 自身不危急（先自救）。utility 随弱势程度放大（濒死邻人 > 工作）。execHelp 送食（个人口袋转移）/疗伤/陪伴；受助方好感 +`helpGiveRel`（互惠）。
+- **需求写篝火历史**（`needsSystem.recordNeed`）：濒死/低落 → 记入附近 campfire 记忆（节流：跨越危急等级才写），交流传播（exchangeFireStory 读取）。
+- **解耦**：互助完全走卡系统（condition/utility/action 声明式），mod 可禁用/覆盖 `help` 卡或注册新互助意图。

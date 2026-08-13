@@ -64,6 +64,7 @@ export interface SimContext {
     onCampfireBuilt(key: number): void;
     assignPawn(eid: number): void;
     unassignPawn(eid: number): void;
+    addMemory(key: number, text: string): void; // 记一条篝火记忆（需求/事件写区域历史）
     // 篝火区域历史（B 方案：交流篝火情况 = 读这份历史推断伙伴/敌人）
     fireHistory(key: number, limit?: number): string[];
   };

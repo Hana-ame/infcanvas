@@ -97,6 +97,9 @@ export interface PawnState {
   crazyFleeTarget?: { x: number; y: number }; // 崩溃逃向的篝火目标
   skills?: Partial<Record<SkillId, number>>; // COC 技能（百分制，越用越强）
   desires?: Record<DesireId, number>; // 七宗罪满足度（DESIGN §3）
+  lastNeedRec?: number; // 需求写入篝火记忆的节流等级（needsSystem.recordNeed 用，防刷屏）
+  inventory?: Record<string, number>; // 个人私有物品（2026-08-14 用户设计：私有物品 + 真以物易物；
+  // 当前实现仅食物私有化：主动采集的食入口袋，进食优先扣个人；木材/矿石仍走全局公共仓库）
   relationships?: Map<number, number>; // 对其他小人的好感度（社交系统）
   socialCd?: number; // 社交冷却
   job?: string;
@@ -148,6 +151,7 @@ export interface SaveData {
     faith?: number;
     skills?: Partial<Record<SkillId, number>>;
     desires?: Record<DesireId, number>;
+    inventory?: Record<string, number>;
     oracleBuff?: { until: number; mood: number };
     assignedJob?: string;
     fireId?: number | null; // 关联篝火建筑 key（2026-08-14 重构：无派系单位，指向 campfire 主格）
@@ -954,6 +958,7 @@ export class Sim implements SimContext {
           faith: st.faith ?? 0,
           skills: st.skills ?? {},
           desires: st.desires ?? initDesires(this.rng, this.tuning.desire),
+          inventory: st.inventory ?? {},
           oracleBuff: st.oracleBuff,
           assignedJob: st.assignedJob,
           fireId: st.fireId ?? null,
@@ -1002,6 +1007,7 @@ export class Sim implements SimContext {
         st.faith = p.faith ?? 0;
         st.skills = p.skills ?? {};
         st.desires = p.desires ?? initDesires(this.rng, this.tuning.desire);
+        st.inventory = p.inventory ?? {};
         st.oracleBuff = p.oracleBuff;
         st.assignedJob = p.assignedJob;
         st.fireId = p.fireId ?? null;

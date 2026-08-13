@@ -77,7 +77,35 @@ export const BASE_CARD_DEFS: BehaviorCardDef[] = [
     action: 'heal', label: '疗伤',
   },
   {
-    id: 'idle', name: '闲逛', series: 'leisure', weight: 2,
+      id: 'help', name: '互助', series: 'social', weight: 12,
+      // 2026-08-14 用户设计：小人对小人好感高 → 帮忙（满足对方食物/娱乐需求）。
+      // 条件：附近有"缺食/受伤/低落"且我对 TA 好感 ≥ helpFriendAt 的邻人。
+      // 纯声明式：condition/utility 用 helpTargetOf 探测（决策链解耦，mod 可覆盖/禁用此卡）。
+      condition: (c) => {
+        // 自身危急时不帮（先自救）：食物/休息告急 → 互助卡不可选
+        const my = c.view.needsOf(c.eid);
+        const s = c.view.tuning?.social;
+        if (my && s && (my.food < s.helpFoodNeedAt || my.mood < s.helpMoodNeedAt)) return false;
+        return (c.view.helpTargetOf?.(c.eid) ?? null) !== null;
+      },
+      extraUtility: (c) => {
+        const t = c.view.helpTargetOf?.(c.eid);
+        if (t === null || t === undefined) return 0;
+        // 弱势程度越高收益越高（缺食 > 受伤 > 低落，与 findHelpTarget 评分一致）；
+        // 濒死邻人 (food→0 / hp→0) 时收益远超常规工作 → 利他优先
+        const need = c.view.needsOf(t);
+        const hp = c.view.healthOf?.(t);
+        const s = c.view.tuning?.social;
+        let u = 20; // 基础利他倾向（高于普通工作的 30？→ 用 +20 起步，濒死更高）
+        if (need && s && need.food < s.helpFoodNeedAt) u += (40 - need.food) * 3;
+        if (hp && s && hp.hp < s.helpHpNeedAt) u += (60 - hp.hp) * 2;
+        if (need && s && need.mood < s.helpMoodNeedAt) u += (30 - need.mood) * 1.5;
+        return u;
+      },
+      action: 'help', label: '互助',
+      satisfies: [{ desire: 'pride', amount: 1 }], // 助人为乐 → 傲慢满足
+    },
+    { id: 'idle', name: '闲逛', series: 'leisure', weight: 2,
     utilityFixed: 2,
     action: 'idle', label: '闲逛',
   },

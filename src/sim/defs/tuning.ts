@@ -121,6 +121,14 @@ export interface SocialTuning {
   meetDist: number;        // 相遇距离（相邻才算）
   fireEnemyRel: number;    // B 方案：听到敌意篝火历史 → 对对方个体好感变化
   fireTalkCooldown: number; // 交流冷却（秒）
+  helpFriendAt: number;    // 好感 ≥ 此值才主动帮助邻人（互助卡门槛）
+  helpFoodAmount: number;  // 送食量（从自己口袋转给对方）
+  helpFoodNeedAt: number;  // 对方食物指标 < 此值视为"缺食"可帮
+  helpHpNeedAt: number;    // 对方 hp < 此值视为"受伤"可疗伤
+  helpMoodNeedAt: number;  // 对方心情 < 此值视为"低落"可陪伴
+  helpMoodGain: number;    // 陪伴给双方的心情加成
+  helpHealPerSec: number;  // 疗伤回血速率
+  helpGiveRel: number;     // 受助方对施助方的好感提升（互惠）
   fireFriendRel: number;   // 听到友善历史 → 好感升
   fireNeutralRel: number;  // 未知立场 → 轻微接近
   interactCdMin: number;   // 社交冷却下限
@@ -555,6 +563,14 @@ export const TUNING: TuningConfig = {
     meetDist: 1.6,           // 相遇距离
     fireEnemyRel: -12,       // B 方案：听到敌意篝火历史 → 对对方个体好感变化
     fireTalkCooldown: 120,   // 交流篝火情况冷却（秒）：同对 pawn 冷却内不重复交流
+    helpFriendAt: 40,        // 好感 ≥ 40 才主动帮邻人（对应 friendAt 亲密线）
+    helpFoodAmount: 3,       // 送食量
+    helpFoodNeedAt: 30,      // 对方食物 < 30 视为缺食
+    helpHpNeedAt: 50,        // 对方 hp < 50 视为受伤
+    helpMoodNeedAt: 30,      // 对方心情 < 30 视为低落
+    helpMoodGain: 5,         // 陪伴心情加成
+    helpHealPerSec: 8,       // 疗伤回血速率（秒）
+    helpGiveRel: 4,          // 受助方好感提升
     fireFriendRel: 8,        // 听到友善历史 → 好感升
     fireNeutralRel: 1,       // 未知立场 → 轻微接近
     interactCdMin: 15,

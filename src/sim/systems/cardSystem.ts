@@ -105,6 +105,35 @@ export class BehaviorSystem implements GameSystem {
     }
   }
 
+  // 互助目标探测（2026-08-14 互助卡）：相邻距离内的邻人，满足"弱势（缺食/受伤/低落）"且
+  // 我对 TA 好感 ≥ helpFriendAt（亲密才帮）。返回最优目标 eid 或 null。
+  private findHelpTarget(eid: number): number | null {
+    const s = this.ctx.tuning.social;
+    const me = this.ctx.pawnPositions.get(eid);
+    if (!me) return null;
+    const myRel = this.ctx.pawnStates.get(eid)?.relationships;
+    let best: number | null = null;
+    let bestNeed = 0;
+    for (const other of this.ctx.pawnList) {
+      if (other === eid) continue;
+      const pos = this.ctx.pawnPositions.get(other);
+      if (!pos) continue;
+      if (Math.hypot(pos.x - me.x, pos.y - me.y) > s.meetDist) continue; // 必须相邻
+      // 好感门槛：亲密才帮（帮助不是义务，是情分）
+      const rel = myRel?.get(other) ?? 0;
+      if (rel < s.helpFriendAt) continue;
+      const stO = this.ctx.pawnStates.get(other);
+      const need = this.ctx.readNeeds(other);
+      const hp = this.ctx.readHealth(other);
+      let score = 0;
+      if (need && need.food < s.helpFoodNeedAt) score += 40 - need.food; // 缺食（送食）
+      if (hp && hp.hp < s.helpHpNeedAt) score += 60 - hp.hp;             // 受伤（疗伤）
+      if (need && need.mood < s.helpMoodNeedAt) score += 30 - need.mood; // 低落（陪伴）
+      if (score > bestNeed) { bestNeed = score; best = other; }
+    }
+    return best;
+  }
+
   // 抽卡决策 → 返回意图（并记录决策日志）
   private decide(eid: number, st: PawnState): BehaviorIntent | null {
     const view: CardView = {
@@ -132,6 +161,8 @@ export class BehaviorSystem implements GameSystem {
       markovBias: this.ctx.mods.markovBias,
       jobCards: this.ctx.mods.jobCards,
       desireOfSeries: (series) => this.ctx.mods.seriesDesire[series] ?? null,
+      // 互助探测：找近处"缺食/受伤/低落"且我对 TA 好感 ≥ 门槛的邻人
+      helpTargetOf: (eid) => this.findHelpTarget(eid),
     };
     const ctx: CardContext = { view, eid };
     const pawnLike = { dna: st.dna, slots: st.slots };
@@ -196,6 +227,55 @@ export class BehaviorSystem implements GameSystem {
 
   // 探索（用户设计：科技建筑只有娱乐卡能"想到"建）：娱乐时灵光一现 → 规划蓝图入队
   // 蓝图落点：营地（首个 campfire）旁环扫可建格；目标建筑从卡 id 解析（explore:well → well）
+  // 互助执行（2026-08-14 用户设计：小人对小人好感高 → 帮忙 = 满足对方食物/娱乐需求）。
+  // 对象 = findHelpTarget 判定的"值得帮的弱势邻人"（缺食/受伤/低落 + 我好感高）。
+  // 送食从自己口袋转给对方（私有食物）；疗伤直接回血；陪伴加心情。受助方好感提升（互惠）。
+  private execHelp(c: SimContext, eid: number, st: PawnState, _intent: BehaviorIntent): void {
+    const target = this.findHelpTarget(eid);
+    if (target === null) { st.job = '闲逛'; return; }
+    const s = c.tuning.social;
+    const stT = c.pawnStates.get(target);
+    if (!stT) return;
+    const need = c.readNeeds(target);
+    const hp = c.readHealth(target);
+    // 送食（对方缺食且我有私粮）
+    if (need && need.food < s.helpFoodNeedAt && (st.inventory?.food ?? 0) >= s.helpFoodAmount) {
+      st.inventory = { ...st.inventory, food: (st.inventory?.food ?? 0) - s.helpFoodAmount };
+      stT.inventory = { ...stT.inventory, food: (stT.inventory?.food ?? 0) + s.helpFoodAmount };
+      c.recordSpend(eid, 'food', s.helpFoodAmount);
+      need.food = Math.min(100, need.food + 15); // 收到食物 → 饱腹
+      c.setNeeds(target, need);
+      this.logHelp(c, eid, target, `🤝 #${eid} 把食物分给了饥饿的 #${target}`);
+    } else if (hp && hp.hp < s.helpHpNeedAt) {
+      // 疗伤（对方受伤）
+      hp.hp = Math.min(hp.maxHp, hp.hp + s.helpHealPerSec);
+      c.setHealth(target, hp);
+      this.logHelp(c, eid, target, `🩹 #${eid} 为受伤的 #${target} 包扎伤口`);
+    } else if (need && need.mood < s.helpMoodNeedAt) {
+      // 陪伴（对方低落）
+      need.mood = Math.min(100, need.mood + s.helpMoodGain);
+      c.setNeeds(target, need);
+      this.logHelp(c, eid, target, `💗 #${eid} 陪伴情绪低落的 #${target} 说说话`);
+    }
+    // 互惠：受助方对施助方好感提升
+    const relT = stT.relationships ?? new Map<number, number>();
+    relT.set(eid, Math.max(s.relFloor, Math.min(s.relCap, (relT.get(eid) ?? 0) + s.helpGiveRel)));
+    stT.relationships = relT;
+    st.job = '互助';
+  }
+
+  // 互助日志 + 好感（施助方对受助方也微增，巩固友谊）
+  private logHelp(c: SimContext, eid: number, target: number, text: string): void {
+    c.logEvent(text);
+    const st = c.pawnStates.get(eid);
+    if (st) {
+      const rel = st.relationships ?? new Map<number, number>();
+      const s = c.tuning.social;
+      rel.set(target, Math.max(s.relFloor, Math.min(s.relCap, (rel.get(target) ?? 0) + 1)));
+      st.relationships = rel;
+    }
+  }
+
   private execExplore(c: SimContext, eid: number, st: PawnState, intent: BehaviorIntent): void {
     st.job = intent.label;
     const buildingId = intent.label.split(':')[1] ?? '';
@@ -368,15 +448,32 @@ export class BehaviorSystem implements GameSystem {
 
   private execEat(c: SimContext, eid: number, st: PawnState, _intent: BehaviorIntent): void {
     const n = c.readNeeds(eid);
-    if (n && c.stockpile.food > 0) {
-      c.stockpile.food -= c.tuning.card.eatCost;
-      c.recordSpend(eid, 'food', c.tuning.card.eatCost); // 经济账本：支出
+    if (!n) return;
+    // 私有食物（2026-08-14）：优先吃自己口袋的；没有 → 公共粮仓兜底
+    if (this.consumeFood(c, eid, st, c.tuning.card.eatCost)) {
       n.food = Math.min(100, n.food + c.tuning.card.eatAmount);
       c.setNeeds(eid, n);
       if (st.desires) fulfill(st.desires, 'gluttony', c.tuning.desire.fulfillGluttony);
       c.recordOutcome(eid, 'eat', c.tuning.card.eatAmount);
       c.bus.emit({ type: 'eat', eid });
     }
+  }
+
+  // 消耗食物（私有优先，公共兜底）：返回是否吃上。个人 inventory 有 → 扣个人；
+  // 没有 → 全局粮仓有 → 扣全局（公共资源）。两个都没有 → 吃不上（饿着/求助）
+  private consumeFood(c: SimContext, eid: number, st: PawnState, cost: number): boolean {
+    const inv = st.inventory;
+    if ((inv?.food ?? 0) >= cost) {
+      st.inventory = { ...inv, food: (inv?.food ?? 0) - cost };
+      c.recordSpend(eid, 'food', cost); // 经济账本：支出
+      return true;
+    }
+    if (c.stockpile.food > 0) {
+      c.stockpile.food -= cost;
+      c.recordSpend(eid, 'food', cost); // 经济账本：支出（公共粮仓）
+      return true;
+    }
+    return false;
   }
 
   private execRest(c: SimContext, eid: number, st: PawnState, _intent: BehaviorIntent): void {
@@ -421,9 +518,7 @@ export class BehaviorSystem implements GameSystem {
     if (!n) return;
     if (st.urgent === 'eat' && n.food >= this.ctx.tuning.needs.urgentEatAt) { st.urgent = undefined; return; }
     if (st.urgent === 'rest' && n.rest >= this.ctx.tuning.needs.urgentRestAt) { st.urgent = undefined; return; }
-    if (st.urgent === 'eat' && this.ctx.stockpile.food > 0) {
-      this.ctx.stockpile.food -= this.ctx.tuning.card.eatCost;
-      this.ctx.recordSpend(eid, 'food', this.ctx.tuning.card.eatCost); // 经济账本：支出
+    if (st.urgent === 'eat' && this.consumeFood(this.ctx, eid, st, this.ctx.tuning.card.eatCost)) {
       n.food = Math.min(100, n.food + this.ctx.tuning.card.eatAmountUrgent);
       this.ctx.setNeeds(eid, n);
       if (st.desires) fulfill(st.desires, 'gluttony', this.ctx.tuning.desire.fulfillGluttony);

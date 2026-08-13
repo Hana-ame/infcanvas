@@ -21,6 +21,17 @@ export class GatherSystem implements GameSystem {
 
   constructor(private ctx: SimContext) {}
 
+  // 资源入账（2026-08-14 私有物品）：食物进采集者个人 inventory（私有），
+  // 木材/矿石仍进全局公共仓库。个人口袋是"自己采的自己揣着"——支撑以物易物/送食。
+  private gainResource(eid: number, item: string, amount: number): void {
+    if (item === 'food') {
+      const st = this.ctx.pawnStates.get(eid);
+      if (st) st.inventory = { food: (st.inventory?.food ?? 0) + amount };
+    } else {
+      this.ctx.stockpile[item] = (this.ctx.stockpile[item] ?? 0) + amount;
+    }
+  }
+
   init(_bus: EventBus): void {}
 
   update(dt: number): void {
@@ -94,7 +105,7 @@ export class GatherSystem implements GameSystem {
           const ev = this.ctx.rollEventSkill(eid, dc, skill);
           const gain = capGain(Math.round((ev.success ? (recipe?.output.amount ?? this.ctx.tuning.gather.harvestYield) : (recipe?.failOutput?.amount ?? this.ctx.tuning.gather.harvestFailYield)) * toolBonus * strBonusOf(eid)), eid);
           const item = recipe?.output.item ?? this.ctx.tuning.gather.harvestItem;
-          this.ctx.stockpile[item] = (this.ctx.stockpile[item] ?? 0) + gain;
+          this.gainResource(eid, item, gain); // 私有物品：食物进个人 inventory，木材/矿石进全局
           this.ctx.recordEarn(eid, item, gain, 'caveMine'); // 经济账本：收益（矿洞）
           this.ctx.growSkill(eid, skill); this.ctx.recordOutcome(eid, 'caveMine', ev.success ? gain : -gain);
           this.ctx.bus.emit({ type: 'resource_gained', eid, item, amount: gain });
@@ -118,7 +129,7 @@ export class GatherSystem implements GameSystem {
           const skill = hv?.skill ?? this.ctx.tuning.gather.harvestSkill;
           const ev = this.ctx.rollEventSkill(eid, dc, skill);
           const gain = capGain(Math.round((ev.success ? (hv?.yieldSuccess ?? this.ctx.tuning.gather.harvestYield) : (hv?.yieldFail ?? this.ctx.tuning.gather.harvestFailYield)) * toolBonus * strBonusOf(eid)), eid);
-          this.ctx.stockpile.ore += gain;
+          this.gainResource(eid, hv?.product ?? 'ore', gain);
           this.ctx.recordEarn(eid, hv?.product ?? 'ore', gain, 'mine'); // 经济账本：收益（采矿）
           this.ctx.growSkill(eid, skill); this.ctx.recordOutcome(eid, 'mine', ev.success ? gain : -gain);
           this.ctx.bus.emit({ type: 'resource_gained', eid, item: hv?.product ?? this.ctx.tuning.gather.harvestItem, amount: gain });
@@ -142,7 +153,7 @@ export class GatherSystem implements GameSystem {
           const skill = h?.skill ?? this.ctx.tuning.gather.chopSkill;
           const ev = this.ctx.rollEventSkill(eid, dc, skill);
           const gain = capGain(Math.round((ev.success ? (h?.yieldSuccess ?? this.ctx.tuning.gather.chopYield) : (h?.yieldFail ?? this.ctx.tuning.gather.chopFailYield)) * toolBonus * strBonusOf(eid)), eid);
-          this.ctx.stockpile.wood += gain;
+          this.gainResource(eid, h?.product ?? 'wood', gain);
           this.ctx.recordEarn(eid, h?.product ?? 'wood', gain, 'chop'); // 经济账本：收益（伐木）
           this.ctx.growSkill(eid, skill); this.ctx.recordOutcome(eid, 'chop', ev.success ? gain : -gain);
           this.ctx.bus.emit({ type: 'resource_gained', eid, item: h?.product ?? this.ctx.tuning.gather.chopItem, amount: gain });

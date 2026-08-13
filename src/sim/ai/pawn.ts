@@ -69,6 +69,9 @@ export interface CardView {
   jobCards?: Record<string, string>;
   // 系列默认欲望映射（registry 替身；卡 declare desire 优先）
   desireOfSeries?(series: string): DesireId | null;
+  // 互助探测（2026-08-14 互助卡）：返回附近值得帮的弱势邻人 eid（缺食/受伤/低落 + 我好感高）
+  // null = 无值得帮的邻人。卡 condition 用它，execHelp 执行送食/陪伴/疗伤。
+  helpTargetOf?(eid: number): number | null;
 }
 
 export interface CardContext {
@@ -295,6 +298,10 @@ export function initSlots(dna: Dna, extraCards?: BehaviorCard[], t?: CardTuningL
   // mod 卡全部进池（去重排除基础卡；即使超 maxSlots 也保留——抽卡按权重，容量不再挤出 mod 玩法）
   const extra = (extraCards ?? []).filter((c) => !BASE_CARDS.some((b) => b.id === c.id));
   for (const ec of extra) slots.push(clone(ec));
+  // 互助卡常驻（2026-08-14 用户设计：好感高 → 帮忙）：进每个小人槽位。
+  // 触发由 condition 控制（附近有弱势邻人 + 我好感高），平时权重被 condition 过滤不参与抽卡。
+  const helpCard = BASE_CARDS.find((c) => c.id === 'help');
+  if (helpCard) slots.push(clone(helpCard));
   // 基础卡保底 guaranteedBase 张（eat/rest/chop）：maxSlots=2 且 2 trait 卡时若无保底 → 小人
   // 没有任何基础卡、永久闲逛（曾实测发生）。保底让"天赋再强也有生存底线"。
   let baseIdx = 0;

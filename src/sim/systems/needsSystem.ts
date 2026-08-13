@@ -67,6 +67,10 @@ export class NeedsSystem implements GameSystem {
         if (wonderAura?.moodPerSec) n.mood = Math.min(100, n.mood + wonderAura.moodPerSec * dt);
       }
       this.ctx.setNeeds(eid, n);
+      // 需求写篝火历史（2026-08-14 用户设计："篝火记载需求"）：
+      // 小人极度饥饿/受伤/低落时，把需求记入附近篝火的区域记忆 → 交流传播 → 好友得知后送食/疗伤。
+      // 节流防刷屏：只在该个体"首次达到危急"或"跨过新阈值"时写一次。
+      this.recordNeed(eid, st, n);
       // 饿死
       if (n.food <= 0) {
         const h = this.ctx.readHealth(eid);
@@ -85,6 +89,31 @@ export class NeedsSystem implements GameSystem {
       const urgent = urgentNeedAction(n, this.ctx.tuning.needs);
       if (urgent) st.urgent = urgent;
     }
+  }
+
+  // 需求写入附近篝火记忆（饥饿/受伤/低落）。阈值变化才写（节流）：st.lastNeedRec 记录上次写的
+  // 等级，跨越更高危急等级才更新 → 不会每帧刷屏。
+  private recordNeed(eid: number, st: { lastNeedRec?: number }, n: { food: number; mood: number }): void {
+    const t = this.ctx.tuning.social;
+    const pos = this.ctx.pawnPositions.get(eid);
+    if (!pos) return;
+    // 危急等级：0=无事，1=低落，2=濒死（食物/心情越危急等级越高）
+    let level = 0;
+    if (n.food < t.helpFoodNeedAt) level = 2;          // 濒死（送食）
+    else if (n.mood < t.helpMoodNeedAt) level = 1;     // 低落（陪伴）
+    if (level <= (st.lastNeedRec ?? 0)) return;        // 未跨越新阈值 → 不写
+    st.lastNeedRec = level;
+    const text = level === 2 ? `🙏 #${eid} 饥饿难耐，渴望食物` : `😔 #${eid} 情绪低落，渴望陪伴`;
+    // 记入最近 campfire 的区域记忆（需求进篝火历史 → 交流传播 → 好友得知后送食）
+    const w = this.ctx.world;
+    let best: number | null = null;
+    let bestD = Infinity;
+    for (const [key, b] of w.buildings) {
+      if (b.def.id !== 'campfire') continue;
+      const d = (pos.x - key % w.width) ** 2 + (pos.y - Math.floor(key / w.width)) ** 2;
+      if (d < bestD) { bestD = d; best = key; }
+    }
+    if (best !== null) this.ctx.socialUnits.addMemory(best, text);
   }
 
   // 附近 aura 建筑（篝火/纪念碑）——返回最近的 aura 定义（读 BuildingDef.aura）
