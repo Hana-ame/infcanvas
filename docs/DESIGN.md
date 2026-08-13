@@ -969,3 +969,15 @@ registerHook('beforeRoll', (prob, ctx) => ...);          // check 流程阶段�
 - 小人是**鼠鼠**（渲染/SVG 本来就是"正面鼠"，与 HUD 共用映射），天敌是**野猫**。
 - 早期实现的"野狼"是设定幻觉（`enemies.ts` 拍脑袋写的默认敌人），用户指出后全部替换为 `cat`（野猫）。
 - 敌人表数据驱动不变：`registerEnemy`/`overrideTuning({combat:{raidEnemy:'cat'}})` 可换袭击类型；`raider`（鼠族掠夺者）保留为鼠族内部冲突。
+
+### 16. 插件卸载 + 采集狩猎（2026-08-14）
+
+- **`disableSystem(id)`**（ModRegistry）：声明禁用某系统（内置或扩展），`sim.registerSystems` 装配时跳过。补全"一切皆插件"——此前插件只能 `insertBefore` 加系统、不能撤默认玩法。
+- **击杀掉落私有化**：raidSystem 猫死掉落 `item==='food'` → 击杀者个人 inventory（私有），其余仍全局。与 gather 私有食物一致。
+- **hunter-gatherer mod**：
+  - 卸载 farm/craft/techPool/autobuild/repair → 纯采集+狩猎
+  - `overrideDef('enemy','cat',{loot:{item:'food',amount:4}})` 猫掉肉
+  - `huntWildSpawn`：营地外环带刷常驻游荡猫（非袭击波）
+  - `huntCombat`：huntTarget 到近旁后推进攻击（fight 技能加成伤害），猫死掉肉
+  - `campRebuild`：营火被拆后 60s 轮询重建（无 autobuild 时营地是命根子）
+  - 狩猎卡 `when:['huntNearby']`（谓词先于卡注册，卡工厂构建时即解析）

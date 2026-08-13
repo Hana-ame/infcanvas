@@ -74,6 +74,9 @@ export class ModRegistry {
   private systems: GameSystem[] = [];
   // 数据驱动系统装配（逻辑组件层）：mod 声明系统表项，按 before 锚点插入执行顺序
   private _systemDefs: SystemDef[] = [];
+  // 禁用的系统 id（2026-08-14 用户指摘"为什么不能卸载插件"：装配时跳过。
+  // 让"只留采集狩猎"等玩法包能撤掉 farm/techPool/autobuild 等默认系统）
+  private _disabledSystems = new Set<string>();
   private hooks = new Map<string, Array<(ctx: HookContext) => void>>();
   private cache = new Map<string, Record<string, unknown>>();
 
@@ -360,6 +363,16 @@ export class ModRegistry {
 
   get systemDefs(): readonly SystemDef[] {
     return this._systemDefs;
+  }
+
+  // 卸载系统（2026-08-14）：声明禁用某系统 id（内置或 mod 的），装配时跳过。
+  // 幂等；禁用后 registerSystemDef 同 id 再注册也会被跳过。
+  disableSystem(id: string): this {
+    this._disabledSystems.add(id);
+    return this;
+  }
+  isSystemEnabled(id: string): boolean {
+    return !this._disabledSystems.has(id);
   }
 
   // 新剧本事件（mod 玩法）：与内置事件同池，condition/cooldown/weight 生效

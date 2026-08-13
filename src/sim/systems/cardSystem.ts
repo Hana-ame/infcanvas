@@ -163,6 +163,15 @@ export class BehaviorSystem implements GameSystem {
       desireOfSeries: (series) => this.ctx.mods.seriesDesire[series] ?? null,
       // 互助探测：找近处"缺食/受伤/低落"且我对 TA 好感 ≥ 门槛的邻人
       helpTargetOf: (eid) => this.findHelpTarget(eid),
+      // 附近有可狩猎的猫（采集狩猎 mod 狩猎卡谓词）：索敌半径 ~25 格内存在 cat 敌人
+      hostilesNearby: (eid) => {
+        const pos = this.ctx.pawnPositions.get(eid);
+        if (!pos) return false;
+        return this.ctx.hostiles.some((h) => {
+          if (h.enemyId !== 'cat') return false;
+          return (h.x - pos.x) ** 2 + (h.y - pos.y) ** 2 <= 25 * 25;
+        });
+      },
     };
     const ctx: CardContext = { view, eid };
     const pawnLike = { dna: st.dna, slots: st.slots };

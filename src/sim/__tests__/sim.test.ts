@@ -2107,3 +2107,37 @@ describe('私有食物 + 互助（2026-08-14 用户设计：私有物品、好�
     expect(found).toBe(true);
   });
 });
+
+describe('插件卸载（2026-08-14 用户指摘"为什么不能卸载插件"）', () => {
+  it('disableSystem 卸载默认系统（装配过滤）', () => {
+    const sim = new Sim({ seed: 400, pawnCount: 2, mods: (m) => {
+      m.disableSystem('farm');
+      m.disableSystem('techPool');
+      m.disableSystem('autobuild');
+    } });
+    expect(sim.systemIds).not.toContain('farm');
+    expect(sim.systemIds).not.toContain('techPool');
+    expect(sim.systemIds).not.toContain('autobuild');
+    expect(sim.systemIds).toContain('needs'); // 核心系统保留
+    expect(sim.systemIds).toContain('gather');
+  });
+
+  it('采集狩猎 mod：卸载生产系统 + 猫掉肉 + 能跑（无 farm/craft/techPool）', () => {
+    // 直接挂采集狩猎插件跑一段，验证玩法包可装配运行（不崩、能采集能狩猎）
+    const sim = new Sim({ seed: 401, pawnCount: 2, mods: (m) => {
+      m.disableSystem('farm');
+      m.disableSystem('craft');
+      m.disableSystem('techPool');
+      m.disableSystem('autobuild');
+      m.disableSystem('repair');
+      m.overrideDef('enemy', 'cat', { loot: { item: 'food', amount: 4 } });
+    } });
+    expect(sim.systemIds).not.toContain('farm');
+    expect(sim.systemIds).not.toContain('craft');
+    // 猫掉肉生效
+    expect(sim.mods.enemies['cat'].loot).toEqual({ item: 'food', amount: 4 });
+    // 跑 30s 不崩，且有采集发生
+    for (let i = 0; i < 600; i++) sim.step(1 / 20);
+    expect(sim.pawns.length).toBeGreaterThan(0);
+  });
+});

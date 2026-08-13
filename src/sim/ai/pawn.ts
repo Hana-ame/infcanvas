@@ -72,6 +72,8 @@ export interface CardView {
   // 互助探测（2026-08-14 互助卡）：返回附近值得帮的弱势邻人 eid（缺食/受伤/低落 + 我好感高）
   // null = 无值得帮的邻人。卡 condition 用它，execHelp 执行送食/陪伴/疗伤。
   helpTargetOf?(eid: number): number | null;
+  // 附近有猎物（采集狩猎 mod 的狩猎卡谓词）：索敌半径内存在可狩猎的猫
+  hostilesNearby?(eid: number): boolean;
 }
 
 export interface CardContext {

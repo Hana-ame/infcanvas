@@ -115,7 +115,13 @@ export class RaidSystem implements GameSystem {
         if (h.hp <= 0) {
           this.ctx.hostiles.splice(i, 1);
           const loot = h.loot ?? { item: this.ctx.tuning.combat.catLootItem, amount: this.ctx.tuning.combat.catLootAmount };
-          this.ctx.stockpile[loot.item] = (this.ctx.stockpile[loot.item] ?? 0) + loot.amount;
+          // 私有物品（2026-08-14）：猎物掉落食物 → 击杀者个人口袋（私有），其他仍全局
+          if (loot.item === 'food') {
+            const st = this.ctx.pawnStates.get(nearest);
+            if (st) st.inventory = { food: (st.inventory?.food ?? 0) + loot.amount };
+          } else {
+            this.ctx.stockpile[loot.item] = (this.ctx.stockpile[loot.item] ?? 0) + loot.amount;
+          }
           this.ctx.bus.emit({ type: 'resource_gained', eid: nearest, item: loot.item, amount: loot.amount });
           // 战斗结果反馈（EWA）：击杀战利品量 → fight 吸引力（被杀的小人已死，不需记录）
           this.ctx.recordOutcome(nearest, 'fight', loot.amount);

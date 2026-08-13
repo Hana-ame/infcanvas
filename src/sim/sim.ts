@@ -98,6 +98,7 @@ export interface PawnState {
   skills?: Partial<Record<SkillId, number>>; // COC 技能（百分制，越用越强）
   desires?: Record<DesireId, number>; // 七宗罪满足度（DESIGN §3）
   lastNeedRec?: number; // 需求写入篝火记忆的节流等级（needsSystem.recordNeed 用，防刷屏）
+  huntTarget?: { x: number; y: number }; // 狩猎目标猫位置（采集狩猎 mod 的 huntCombat 系统推进攻击）
   inventory?: Record<string, number>; // 个人私有物品（2026-08-14 用户设计：私有物品 + 真以物易物；
   // 当前实现仅食物私有化：主动采集的食入口袋，进食优先扣个人；木材/矿石仍走全局公共仓库）
   relationships?: Map<number, number>; // 对其他小人的好感度（社交系统）
@@ -302,14 +303,17 @@ export class Sim implements SimContext {
   }
 
   private registerSystems(): void {
-    // 数据驱动：系统装配表（defs/systems.ts）定义执行顺序，mod 声明项按 before 锚点插入
+    // 数据驱动：系统装配表（defs/systems.ts）定义执行顺序，mod 声明项按 before 锚点插入。
+    // 2026-08-14 用户指摘"为什么不能卸载插件"：mod 可 disableSystem(id) 卸载内置/扩展系统，
+    // 装配时跳过 → "只留采集狩猎"等玩法包能撤掉 farm/techPool/autobuild 等默认系统。
     const defs = [...SYSTEM_DEFS];
     for (const m of this.mods.systemDefs) {
       const idx = defs.findIndex((d) => d.id === m.before);
       if (m.before && idx >= 0) defs.splice(idx, 0, m);
       else defs.push(m);
     }
-    for (const def of defs) {
+    const enabled = defs.filter((d) => this.mods.isSystemEnabled(d.id));
+    for (const def of enabled) {
       const sys = def.ctor(this);
       this.registry.register(sys);
       // 回填核心实例：mod 行为/单位系统替换后，intent/work 注册与 bus 回调仍指向单例
