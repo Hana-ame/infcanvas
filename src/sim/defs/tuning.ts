@@ -308,6 +308,10 @@ export interface PawnTuning {
   maxSlotsRand: number;    // 卡槽随机增量（0..N）
   moodSpeedBase: number;   // 移动速度心情系数 = base + mood/100 × scale
   moodSpeedScale: number;
+  crowdingPenalty: number; // 拥挤惩罚（2026-08-16 用户反馈"鼠鼠挤同一路径"）：周围 ±1 格每多一只
+                           // 鼠 → 移速 ×(1-penalty)，floor 见下——多鼠同目标自然减速成队列（涌现式避让）
+  crowdingFloor: number;   // 拥挤速度系数下限（不许挤死，0.5 = 半速）
+  crowdStopGap: number;    // 目标格被占时停在格前的距离（排队：不叠格，等占位者离开再补位）
   skillIntFrom: number;    // 技能初始公式：INT 基准/除数
   skillIntDiv: number;
   skillEduFrom: number;    // EDU 基准/除数
@@ -744,6 +748,9 @@ export const TUNING: TuningConfig = {
     maxSlotsRand: 2,         // 卡槽随机增量
     moodSpeedBase: 0.6,      // 移动速度心情系数
     moodSpeedScale: 0.6,
+    crowdingPenalty: 0.14,    // 拥挤惩罚：±1 格每多一只鼠移速 ×0.86
+    crowdingFloor: 0.5,       // 拥挤速度下限（最多半速）
+    crowdStopGap: 0.45,       // 目标被占时停在格前 0.45 格排队
     skillIntFrom: 30,        // 技能初始公式（INT/EDU 基准与除数）
     skillIntDiv: 4,
     skillEduFrom: 30,

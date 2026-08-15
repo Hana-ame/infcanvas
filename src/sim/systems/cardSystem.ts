@@ -572,7 +572,11 @@ export class BehaviorSystem implements GameSystem {
     }
   }
 
-  // 沿 path 逐段移动（速度 × 心情系数 moodFactor，读 tuning.pawn）；走完全程 → onArrive
+  // 沿 path 逐段移动（速度 × 心情系数 moodFactor × 拥挤系数 crowdFactor，读 tuning.pawn）；
+  // 走完全程 → onArrive
+  // 拥挤惩罚（2026-08-16 用户反馈"鼠鼠挤同一路径"）：±1 格内其他鼠越多移速越慢（floor 钳制），
+  // 目标格被占时停在格前 crowdStopGap 排队不叠格——多鼠同目标自然减速成队列（涌现式避让，
+  // 零新增状态，只读 pawnPositions 快照）
   private walk(eid: number, st: PawnState, pos: { x: number; y: number }, dt: number): void {
     const target = st.path![st.pathIndex!];
     const dx = target.x - pos.x;
@@ -582,14 +586,40 @@ export class BehaviorSystem implements GameSystem {
     const nd = this.ctx.readNeeds(eid);
     const pw = this.ctx.tuning.pawn;
     const moodFactor = nd ? pw.moodSpeedBase + (nd.mood / 100) * pw.moodSpeedScale : 1;
-    const move = (sp?.v ?? pw.baseSpeed) * moodFactor * dt;
+    // 拥挤：统计 ±1 格外人（Chebyshev ≤1），每只 ×(1-penalty)，下限 crowdingFloor
+    let crowd = 1;
+    {
+      let d = 0;
+      for (const [oe, op] of this.ctx.pawnPositions) {
+        if (oe === eid) continue;
+        if (Math.abs(op.x - pos.x) <= 1 && Math.abs(op.y - pos.y) <= 1) d++;
+      }
+      if (d > 0) crowd = Math.max(pw.crowdingFloor, 1 - pw.crowdingPenalty * d);
+    }
+    const move = (sp?.v ?? pw.baseSpeed) * moodFactor * crowd * dt;
     if (dist <= move) {
-      pos.x = target.x;
-      pos.y = target.y;
-      st.pathIndex++;
-      if (st.pathIndex >= st.path!.length) {
-        st.path = [];
-        this.onArrive(eid, st);
+      // 目标格被他人占据：工作目标格（chop/mine/cave/heal/pray/onArriveWork）允许重叠作业
+      //（共同采集/挖掘不阻塞——排死会卡住生产，clothing 测试 30s 采不到 flax 即是此坑）；
+      // 纯移动目标（玩家 move 命令等无工作回执）则停在 gap 排队,等占位者离开再补位
+      const hasWork = !!(st.chopTarget ?? st.mineTarget ?? st.caveTarget ?? st.healTarget ?? st.prayTarget ?? st.onArriveWork);
+      let occupied = false;
+      for (const [oe, op] of this.ctx.pawnPositions) {
+        if (oe === eid) continue;
+        if (Math.hypot(op.x - target.x, op.y - target.y) < 0.5) { occupied = true; break; }
+      }
+      if (occupied && !hasWork && dist > pw.crowdStopGap) {
+        pos.x += (dx / dist) * pw.crowdStopGap;
+        pos.y += (dy / dist) * pw.crowdStopGap;
+      } else if (occupied && !hasWork) {
+        // 已贴身（≤gap）：原地等（对方让开才能 snap,否则一直贴着不叠）
+      } else {
+        pos.x = target.x;
+        pos.y = target.y;
+        st.pathIndex++;
+        if (st.pathIndex >= st.path!.length) {
+          st.path = [];
+          this.onArrive(eid, st);
+        }
       }
     } else {
       pos.x += (dx / dist) * move;
