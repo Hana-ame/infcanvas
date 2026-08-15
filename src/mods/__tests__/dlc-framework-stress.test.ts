@@ -1,11 +1,12 @@
-// DLC 框架压力测试（2026-08-16 用户点饼"以后要加大航海/一战/无线电/二战/飞天魔法/帝国/教国
-// 等 DLC，先试试现在加会不会搞坏框架"；用户指示：**就是单独的 DLC**——7 个占位包相互独立
+// DLC 框架压力测试（2026-08-16 用户点饼"以后要加大航海/一战/无线电/二战/飞天魔法/帝国/教国/
+// 2077 等 DLC，先试试现在加会不会搞坏框架"；用户指示：**就是单独的 DLC**——占位包相互独立
 // （requires 全空，无跨包依赖、无世界观缝合；此前自造的"帝国依赖大航海/教国依赖无线电/互斥"
 // 均已删除））——走真实玩法包装配面：系统（registerSystemDef + category + before 锚点）/ 命令 /
-// 卡 / 科技 / 建筑 / 物品 / 敌人 / 配方 / 策略卡。断言面：① 单包挂载不崩；② 七包乱序合挂
-// 33 系统组合步进不崩（清单顺序不承担图约束）；③ def 冲突被显式捕获（DLC 不能悄悄覆盖核心）；
+// 卡 / 科技 / 建筑 / 物品 / 敌人 / 配方 / 策略卡。断言面：① 单包挂载不崩；② 八包乱序合挂
+// 34 系统组合步进不崩（清单顺序不承担图约束）；③ def 冲突被显式捕获（DLC 不能悄悄覆盖核心）；
 // ④ 契约表不登记 DLC 命令 = 不误伤（validateContracts 零违规）；⑤ 卸载（不挂）= 默认装配零
-// 回归；⑥ DLC 系统与默认系统同一卸载语义（disableSystem 单独禁用一个 DLC 系统后仍可跑）。
+// 回归；⑥ DLC 系统与默认系统同一卸载语义（disableSystem 单独禁用一个 DLC 系统后仍可跑）；
+// ⑦ 2077 DLC（义体/斯安威斯坦/义体医生）注册面齐活 + before:'craft' 锚点插进 production 组。
 // DLC 全部内联于本测试（压力实验非生产功能；真实落地另行建包进 playstyle 清单）。
 import { describe, it, expect } from 'vitest';
 import { Sim } from '../../sim/sim';
@@ -16,7 +17,7 @@ import type { ModPack } from '../pack';
 // 合法最小占位系统 ctor（注册 + 步进都需要 id/update——裸对象能注册但 step 会炸，踩坑）
 const stubSys = (id: string) => (): never => ({ id, update: () => {} }) as never;
 
-describe('DLC 框架压力测试（大航海/一战/无线电/二战/飞天魔法/帝国/教国 独立占位包）', () => {
+describe('DLC 框架压力测试（大航海/一战/无线电/二战/飞天魔法/帝国/教国/2077 独立占位包）', () => {
   it('① 单 DLC 挂载：默认 26 系统 +1，装配/步进不崩，内核 behavior 不变，命令可用', () => {
     const m = ModRegistry.default();
     expect(m.systemDefs.length).toBe(25); // 注册面：25 个插件系统（behavior 内联内核表，不入 _systemDefs）
@@ -31,12 +32,12 @@ describe('DLC 框架压力测试（大航海/一战/无线电/二战/飞天魔�
     expect(sim.events.some((e) => e.text.includes('升帆远航'))).toBe(true);
   });
 
-  it('② 七独立 DLC 乱序同时挂：33 系统组合步进不崩（requires 全空 = 清单顺序不承担图约束）', () => {
+  it('② 八独立 DLC 乱序同时挂：34 系统组合步进不崩（requires 全空 = 清单顺序不承担图约束）', () => {
     const m = ModRegistry.default();
     // 预登记目录（消费面同 playstyleManager：先 registerPack 全清单，再 mount 聚合/单个——requires
     // 挂在全局包目录上；独立包 requires 全空，乱序挂载天然安全）
-    for (const p of [dlcAgeOfSail(), dlcWw1(), dlcRadio(), dlcWw2(), dlcSkyMagic(), dlcEmpire(), dlcTheocracy()]) m.registerPack(p);
-    // 乱序挂（7 个相互独立，无依赖可拉齐——验证任意序合挂正确）
+    for (const p of [dlcAgeOfSail(), dlcWw1(), dlcRadio(), dlcWw2(), dlcSkyMagic(), dlcEmpire(), dlcTheocracy(), dlcCyberpunk()]) m.registerPack(p);
+    // 乱序挂（8 个相互独立，无依赖可拉齐——验证任意序合挂正确）
     m.mount(dlcWw2());
     m.mount(dlcSkyMagic());
     m.mount(dlcRadio());
@@ -44,12 +45,13 @@ describe('DLC 框架压力测试（大航海/一战/无线电/二战/飞天魔�
     m.mount(dlcWw1());
     m.mount(dlcEmpire());
     m.mount(dlcTheocracy());
+    m.mount(dlcCyberpunk());
     const sim = new Sim({ seed: 53, pawnCount: 2, registry: m });
-    for (const id of ['dlc:sail', 'dlc:ww1', 'dlc:radio', 'dlc:ww2', 'dlc:sky', 'dlc:empire', 'dlc:church']) {
+    for (const id of ['dlc:sail', 'dlc:ww1', 'dlc:radio', 'dlc:ww2', 'dlc:sky', 'dlc:empire', 'dlc:church', 'dlc:cyber']) {
       expect(sim.systemIds).toContain(id);
     }
-    expect(sim.systemIds).toHaveLength(26 + 7);
-    for (const pid of ['dlc-ww1', 'dlc-radio', 'dlc-ww2', 'dlc-sky-magic', 'dlc-age-of-sail', 'dlc-empire', 'dlc-theocracy']) {
+    expect(sim.systemIds).toHaveLength(26 + 8);
+    for (const pid of ['dlc-ww1', 'dlc-radio', 'dlc-ww2', 'dlc-sky-magic', 'dlc-age-of-sail', 'dlc-empire', 'dlc-theocracy', 'dlc-2077']) {
       expect(m.packIds).toContain(pid);
     }
     for (let i = 0; i < 180; i++) sim.step(0.5); // 组合步进不崩
@@ -110,6 +112,29 @@ describe('DLC 框架压力测试（大航海/一战/无线电/二战/飞天魔�
     // 禁用只影响装配：命令处理器仍随包在场（命令契约语义：处理器随包不随系统卸载——见 contracts.ts）
     expect(m.commandHandlers.has('trench')).toBe(true);
     expect(m.commandHandlers.has('radio-call')).toBe(true);
+  });
+
+  it('⑦ 2077 DLC 单挂：义体/斯安威斯坦/义体医生诊所注册面齐活，命令可用，before:craft 锚点插进 production 组', () => {
+    const m = ModRegistry.default();
+    m.mount(dlcCyberpunk());
+    const sim = new Sim({ seed: 57, pawnCount: 2, registry: m });
+    expect(sim.systemIds).toContain('dlc:cyber');
+    expect(sim.systemIds).toHaveLength(26 + 1);
+    // 义体内容注册面：斯安威斯坦物品 / 义体医生诊所建筑 / 义体强化令策略卡 / 命令
+    expect(m.items['dlc:sandevistan']).toBeTruthy();
+    expect(m.items['dlc:sandevistan']!.name).toContain('斯安威斯坦');
+    expect(m.buildings['dlc:ripperdoc']).toBeTruthy();
+    expect(m.strategyCards.some((c) => c.id === 'dlc:chrome-up')).toBe(true);
+    expect(m.commandHandlers.has('install-cyber')).toBe(true);
+    sim.issueCommand({ type: 'install-cyber', x: 0, y: 0 });
+    expect(sim.events.some((e) => e.text.includes('义体'))).toBe(true);
+    for (let i = 0; i < 120; i++) sim.step(1);
+    // before:'craft' 锚点：dlc:cyber 插进 production 组内（craft 之前），而非表尾（bootstrap 之后）——
+    // 表外系统用 before 锚点插位（sim.registerSystems 兜底循环），此前只在 raid（ww1/ww2）验证过
+    const ci = sim.systemIds.indexOf('dlc:cyber');
+    expect(sim.systemIds.indexOf('craft')).toBeGreaterThan(ci);
+    expect(sim.systemIds.indexOf('bootstrap')).toBeGreaterThan(ci);
+    expect(sim.systemIds.indexOf('needs')).toBeLessThan(ci); // production 组在 needs 类之后
   });
 });
 
@@ -190,6 +215,24 @@ function dlcTheocracy(): ModPack {
       m.registerSystemDef({ id: 'dlc:church', label: '教国', category: 'world', ctor: stubSys('dlc:church') });
       m.registerCommand('convert', (ctx) => { ctx.logEvent('⛪ 传教布道（占位）'); });
       m.registerStrategyCard({ id: 'dlc:crusade', label: '圣战令', action: 'walkAndWork', workType: 'hunt', duration: 90, weight: 8, condition: { kind: 'always' }, reason: '占位' });
+    },
+  };
+}
+
+function dlcCyberpunk(): ModPack {
+  return {
+    id: 'dlc-2077', name: '赛博朋克 2077 DLC（占位）', requires: [], // 独立包
+    apply(m: ModRegistry): void {
+      // 义体系统塞进 production 组（craft 之前）：义体改装与手工/生产同期——锚点插位
+      // （表外系统 before 语法，sim.registerSystems 兜底循环消费）
+      m.registerSystemDef({ id: 'dlc:cyber', label: '义体改造', category: 'production', before: 'craft', ctor: stubSys('dlc:cyber') });
+      m.registerCommand('install-cyber', (ctx) => { ctx.logEvent('🦾 植入义体（占位）'); });
+      // 义体内容：斯安威斯坦（Sandevistan 神经反应加速义体，meta 由本包声明/自行读取——ItemDef.meta 通用容器）
+      m.registerItem({ id: 'dlc:sandevistan', name: '斯安威斯坦（义体：神经反应加速）', desc: '占位', category: 'implant', meta: { cyber: true, reflex: 2 } } as never);
+      m.registerBuilding({ id: 'dlc:ripperdoc', name: '义体医生诊所', size: { x: 1, y: 1 }, hp: 60, color: '#ff5233', passable: false, buildTime: 30, meta: { cyber: 'clinic' } } as never);
+      m.registerTech({ id: 'dlc:chrome', name: '义体技术', desc: '占位', unlocks: ['dlc:ripperdoc'] });
+      m.registerStrategyCard({ id: 'dlc:chrome-up', label: '义体强化令', action: 'walkAndWork', workType: 'build', duration: 90, weight: 8, condition: { kind: 'always' }, reason: '占位' });
+      m.registerEnemy({ id: 'dlc:dron', name: '巡逻无人机（占位）', hp: 30, damage: 5, speed: 1.2 } as never);
     },
   };
 }
