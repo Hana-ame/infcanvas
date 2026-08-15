@@ -66,6 +66,20 @@ function injectStyle(): void {
 .hud-chip{border-radius:5px;padding:2px 7px;font:11px system-ui;margin-right:4px;}
 .hud-jobrow{display:flex;gap:4px;flex-wrap:wrap;margin:4px 0;}
 .hud-tag{font-size:11px;}
+/* RW-1 Work Tab（工作优先级，2026-08-15）：紧凑表格——行=小人、列=工作（JOBS 表数据驱动）；
+   单元格按钮 = 优先级，点击循环 空白→1→2→3→4→0→空白；1 最强（绿色）→ 0 禁止（红叉） */
+.hud-work{margin-top:6px;border-collapse:collapse;}
+.hud-work td,.hud-work th{border:1px solid #333;padding:1px 3px;font-size:10px;text-align:center;min-width:26px;}
+.hud-work th{color:#aaa;background:rgba(255,255,255,.04);}
+.hud-work .pawn{color:#4cf;text-align:left;padding:1px 6px;}
+.hud-work button{width:100%;min-height:18px;border:0;background:transparent;color:#888;cursor:pointer;font-size:11px;}
+.hud-work button:hover{background:rgba(255,255,255,.1);}
+.hud-work .p1{color:#7cffa0;font-weight:bold;}
+.hud-work .p2{color:#c8ff7c;}
+.hud-work .p3{color:#ffe08a;}
+.hud-work .p4{color:#ffcaa0;}
+.hud-work .p0{color:#ff6b6b;text-decoration:line-through;}
+.hud-work .rowsel{background:rgba(76,204,255,.12);}
 `;
   document.head.appendChild(st);
 }
@@ -353,7 +367,9 @@ export function createHud(
   facBtn.innerHTML = `${icon('factions')} 派系`;
   const techBtn = document.createElement('button');
   techBtn.innerHTML = `${icon('card')} 科技`;
-  centerBtns.append(helpBtn, histBtn, facBtn, techBtn);
+  const workBtn = document.createElement('button');
+  workBtn.innerHTML = `${icon('tools')} 工作`; // 工具图标 = 工作优先级面板入口（HUD_SVG 无 work，回退 tools）
+  centerBtns.append(helpBtn, histBtn, facBtn, techBtn, workBtn);
   root.appendChild(centerBtns);
 
   const helpPanel = document.createElement('div');
@@ -403,6 +419,27 @@ export function createHud(
   histBtn.addEventListener('click', () => toggle(histPanel));
   facBtn.addEventListener('click', () => toggle(facPanel));
   techBtn.addEventListener('click', () => toggle(techPanel));
+  // RW-1 Work Tab（工作优先级，2026-08-15）：点击单元格循环优先级并下发命令。
+  // 行 = 小人、列 = JOBS 表工作；与事件委托面板同级（innerHTML 重建不丢委托点击）。
+  const workPanel = document.createElement('div');
+  workPanel.className = 'hud-pop';
+  workPanel.style.maxWidth = '560px';
+  workPanel.style.maxHeight = '70vh';
+  root.appendChild(workPanel);
+  panels.push(workPanel);
+  workBtn.addEventListener('click', () => toggle(workPanel));
+  // 单元格点击委托：data-wjob=工作 id、data-weid=小人 eid → 循环优先级并下发命令
+  workPanel.addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-wjob]');
+    if (!btn) return;
+    const eid = Number(btn.dataset.weid);
+    const job = btn.dataset.wjob!;
+    const p = sim.pawnProfile(eid);
+    if (!p || !(job in JOBS)) return;
+    const cur = p.workPriorities?.[job]; // undefined = 空白（未设置/自主）
+    const next = cur === undefined ? 1 : cur === 1 ? 2 : cur === 2 ? 3 : cur === 3 ? 4 : cur === 4 ? 0 : undefined;
+    sim.issueCommand({ type: 'set-work-priority', x: 0, y: 0, pawnId: eid, job, args: { priority: next } });
+  });
   const togglePanel = (name: 'helpToggle' | 'historyToggle' | 'factionToggle' | 'techsToggle'): void => {
     const map = { helpToggle: helpPanel, historyToggle: histPanel, factionToggle: facPanel, techsToggle: techPanel } as const;
     toggle(map[name]);
@@ -540,6 +577,28 @@ export function createHud(
         (lockedBuildings.length > 0 ? `<br><b>🔒 未解锁建造：</b>${lockedBuildings.join('、')}` : '');
     }
 
+    // 🗂 Work Tab（RW-1 工作优先级，2026-08-15）：行=小人、列=JOBS 表工作数据驱动。
+    // 每帧重建表格（纯文本 + data 属性按钮，点击走委托）；仅显示时重建省开销。
+    if (workPanel.style.display === 'block') {
+      const jobIds = Object.keys(JOBS) as string[];
+      const html = `<b>🗂 工作优先级（工作面板）</b> ` +
+        `<span style="color:#888">点击单元格循环：空白(自动)→1(最高)→2→3→4→0(禁止)→空白；<br>紧急需求（吃/睡/治疗/理智）优先于一切工作优先级</span><br>` +
+        `<table class="hud-work"><tr><th>小人</th>${jobIds.map((j) => `<th>${JOBS[j].label}</th>`).join('')}</tr>` +
+        sim.pawns.map((eid) => {
+          const p = sim.pawnProfile(eid);
+          if (!p) return '';
+          const cls = sim.selectedIds.includes(eid) ? 'rowsel' : '';
+          const cells = jobIds.map((j) => {
+            const v = p.workPriorities?.[j];
+            const label = v === undefined ? '' : String(v);
+            const pcls = v === undefined ? '' : `p${v}`;
+            return `<td><button data-wjob="${j}" data-weid="${eid}" class="${pcls}" title="${JOBS[j].label}">${label}</button></td>`;
+          }).join('');
+          return `<tr class="${cls}"><td class="pawn">#${eid}</td>${cells}</tr>`;
+        }).join('') + `</table>`;
+      workPanel.innerHTML = html;
+    }
+
     const sel = sim.selectedIds;
     if (sel.length > 0) {
       const eid = sel[0];
@@ -574,7 +633,22 @@ export function createHud(
         selTitle.innerHTML =
           `<b>${pawnIcon(p.dna.traits)} 小人 ${eid}</b> (${Math.round(p.pos.x)},${Math.round(p.pos.y)})<br>` +
           `<span style="color:#4cf">工作：${p.job || '闲逛'}</span>` +
-          (p.assignedJob ? `<br><span style="color:#9cf">指派：${jobLabelOf(p.assignedJob)}</span>` : '');
+          (p.assignedJob ? `<br><span style="color:#9cf">指派：${jobLabelOf(p.assignedJob)}</span>` : '') +
+          // RW-1 工作优先级摘要（数据驱动 JOBS 表）：列出已设置项，全部未设置 = 全自动
+          (() => {
+            const wp = p.workPriorities;
+            const set = wp && Object.keys(wp).length > 0
+              ? Object.entries(wp).filter(([, v]) => v !== undefined && v !== 0)
+                .map(([j, v]) => `${JOBS[j]?.label ?? j}${v}`).join('、')
+              : '';
+            const forbidden = wp && Object.keys(wp).length > 0
+              ? Object.entries(wp).filter(([, v]) => v === 0).map(([j]) => JOBS[j]?.label ?? j).join('、')
+              : '';
+            return (set || forbidden)
+              ? `<br><span style="color:#caa">优先级：${set || '—'}</span>` +
+                (forbidden ? `<br><span style="color:#f77">禁止：${forbidden}</span>` : '')
+              : `<br><span style="color:#888">工作优先级：全自动</span>`;
+          })();
         selBody.innerHTML =
           `HP ${nf(hk?.hp)}/${nf(hk?.maxHp)} · 信仰 ${nf(p.faith)}<br>` +
           `STR ${p.dna.str} · CON ${p.dna.con} · SIZ ${p.dna.siz} · DEX ${p.dna.dex}<br>` +

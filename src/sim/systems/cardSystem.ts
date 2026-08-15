@@ -12,6 +12,8 @@ import { drawCards, pickBest, BASE_CARDS } from '../ai/pawn';
 import { JOB_CARD, JOBS } from '../defs/jobs';
 import { BUILTIN_INTENTS, BUILTIN_WORKS } from '../defs/executors';
 import { fulfill } from '../core/desires';
+// RW-1 工作优先级：decide 把 pawn.extra[K_WORK_PRIORITIES] 暴露给权重规则（跨包键走常量）
+import { K_WORK_PRIORITIES } from '../mods/contracts';
 
 // 意图执行器：mod 可注册新意图
 export type IntentExecutor = (ctx: SimContext, eid: number, st: PawnState, intent: BehaviorIntent) => void;
@@ -154,6 +156,9 @@ export class BehaviorSystem implements GameSystem {
       oracleGoal: this.ctx.oracleGoal,
       techs: this.ctx.techs,
       assignedJob: st.assignedJob,
+      // RW-1 工作优先级：把 pawn 的优先级（extra[K_WORK_PRIORITIES]）暴露给权重规则。
+      // 缺省 undefined（全自动）→ workPriority 规则不改动权重，兼容未设置的小人。
+      workPriorities: (st.extra?.[K_WORK_PRIORITIES] as Record<string, number> | undefined),
       leanOf: (e, k) => this.ctx.leanOf(e, k),
       expectEarnOf: (e, workType) => this.ctx.pawnStates.get(e)?.expectEarnBy?.[workType] ?? 0,
       buildQueueCount: this.ctx.buildQueue.length,

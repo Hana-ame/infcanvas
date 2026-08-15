@@ -36,6 +36,10 @@ export interface SimViewPawn {
   expectEarn?: number;  // 个人经济预期：工作赚（滚动平均）
   expectSpend?: number; // 个人经济预期：花费花（滚动平均）
   lastDecision?: { drawn: string[]; picked: string; time: number };
+  // RW-1（2026-08-15）：工作优先级 + 征召（协议透传自 server pawn.extra）。缺省 = 全自动/
+  // 未征召——HUD Work Tab / 征召按钮据此渲染（本地与远程共用同一 SimViewPawn 契约）。
+  workPriorities?: Record<string, number>;
+  drafted?: boolean;
 }
 
 export interface SimViewUnit {
@@ -451,6 +455,10 @@ export class RemoteSim {
         // pawnCache.worn 不更新，染色 tint 等 5s 全量对账才刷新；'' = 脱衣（协议归一），
         // || undefined 归一为空 —— wornOf 返回值统一（snapshot/delta 无穿着都是 undefined））
         if (pd.worn !== undefined) merged.worn = pd.worn || undefined;
+        // RW-1（2026-08-15）：工作优先级与征召 delta 合并。workPriorities 在 diff 归一为
+        // {}（= 清除全部回到自动），客户端按"收到即更新"（空对象 = 自动）；drafted 标量。
+        if (pd.workPriorities !== undefined) merged.workPriorities = pd.workPriorities;
+        if (pd.drafted !== undefined) merged.drafted = pd.drafted;
         this.pawnCache.set(pd.eid, merged);
         if (pd.x !== undefined && pd.y !== undefined) this.pawnPositions.set(pd.eid, { x: pd.x, y: pd.y });
         if (!old) pawnListChanged = true;
@@ -512,6 +520,8 @@ export class RemoteSim {
       skills: p.skills,
       desires: p.desires,
       lastDecision: p.lastDecision,
+      workPriorities: p.workPriorities,
+      drafted: p.drafted === true, // 归一 boolean（协议缺省 = 未征召）
     };
   }
 

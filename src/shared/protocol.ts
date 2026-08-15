@@ -57,6 +57,9 @@ export interface SnapshotMsg {
     lastDecision?: { drawn: string[]; picked: string; time: number };
     worn?: string; // 穿着衣物物品 id（clothing 玩法包 2026-08-15：客户端染色 tint 用；
     //   空串 "" = 无穿着——2026-08-15 审计：undefined 会被 JSON.stringify 丢弃，delta 无法表达"脱下"）
+    workPriorities?: Record<string, number>; // RW-1 工作优先级（work-priority 包）：
+    //   jobId → 0|1|2|3|4（缺省/空 = 全自动）。不值语义特殊，缺省缺键 = 未设置。
+    drafted?: boolean; // RW-1 征召（drafting 包）：true = 征召中（不自主决策）。缺省 = 未征召
   }[];
   hostiles: { i: number; enemyId?: string; x: number; y: number; hp: number; maxHp: number; faction?: string }[];
   buildings: { key: number; defId: string; x: number; y: number; hp: number; maxHp: number; faction: string; footprint: { x: number; y: number }[] }[];
@@ -94,6 +97,8 @@ export interface DeltaMsg {
     desires?: Record<string, number>;
     lastDecision?: { drawn: string[]; picked: string; time: number };
     worn?: string;      // 穿着衣物（同 SnapshotMsg）
+    workPriorities?: Record<string, number>; // RW-1 工作优先级（同 SnapshotMsg；缺省 = 未设置）
+    drafted?: boolean;  // RW-1 征召（同 SnapshotMsg；缺省 = 未征召）
     removed?: boolean;      // pawn 消失（死亡/重生）
   }[];
   // pawn 集合整体变化（增/删）时带全量列表，client 据此重建 pawns 顺序

@@ -27,7 +27,7 @@ export function buildDelta(prev: SnapshotMsg | null, cur: SnapshotMsg): DeltaMsg
   const pawns: NonNullable<DeltaMsg['pawns']> = [];
   for (const p of cur.pawns) {
     const old = prevPawns.get(p.eid);
-    if (!old) { pawns.push({ eid: p.eid, x: p.x, y: p.y, attrs: p.attrs, hp: p.hp, maxHp: p.maxHp, job: p.job, needs: p.needs, faith: p.faith, skills: p.skills, traits: p.traits, maxSlots: p.maxSlots, slots: p.slots, desires: p.desires, lastDecision: p.lastDecision, worn: p.worn ?? '' }); any = true; continue; }
+    if (!old) { pawns.push({ eid: p.eid, x: p.x, y: p.y, attrs: p.attrs, hp: p.hp, maxHp: p.maxHp, job: p.job, needs: p.needs, faith: p.faith, skills: p.skills, traits: p.traits, maxSlots: p.maxSlots, slots: p.slots, desires: p.desires, lastDecision: p.lastDecision, worn: p.worn ?? '', workPriorities: p.workPriorities, drafted: p.drafted }); any = true; continue; }
     const pd: NonNullable<DeltaMsg['pawns']>[number] = { eid: p.eid };
     let ch = false;
     if (old.x !== p.x || old.y !== p.y) { pd.x = p.x; pd.y = p.y; ch = true; }
@@ -46,6 +46,10 @@ export function buildDelta(prev: SnapshotMsg | null, cur: SnapshotMsg): DeltaMsg
     // worn 归一 ''（2026-08-15 审计：旧值 undefined → JSON.stringify 丢字段，客户端
     // 无法区分"没发"与"脱下"→ 脱衣 delta 无效、tint 不刷新。'' = 协议显式"无穿着"）
     if ((old.worn ?? '') !== (p.worn ?? '')) { pd.worn = p.worn ?? ''; ch = true; } // 穿着衣物变化（clothing 玩法包）
+    // RW-1（2026-08-15）：工作优先级（workPriorities 小对象整体 diff）与征召（drafted 标量）。
+    // 缺省 undefined 与空对象/未征召视为等同——只在值实际变化时下发（带宽 + 旧客户端兼容）。
+    if (!sameObj(old.workPriorities ?? {}, p.workPriorities ?? {})) { pd.workPriorities = p.workPriorities ?? {}; ch = true; }
+    if ((old.drafted ?? false) !== (p.drafted ?? false)) { pd.drafted = p.drafted ?? false; ch = true; }
     if (ch) { pawns.push(pd); any = true; }
   }
   for (const eid of prevPawns.keys()) {

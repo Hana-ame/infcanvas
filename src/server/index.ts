@@ -9,7 +9,7 @@ import { ModRegistry } from '../sim/mods/registry';
 import { loadModsFromDir } from './modManager';
 import { makeDummyCardPlanner } from './dummyLlm';
 import type { Command } from '../sim/sim';
-import { K_WORN, K_WEARABLE } from '../sim/mods/contracts';
+import { K_WORN, K_WEARABLE, K_WORK_PRIORITIES, K_DRAFTED } from '../sim/mods/contracts';
 import { makeLlmProvider } from './llm';
 import { buildDelta } from './diff';
 import { validateCommand, allowRate, type CmdGuardState } from './cmdValidate';
@@ -137,6 +137,11 @@ function buildSnapshot(): SnapshotMsg {
       // 穿着衣物（clothing 玩法包：协议 worn 字段 = PawnState.extra.worn.body，客户端染色 tint；
       // '' 归一 = 无穿着（2026-08-15 审计：undefined 经 JSON.stringify 丢字段 → delta 无法表达"脱下"））
       worn: (sim.pawnStates.get(eid)?.extra?.[K_WORN] as { body?: string } | undefined)?.body ?? '',
+      // RW-1（2026-08-15）：工作优先级（work-priority 包）与征召（drafting 包）经协议下发。
+      // 两者都从 extra（存档扩展点，随档）读取；缺省 undefined = 全自动/未征召（旧客户端/旧档
+      // 安全——协议新增字段全可选，旧客户端忽略未知字段不崩）。
+      workPriorities: (sim.pawnStates.get(eid)?.extra?.[K_WORK_PRIORITIES] as Record<string, number> | undefined) ?? undefined,
+      drafted: sim.pawnStates.get(eid)?.extra?.[K_DRAFTED] === true || undefined,
     });
   }
   const hostiles: SnapshotMsg['hostiles'] = sim.hostiles.map((h, i) => ({

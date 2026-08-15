@@ -7,6 +7,7 @@
 import type { Sim } from '../sim/sim';
 import { JOB_CARD } from '../sim/ai/pawn';
 import { MAX_TILE } from '../sim/core/world';
+import { WORK_PRIORITY_ALLOWED } from '../mods/packs/work-priority';
 
 export interface CmdGuardState {
   lastCmdAt: number;
@@ -53,6 +54,17 @@ export function validateCommand(sim: Sim, raw: unknown, guard: CmdGuardState, no
   }
   if (c.type === 'assign') {
     if (c.job !== '' && !(typeof c.job === 'string' && c.job in JOB_CARD)) return fail('unknown job');
+    return { ok: true };
+  }
+  // RW-1 M1 set-work-priority：job ∈ JOBS、priority ∈ 0..4（缺省 = 清除为未设置）。priority
+  // 走 args 通用位（commands 协议开放，见 work-priority.ts）；合法集共用 WORK_PRIORITY_ALLOWED。
+  if (c.type === 'set-work-priority') {
+    if (!(typeof c.job === 'string' && c.job in JOB_CARD)) return fail('unknown job');
+    const a = (c.args ?? {}) as Record<string, unknown>;
+    const pv = a.priority;
+    if (pv !== undefined && !WORK_PRIORITY_ALLOWED.includes(pv as (typeof WORK_PRIORITY_ALLOWED)[number])) {
+      return fail(`priority must be 0..4 or undefined`);
+    }
     return { ok: true };
   }
   // move/mine：坐标类命令强制合法坐标 + 显式 pawnId（观察模式 server 无 selected 镜像，
