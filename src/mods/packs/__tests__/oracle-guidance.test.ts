@@ -12,6 +12,16 @@ import { weightRulesOf } from '../../../sim/mods/query';
 import { buildDelta } from '../../../server/diff';
 import type { SnapshotMsg } from '../../../shared/protocol';
 import { validateCommand, type CmdGuardState } from '../../../server/cmdValidate';
+import { TILES, BUILDINGS, ITEMS } from '../../../sim/defs';
+import { TUNING } from '../../../sim/defs/tuning';
+import { ENEMIES } from '../../../sim/defs/enemies';
+import { RECIPES } from '../../../sim/defs/recipes';
+import { BASE_CARDS } from '../../../sim/ai/pawn';
+import { STRATEGY_CARDS } from '../../../sim/defs/strategyCards';
+import { TECHS } from '../../../sim/defs/techs';
+import { validateContracts } from '../../../sim/mods/contracts';
+import { DEFAULT_PLAYSTYLE_PACKS, PLAYSTYLE_PACKS } from '../playstyle';
+import type { ModPack } from '../../../mods/pack';
 
 function makeSim(seed = 52, pawnCount = 2): Sim {
   return new Sim({ seed, pawnCount, registry: ModRegistry.default() });
@@ -31,6 +41,34 @@ function issue(sim: Sim, cardId: string, pawnId?: number): void {
 
 function queueCount(sim: Sim, defId: string): number {
   return sim.buildQueueItems.filter((b) => b.defId === defId).length;
+}
+
+// 无 oracle-guidance 的装配（卸载安全测试）：default() 同款数据种子 + 自定义管理器，
+// 清单 = DEFAULT_PLAYSTYLE_PACKS 去掉 oracle-guidance（命令/卡随包走，无内核残留）。
+function seededWithoutOracle(): ModRegistry {
+  const r = new ModRegistry({
+    tiles: TILES, buildings: BUILDINGS, items: ITEMS, enemies: ENEMIES,
+    cards: BASE_CARDS, recipes: RECIPES, tuning: TUNING, intents: [], works: [],
+  });
+  for (const c of STRATEGY_CARDS) r.registerStrategyCard(c);
+  for (const techId of Object.keys(TECHS)) r.registerTech(TECHS[techId]);
+  const list = DEFAULT_PLAYSTYLE_PACKS.filter((p) => p !== 'oracle-guidance');
+  const mgr: ModPack = {
+    id: 'test-manager-no-oracle',
+    apply(m: ModRegistry): void {
+      for (const id of list) {
+        const pack = PLAYSTYLE_PACKS[id];
+        if (!pack) throw new Error(`mod: 测试清单引用了未登记包 "${id}"`);
+        m.registerPack(pack);
+      }
+      const agg: ModPack = { id: 'test-agg-no-oracle', requires: list, apply() {} };
+      m.mount(agg); // 拓扑序拉齐（与默认管理器同法）
+      const violations = validateContracts(m);
+      if (violations.length > 0) throw new Error(violations.join('\n'));
+    },
+  };
+  r.mount(mgr);
+  return r;
 }
 
 describe('oracle-guidance 玩法包（神谕卡式工作引导，RW-1 M1 修订）', () => {
@@ -196,6 +234,45 @@ describe('oracle-guidance 玩法包（神谕卡式工作引导，RW-1 M1 修订�
     issue(sim, 'oracle:chop');
     expect(cardIn(e1)).toBe(false);
     expect(sim.pawnStates.get(e1)!.slots.some((c) => c?.id === 'strategy:oracle:chop')).toBe(false);
+  });
+
+  it('⑨ 卸载安全：清单无 oracle-guidance → Sim 正常装配/步进，命令与扩展卡随包消失', () => {
+    const sim = new Sim({ seed: 62, pawnCount: 2, registry: seededWithoutOracle() });
+    expect(sim.mods.packIds).not.toContain('oracle-guidance');
+    // 命令/卡都随包：无 strategy 处理器、无伐木令/采矿令（扩展卡不残留全局表）
+    expect(sim.mods.commandHandlers.has('strategy')).toBe(false);
+    const ids = sim.mods.strategyCards.map((c) => c.id);
+    expect(ids).not.toContain('oracle:chop');
+    expect(ids).not.toContain('oracle:mine');
+    expect(ids).toContain('oracle:till'); // 内置策略卡照常（注册表数据层，与包无关）
+    for (let i = 0; i < 60; i++) sim.step(1 / 20); // 装配 + 步进不崩
+    // 无处理器 → issueCommand no-op 不抛（引擎对未知命令只记 feed，无内核残留消费方）
+    expect(() => sim.issueCommand({ type: 'strategy', x: 0, y: 0, pawnId: sim.pawns[0], args: { cardId: 'oracle:chop' } }))
+      .not.toThrow();
+    expect(sim.oracleGoal).toBeNull();
+  });
+
+  it('⑩ 旧档兼容：含被撤回 workPriorities 残留键的旧档可加载（extra 透传，无迁移钩子）', () => {
+    const sim = makeSim(63, 1);
+    const e0 = sim.pawns[0];
+    sim.issueCommand({ type: 'draft', x: 0, y: 0, pawnId: e0, args: { drafted: true } }); // M2 共存键随档
+    issue(sim, 'oracle:till', e0);
+    for (let i = 0; i < 20; i++) sim.step(1 / 20);
+    const saved = sim.save();
+    // 模拟 M1 时代旧档：向 pawn.extra 注入已被撤回的 workPriorities 键（旧存档可能带）
+    const json = JSON.parse(JSON.stringify(saved)) as { pawns: Array<Record<string, unknown>> };
+    const p = json.pawns.find((q) => q.eid === e0)!;
+    const extra = (p.extra ?? {}) as Record<string, unknown>;
+    extra.workPriorities = { chop: 1, mine: 0 };
+    p.extra = extra;
+    const simB = makeSim(64, 1);
+    expect(() => simB.load(json as never)).not.toThrow(); // 旧档可加载（extra 透传，无迁移钩子）
+    const stB = simB.pawnStates.get(simB.pawns[0])!; // 加载后 pawn 列表按存档重建，eid 以 simB 为准
+    expect(stB.extra?.['workPriorities']).toEqual({ chop: 1, mine: 0 }); // 残留键原样透传（无害，无消费方）
+    expect(stB.extra?.['drafted']).toBe(true); // 共存键（M2 征召）一并保留
+    // 读档后决策循环照跑（残留键不被读取 → 无副作用）
+    for (let i = 0; i < 120; i++) simB.step(1 / 20);
+    expect(simB.pawnList.length).toBeGreaterThan(0);
   });
 });
 
