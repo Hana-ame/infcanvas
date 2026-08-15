@@ -63,6 +63,8 @@ export interface SimContext {
   fragmentsNeeded(techId: string): number; // 该科技所需碎片总数（def.fragments ?? 1）
   oracleGoal: { workType: string; label: string; until: number } | null; // 神谕目标（影响目标层）
   // 神谕设定目标（策略卡 = 神谕目标：只调制工作系列权重 ×oracleGoalMul，不插小人卡槽、不碰选择链）
+  // 2026-08-16 更名：不再叫"神谕"——它就是卡池影响项（调工作权重,不裁决、不发布）。
+  // 内部标识 oracle* 与命令 type 'oracle' 保留（协议/存档/远程兼容），人类可见面已改"策略卡"。
   setOracleGoal(def: { workType?: string; label: string; duration: number }): void;
   // 印卡 API（RW-1 M1 修订，2026-08-15 加入接口）：策略卡/习惯卡插入小人槽位（空槽优先、
   // 满则顶掉 weight 最低卡），插入后仍走抽 3 选 1 卡池。Sim 早已实现（LLM 印卡通道，

@@ -191,7 +191,7 @@ export function createHud(
     btn.innerHTML = `${buildIcon(d)} ${d.name}${locked ? ' 🔒' : ''}`;
     if (locked) {
       btn.disabled = true;
-      btn.title = `需科技：${d.tech}（神谕抽卡解锁）`;
+      btn.title = `需科技：${d.tech}（科技抽卡解锁）`;
       btn.style.opacity = '0.45';
     }
     groups.get(buildGroup(d.tags))!.appendChild(btn);
@@ -275,7 +275,7 @@ export function createHud(
         <div id="selJobs" class="hud-jobrow"></div>
         <div id="selDraft" class="hud-jobrow" style="margin-top:4px;"></div>
         <div id="selWear" class="hud-jobrow" style="margin-top:4px;"></div>
-        <div id="selOracle" style="display:none;"><button data-act="oracle" style="border-color:#a07ac0;background:#5a3a6a;">${icon('oracle')} 发布神谕</button></div>
+        <div id="selOracle" style="display:none;"><button data-act="oracle" style="border-color:#a07ac0;background:#5a3a6a;">${icon('oracle')} 降策略卡</button></div>
       </div>
     </div>`;
   root.appendChild(selPanel);
@@ -379,7 +379,7 @@ export function createHud(
   // 工作方向（伐木令/采矿令/垦田令…），一切效果走神谕目标层 + 蓝图副作用 + 插卡（可选）。
   // 远程模式（SimView 无 strategyCards 数据）隐藏：观看模式只读，降旨是单机玩法。
   const oracleBtn = document.createElement('button');
-  oracleBtn.innerHTML = `${icon('oracle')} 神谕/策略`;
+  oracleBtn.innerHTML = `${icon('oracle')} 策略卡`;
   // 远程观看模式（SimView.mods 无 strategyCards 数据源）→ 隐藏（降旨面板是单机玩法）
   if (!('strategyCards' in (sim.mods as unknown as object))) oracleBtn.style.display = 'none';
   centerBtns.append(helpBtn, histBtn, facBtn, techBtn, oracleBtn);
@@ -393,13 +393,13 @@ export function createHud(
     `👆 <b>鼠标</b>：左键选中小人/建筑 · 右键移动 · 左键拖空白平移 · 滚轮缩放 · 边缘滚动<br>` +
     `📱 <b>触摸</b>：点选 · 长按移动 · 双指拖动/缩放<br>` +
     `⌨️ <b>键盘</b>：${k('pause')} 暂停 · ${k('speed1')}/${k('speed2')}/${k('speed3')} 调速 · ${k('cancel')} 取消/退出建造 · ${k('buildWall')} 建墙 · ${k('viewToggle')} 视角 · ${k('menuFold')} 菜单折叠<br>` +
-    `🃏 <b>策略卡</b>：神谕按局面降下策略卡（顶部紫色横幅），缺粮垦田、人丁旺拓荒迁徙<br>` +
-    `⛪ <b>神谕/策略面板</b>：点顶部「神谕/策略」按钮也可自己降旨引导工作（伐木令/采矿令/垦田令…）——只引导不指令，小人可能不听；冷却 45s<br>` +
+    `🃏 <b>策略卡=卡池影响项</b>：按局面调节工作方向权重并提示（顶部紫横幅），缺粮垦田、人丁旺拓荒迁徙<br>` +
+    `🎴 <b>策略卡面板</b>：点顶部「策略卡」按钮自己发策略卡调节工作（伐木令/采矿令/垦田令…）——只调节权重不指令，小人可能不听；冷却 45s<br>` +
     `🏗 <b>建造菜单</b>：下方按类分组选建筑 → 地图点击放置（绿=可建，红=不可）<br>` +
     `🧠 <b>小人自主</b>：小人自己伐木/采矿/建造/祈祷/疗伤，心情差会违抗安排<br>` +
     `📋 <b>指派职业</b>：选中小人 → 面板按钮指派伐木工/矿工/农民/工匠/渔民（或自由）<br>` +
     `🏕 <b>营地</b>：每个篝火 = 一个营地势力（涌现展示）——篝火记载区域历史（建了啥/遭过袭/谁战死）；同区域的鼠鼠交流篝火见闻、凭听到的事实判断伙伴/敌人；营地屡遭真实损失会迁徙另起篝火。🌍 面板看世界篝火聚居<br>` +
-    `⛪ <b>神谕</b>：信仰高时 AI 建教堂；选教堂点"发布神谕"祝福信众；神谕会降下策略卡（顶部横幅）<br>` +
+    `⛪ <b>信仰/教堂</b>：信仰高时 AI 建教堂；选教堂点"降策略卡"祝福信众；策略卡=卡池影响项（顶部横幅）<br>` +
     `⚔ <b>威胁</b>：野猫会袭击！建墙保护，受伤要治疗`;
   root.appendChild(helpPanel);
   const histPanel = document.createElement('div');
@@ -619,7 +619,7 @@ export function createHud(
         (lockedBuildings.length > 0 ? `<br><b>🔒 未解锁建造：</b>${lockedBuildings.join('、')}` : '');
     }
 
-    // ⛪ 神谕/策略面板（RW-1 M1 修订）：生效目标 + 冷却 + 可降策略卡列表。
+    // 🎴 策略卡面板（RW-1 M1 修订；2026-08-16 更名：不叫神谕——它只是卡池影响项,调节权重不裁决）：生效目标 + 冷却 + 可发策略卡列表。
     // 卡片表 = sim.mods.strategyCards（本地注册表直读；远程无数据 → 按钮已隐藏，面板不渲染）。
     // 可用态 = evalStrategyCondition（SimView 字段组 slim ctx，见 StrategyCtx）。
     if (oraclePanel.style.display === 'block') {
@@ -627,7 +627,7 @@ export function createHud(
       const goal = ox?.oracleGoal ?? null;
       const goalRow = goal
         ? `🕯 生效目标：<b>${goal.label}</b>（${goal.workType ?? '无工作加成'}，剩余 ${nf(Math.max(0, goal.until - (ox?.time ?? 0)))}s）`
-        : '🕯 当前无神谕目标（小人全自主）';
+        : '🕯 当前无策略卡影响（小人全自主）';
       const cooling = Math.max(0, ORACLE_CFG.cooldownSeconds - (sim.time - oracleLastIssued));
       const coldRow = cooling > 0
         ? `<span style="color:#caa">冷却中（${nf(cooling)}s 后可再降旨）</span>`
@@ -658,7 +658,7 @@ export function createHud(
         }">${c.label}</button> ${c.reason ?? ''} <span style="color:#888">${effect}${bp}${selNote}</span><br>`;
       }).join('');
       oraclePanel.innerHTML =
-        `<b>⛪ 神谕/策略卡</b> · 降旨引导小人工作方向（神谕只引导：小人可抽不到/可违抗；<br>冷却 ${ORACLE_CFG.cooldownSeconds}s 防遥控）<br>` +
+        `<b>🎴 策略卡（卡池影响项）</b> · 按局面调节工作方向权重（小人可抽不到/可违抗；<br>冷却 ${ORACLE_CFG.cooldownSeconds}s 防遥控）<br>` +
         `<span style="color:#9cf">${goalRow}</span><br><span>${coldRow}</span><br>` +
         (rows || '<span style="color:#888">暂无策略卡</span>');
     }
@@ -723,7 +723,7 @@ export function createHud(
           `欲望：${Object.entries(DESIRES).map(([k, { label }]) => `${label}${nf(p.desires[k])}`).join(' ')}<br>` +
           (dec ? `<span style="color:#caa">${dec}</span><br>` : '') +
           (nd ? `饥饿 ${nf(nd.food)} · 精力 ${nf(nd.rest)} · 心情 ${nf(nd.mood)} · 理智 ${nf(nd.san)}` : '') +
-          (p.oracleBuff && p.oracleBuff.until > sim.time ? `<br><span style="color:#e0b0ff">✨ 受神谕祝福</span>` : '') +
+          (p.oracleBuff && p.oracleBuff.until > sim.time ? `<br><span style="color:#e0b0ff">✨ 受策略卡影响（心情+）</span>` : '') +
           ((p.expectEarn ?? 0) > 0 || (p.expectSpend ?? 0) > 0
             ? `<br><span style="color:#9cf">预期赚 ${nf(p.expectEarn)} / 花 ${nf(p.expectSpend)}</span>`
             : '');
@@ -812,7 +812,7 @@ export function createHud(
       selPanel.style.display = 'none';
     },
     notifyCard(def: BehaviorCardDef): void {
-      cardText = `${icon('card')} 神谕降旨：<b>${def.label}</b>${def.reason ? `（${def.reason}）` : ''}`;
+      cardText = `${icon('card')} 策略卡（卡池影响项）：<b>${def.label}</b>${def.reason ? `（${def.reason}）` : ''}`;
       cardUntil = performance.now() + 6000;
     },
     hint,

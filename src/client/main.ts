@@ -99,7 +99,7 @@ async function main(): Promise<void> {
     } catch { /* 忽略写失败 */ }
   }, 30000);
 
-  // 单机模式也挂 LLM 慢决策层（feedback 印卡）：神谕每 90s 评估局面印一张策略卡
+  // 单机模式也挂 LLM/规则慢决策层（feedback 印卡）：卡池影响项按局面调节工作权重并发策略卡（2026-08-16 更名,不再叫"神谕"）
   const planner = makeDummyCardPlanner(sim as unknown as SimContext, {
     mode: 'feedback', interval: 90,
     onPrint: (def) => hudApi?.notifyCard(def),
@@ -393,7 +393,7 @@ function attachScene(
       sim.step(tickMs / 1000);
       acc -= tickMs;
     }
-    // 神谕慢决策层（单机模式）：按游戏时间推进印卡节奏
+    // 策略卡慢决策层（单机模式,2026-08-16 更名）：按游戏时间推进印卡节奏
     planner?.tick(dt / 1000);
     // 鼠标靠屏幕边缘时自动平移（PC 导航）
     if (mousePos && !isTouch) {
