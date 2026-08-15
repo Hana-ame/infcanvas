@@ -606,3 +606,33 @@ overrideTuning(patch: DeepPartial<TuningConfig>): this  // 覆盖平衡参数（
 
 - **PawnState.climb 差距登记**：注释声称"单位各自能力，mod 可 overrideTuning"，但实现 = spawn 时取 `tuning.pawn.climb` 后**从不修改**（存档不还原也无差别——值恒等于 tuning）。当前全小人 climb 相同、行为正确；若未来做个体差异（如天赋加攀爬），需在 SaveData 增加字段。enemyDef.climb 有差异化（猫 2 > 鼠人 1）不受影响。
 - **审计结论**：tuning 全表 379 键**零死参数**（spawnCounts 为 Record 动态键，Object.entries 遍历消费）；客户端（hud/renderer/remote）契约常量全覆盖无裸串；remote 重建 mods.items 只透传协议 w（wearable 标记）——warmth 等 sim 内部数值不下发，渲染/穿衣无需（渲染 tint 从 worn id 的 `{dye}_` 前缀解析，不依赖物品数据）。
+
+## 15. RW-1 直接指挥玩法包（work-priority + drafting，2026-08-15 追加）
+
+两个新玩法包全部默认挂载（playstyle 清单 23→25 包）。按 §13 裁决：**新玩法包数值一律包内 CFG**，不塞内核 tuning。
+
+### 15.1 work-priority 包（工作优先级 = 权重调制数据）
+
+| 数据 | 位置 | 语义 |
+| --- | --- | --- |
+| 优先级档位乘法表 | 包内 CFG.weightMuls = `{0:0, 1:6, 2:3, 3:1.5, 4:0.7}` | 抽卡权重乘子：0 = 清零禁止、1 最高、4 最低（0.7 → 仍会偶发抽到，非绝对禁止——紧急/无其他卡时不至于卡死） |
+| 允许值集 | 常量 `WORK_PRIORITY_ALLOWED = [0,1,2,3,4]`（导出供 cmdValidate/测试共用） | 缺省（未设置）= 自主，不算 0~4 档 |
+| 运行时状态 | `PawnState.extra.workPriorities = Record<jobId, 0\|1\|2\|3\|4>`（键 = 职业 id，见 JOB_CARD） | 契约键 K_WORK_PRIORITIES；缺键 = 未设置 = 自主；显式 0 = 禁止 |
+
+- **调制规则**：`ruleWorkPriority`（id 'workPriority'，`before:'job'`）——卡的职业 ∈ 已设置优先级？否 → 不调制；是 → 取该卡涉及多个已设职业的**最优（最小数字）档**乘子。紧急需求分支在 decide 之前，优先级不压 urgent（测试锁定）。
+- **旧档兼容**：`migrateFromAssignedJob`（load 时幂等跑：有 assignedJob + 无 workPriorities → 主职 1 其余 0）；`applyAssignedJobShortcut`（assign 命令时**强制**主职 1 其余 0，取消指派 = 清空 workPriorities 回自动——与迁移区分：迁移不覆盖已有微调，命令语义 = 快捷设定）。
+- **注册幂等**：权重规则表是模块级全局（跨 Sim 实例共享），包 check-then-register（`weightRulesOf().some(id==='workPriority')` 再 registerWeightRule，防多实例重复注册抛错）。
+
+### 15.2 drafting 包（征召/攻击 = 指挥状态数据）
+
+| 数据 | 位置 | 语义 |
+| --- | --- | --- |
+| autoEngageRadius / repathInterval / stopDist / targetLostRadius | 包内 CFG（14 格 / 0.4s / 0.8 格 / 8 格） | 无指定时自动接敌半径；追击重寻路节流（防每帧 A* 风暴）；贴近停止距离（raid meleeRange 内即可互殴）；目标下标错位后的位置找回半径 |
+| 征召状态 | `PawnState.extra.drafted = boolean` | 契约键 K_DRAFTED；true = 不自主（behavior 决策门，见 DESIGN §21） |
+| 攻击目标 | `PawnState.extra.attackTarget = { hostileIndex, x, y }` | 契约键 K_ATTACK；hostileIndex = 敌人数组下标（= 协议 hostiles.i，客户端右键即快照下标）；x/y = 指定时位置快照（每 tick 刷新/找回用） |
+
+- **决策门**：behavior 每 tick `if (extra[K_DRAFTED] === true) { job='待命'; path 照走; continue; }`——门在理智分支前（完全听指挥）；被动衰减（needs/san 系统）不被门豁免（征召只挡自主行动，不挡世界消耗）。
+- **战斗接敌**：raidSystem `attackDesignatorOf(i)`——有征召小人指定了 i 且在其 meleeRange 内 → 该小人优先接敌（覆盖"最近者"）；无指定者才回落最近扫描。**伤害/闪避/掉落公式零复制**（数字唯一权威在 raidSystem）。
+- **命令契约**：`draft {args.drafted: boolean}`（batch 走 selected；征召清工作态+路径、解除清攻击指定）+ `attack {args.hostileIndex: number}`（只作用于已征召小人；cmdValidate 校验 pawnId 存在 + hostileIndex ∈ [0, hostiles.length)）。
+- **协议字段**：`pawns.drafted?: boolean`（snapshot + delta，标量 diff，缺省 undefined = 未征召；server 从 extra 归一 `=== true || undefined`）。attackTarget 不下发（服务端内部结算数据，客户端无需）。
+- **契约登记**（contracts.ts 三类表追加）：`pawn.extra.drafted` / `pawn.extra.attackTarget`（check = drafting 包在场 → draft/attack 命令处理器必须已注册）、COMMAND `draft [drafted]` / `attack [hostileIndex]`、PROTOCOL `pawns.drafted`。

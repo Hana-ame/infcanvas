@@ -153,3 +153,10 @@
 - [x] 30 分钟无 UI 长跑（默认 + hunter-gatherer）。
 - [x] server 冒烟：新状态经 WSS 同步到远程客户端。
 - [x] 至少 4 次提交：docs plan / feat work priorities / feat draft combat / docs sync。
+
+## 10. 完成状态（2026-08-15 收尾追加）
+
+- 提交：`211d936` docs: RW-1 plan → `39dfe29` feat: work priorities (M1) → `df4ab13` feat: draft combat (M2) → 本轮 `docs: sync RW-1`。
+- 全量 415 测试（45 文件）+ tsc 干净；默认装配 25→26 系统（drafting，categories 'raid' 组内 raid 后）。
+- M1：work-priority 包（权重规则 + set-work-priority 命令 + assignedJob 快捷迁移）；M2：drafting 包（征召门 + DraftSystem 追击 + attack 指定 + HUD/右键/圈环/协议全链路）。
+- M3（睡袋/床）与 M4（UI 再贴近 RimWorld）未做——M1+M2 完成后按"宁缺毋滥"跳过，留给下一轮。

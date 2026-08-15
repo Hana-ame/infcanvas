@@ -1022,3 +1022,13 @@ registerHook('beforeRoll', (prob, ctx) => ...);          // check 流程阶段�
 - **能力让渡**（provide/getCap）：玩法包系统构造时自报能力（behavior/socialUnits/economy/bootstrap），sim.behavior 变 getter（无包回落 null/NOOP）；命令路由 issueCommand（move 引擎内建，其余 registerCommand 提供）。
 - **跨包契约校验**（contracts.ts 三类契约：meta/extra 键 + 命令参数 + 协议字段，详见 DATA_DRIVEN §12/§13）：写方/读方/客户端/服务端一律引用 K_* 常量（拼错=编译期错误），validateContracts 由 playstyleManager apply 末尾严格校验。
 - 本段为 §18/§19"已知差距/内核收窄"描述的**演进注记**：上述描述为当时快照，当前内核形态以本段 + PROGRESS.md 为准。
+
+### 21. RW-1 玩家管理层：工作优先级 + 征召战斗（2026-08-15 追加）
+
+**本轮设计裁决（RW_SPRINT.md）**：本项目继续做 RimWorld-like，**玩家 = 殖民地管理者，可直接管理工作和战斗**；小人的自主抽卡/欲望/社交/违抗保留为底层自治（神谕/信仰/LLM 为进阶特色，不在本轮扩大）。此前文档中"玩家只下达神谕、不直接指挥小人"的描述为早期快照，本轮起**直接指挥（Work Tab + 征召/攻击）是正式玩法**——自主决策仍是底层：玩家设的是**约束/目标**（优先级、征召开关、攻击目标），不放逐自主机制。
+
+- **M1 工作优先级（work-priority 包）**：抽卡权重调制层 = weightRule（`ruleWorkPriority` 挂在 `before:'job'`，贴职业卡前；未设置不调制、0=清权重、1~4=乘 CFG 档位）。语义定位：**优先级只调"这张卡被抽中的相对权重"**，不绕过 urgent 分支（紧急需求必定优先，玩家设 4 也压不住快饿死）——玩家管"工作分配"，生命力机制仍自治。
+- **M2 征召战斗（drafting 包）**：两种新玩法权限——**征召 = 暂停该小人的自治**（behavior 决策门，K_DRAFTED 契约键；门在理智分支前 = 连精神崩溃的自主乱跑也不执行，完全听指挥，但崩溃风险照常累积、解除后立即恢复）；**攻击 = 指定战斗目标**（K_ATTACK，raidSystem 的"谁接敌"picks 指定者优先）。
+- **架构形态**：两包都是标准 ModPack（`{id, requires, apply}`），协议面只动三处最小点——① behavior 决策门（为什么动内核：抽卡决策是引擎内部循环，纯插件无法在不改引擎的前提下阻止它；只读一个契约键）；② raidSystem 接敌者的选择（含 `attackDesignatorOf`，**不复制**伤害/闪避/掉落公式——战斗数字唯一权威仍在 raidSystem）；③ 协议 pawns.drafted 字段（snapshot/delta 全链路）。追击移动完全复用 engine moveTo（不复制移动/寻路）。
+- **战斗身份**：敌对单位无持久 uid，hostileIndex 是数组下标（协议 `hostiles.i`）；击杀会 splice 错位 → 指定者的目标解析（resolveTarget）按**位置快照就近找回**（targetLostRadius）并回写下标；找不到 = 目标已死 → 清指定回自动接敌。攻防左右手：征召小人原地待命时若敌人进入 meleeRange，raidSystem 同样会结算（无指定的自动接敌受 autoEngageRadius=14 限制，但"敌人走到脸上"的贴脸互殴不受半径限制）。
+- **玩家反馈教育**：右键敌人的攻击命令要求小人已征召（未征召 → 事件 feed「⚠ 攻击需要先征召小人」）——首轮体验把"先征召再指挥"教给玩家；征召圈环（反缩放恒定大小）是"听我指挥"的命令标识，与血条（被动状态）视觉分离。
