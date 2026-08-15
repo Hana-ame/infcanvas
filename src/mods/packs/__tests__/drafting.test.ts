@@ -42,11 +42,13 @@ function findWalkable(sim: Sim, nearX: number, nearY: number): { x: number; y: n
   throw new Error('找不到可走动空地');
 }
 
-// 塞一只静止野猫（speed 0 + target 自身 = 不推进；dmg 低防测试期间打死小人）
+// 塞一只静止的站桩敌人（speed 0 + target 自身 = 不推进；dmg 低防测试期间打死小人）。
+// 2026-08-16 cat 改捕食者（接触即叼走、极难作站桩靶）→ 契约测试改用 raider 站桩验证
+// 征召攻击优先权；捕食者实哨行为见 raidSystem 单测
 function addCat(sim: Sim, x: number, y: number, hp = 200, dmg = 0.5): void {
   sim.hostiles.push({
     x, y, hp, maxHp: hp, targetX: x, targetY: y,
-    name: '野猫', enemyId: 'cat', faction: 'cat',
+    name: '掠夺者', enemyId: 'raider', faction: 'unit',
     speed: 0, dmgPerSec: dmg, loot: { item: 'food', amount: 2 },
   });
 }

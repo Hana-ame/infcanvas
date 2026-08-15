@@ -651,3 +651,16 @@ overrideTuning(patch: DeepPartial<TuningConfig>): this  // 覆盖平衡参数（
 
 - **契约登记**：**零新增** pawn.extra 键、零协议字段（strategy 命令走 COMMAND_CONTRACTS 新增登记：`strategy [cardId]`，发令方 hud/客户端 → 处理器 oracle-guidance，check = 包在场 → 处理器必须已注册；cmdValidate 走通用通道——pawnId 存在性即可，cardId 合法性由包处理器把关，与 wear 同模式）。
 - **SimContext.printCard**（唯一内核扩展）：Sim 早已实现的 LLM 印卡通道上接口（策略卡/习惯卡插入槽位）；为什么进接口：纯插件无法不经接口触碰小人槽位（槽位是引擎数据）。
+
+## 敌人表捕食者语义（2026-08-16）
+
+`EnemyDef` 新增可选字段（机会捕食者玩法由 `predator` 标记启用,普通敌人不受影响）：
+
+| 字段 | 类型 | 语义 |
+| --- | --- | --- |
+| `predator` | `boolean` | 捕食者：袭击波固定 1 只（压力只放大 hp 强度）、目标 = 最近鼠实时位置、接触 ≤ `tuning.combat.captureRange`(1.2) 复用 DEX 闪避判定 → 未闪开即叼走（`pawn_died cause='captured'` + `Hostile.carried` 携带态）、逃跑方向 = 远离营地中心、跑离 ≥ `captureFleeDist`(32) 得手消失。不拆家、不原地磨血。 |
+| `carrySpeedMul` | `number` | 叼走后的逃跑移速倍率（缺省 1.5）。 |
+
+- 移动/捕获/得手数值在 `tuning.combat`（captureRange/captureFleeDist）,逃跑速度倍率在敌人表（同一敌人数据驱动,mod 可 overrideDef/registerEnemy 自定义捕食者）。
+- 捕猎期近身反击沿用 `meleeRange` + `pawnDmg`（鼠墙迎击语义,非捕食者攻击不做特殊加成）;得手途中被击杀 = 共用 killHostile 掉落路径（food 私有进击杀者口袋）。
+- `cat` 现为捕食者样例（hp90/speed6.5/dmg6/climb2,predator:true,carrySpeedMul:1.5,loot food 3）;`raider` 保持非捕食者（faction 'unit' 群体袭击语义不变）。

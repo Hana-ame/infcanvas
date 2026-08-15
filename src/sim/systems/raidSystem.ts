@@ -4,6 +4,7 @@ import type { GameSystem } from './registry';
 import type { SimContext } from './context';
 import type { EventBus } from '../core/events';
 import { World } from '../core/world';
+import type { EnemyDef } from '../defs/enemies';
 import { K_ATTACK } from '../mods/contracts'; // RW-1 征召指定攻击（drafting 包契约键）
 
 export class RaidSystem implements GameSystem {
@@ -45,19 +46,21 @@ export class RaidSystem implements GameSystem {
         // 和平越久袭击越猛
         const pressure = this.narrativePressure();
         const count = Math.floor((t.raidCountBase + this.ctx.pawnList.length * t.raidCountPerPawn) * pressure);
-        this.spawnRaid(count, pressure);
+        const spawned = this.spawnRaid(count, pressure); // 捕食者独行:实际生成数可能被压成 1
         this.peaceTime = 0;
-        this.ctx.bus.emit({ type: 'raid_started', count });
-        this.ctx.logEvent(`⚠ 野猫来袭！${count} 只${pressure > 1.3 ? '（积怨已久，规模更大）' : ''}`);
+        this.ctx.bus.emit({ type: 'raid_started', count: spawned });
+        this.ctx.logEvent(`⚠ ${spawned === 1 && this.ctx.mods.enemyDef().predator ? '🐱 野猫（哈基米）来袭！1 只' : `野猫来袭！${spawned} 只`}${pressure > 1.3 ? '（积怨已久，更凶猛）' : ''}`);
       }
     }
   }
 
-  // 刷一波袭击：从地图边缘随机边出生，直奔营地中心；规模随人口与叙事压力放大
-  private spawnRaid(count: number, pressure = 1): void {
+  // 刷一波袭击：从地图边缘随机边出生，直奔营地；规模随人口与叙事压力放大。
+  // 捕食者（哈基米 2026-08-16）：独行——固定 1 只,压力只放大强度不放大数量
+  private spawnRaid(count: number, pressure = 1): number {
     const w = this.ctx.world;
     // 敌人数值走 enemies 表（mods.enemyDef()，mod 可 overrideDef 调强度/掉落）
     const enemy = this.ctx.mods.enemyDef();
+    if (enemy.predator) count = 1; // 哈基米独行:压力只放大强度不放大数量
     const edge = Math.floor(this.ctx.rng.next() * 4);
     const cx = Math.floor(w.width / 2);
     const cy = Math.floor(w.height / 2);
@@ -74,23 +77,91 @@ export class RaidSystem implements GameSystem {
         speed: enemy.speed, dmgPerSec: enemy.dmg, loot: enemy.loot,
       });
     }
+    return count;
   }
 
   private updateCombat(dt: number): void {
     if (this.ctx.hostiles.length === 0) return;
     const t = this.ctx.tuning.combat;
+    const cx = Math.floor(this.ctx.world.width / 2);
+    const cy = Math.floor(this.ctx.world.height / 2);
+    // ---- 移动阶段 ----
     for (const h of this.ctx.hostiles) {
-      const dx = h.targetX - h.x;
-      const dy = h.targetY - h.y;
+      const pred = this.predatorOf(h);
+      let tx = h.targetX, ty = h.targetY;
+      let spd = h.speed ?? t.catSpeed;
+      if (pred?.predator) {
+        if (h.carried) {
+          // 叼走鼠 → 直冲逃跑方向（捕获时定下的单位向量 × 足够远），速度 ×carrySpeedMul
+          tx = h.x + h.carried.dirX * 100000;
+          ty = h.y + h.carried.dirY * 100000;
+          spd = (h.speed ?? t.catSpeed) * (pred.carrySpeedMul ?? 1.5);
+        } else {
+          // 独行捕猎：目标 = 最近鼠的实时位置（目的清晰 = 叼鼠,不再是"奔营地中心"）
+          const prey = this.nearestPawnTo(h.x, h.y);
+          if (prey) { tx = prey.x; ty = prey.y; }
+        }
+      }
+      const dx = tx - h.x, dy = ty - h.y;
       const d = Math.hypot(dx, dy);
-      const step = (h.speed ?? this.ctx.tuning.combat.catSpeed) * dt;
+      const step = spd * dt;
       if (d > step) {
         h.x += (dx / d) * step;
         h.y += (dy / d) * step;
       }
     }
+    // ---- 接敌 / 捕获 / 得手结算（从后往前 splice 安全）----
     for (let i = this.ctx.hostiles.length - 1; i >= 0; i--) {
       const h = this.ctx.hostiles[i];
+      const pred = this.predatorOf(h);
+      if (pred?.predator) {
+        if (h.carried) {
+          // 得手判定：跑离营地中心 ≥ captureFleeDist → 消失（叼走的鼠 = 损失,不回场）
+          if (Math.hypot(h.x - cx, h.y - cy) >= t.captureFleeDist) {
+            this.ctx.hostiles.splice(i, 1);
+            this.ctx.logEvent('🐱 野猫叼着鼠逃远了……');
+            continue;
+          }
+          // 逃跑途中仍可被击杀：掉落共用同一路径（击杀者口袋私有）——鼠已算 lost,无复活机制
+          h.hp -= t.pawnDmg * dt;
+          if (h.hp <= 0) {
+            const killer = this.nearestPawnInRange(h, 8) ?? -1; // 最近反击者(无则全局掉落)
+            this.killHostile(killer, i, h.loot ?? { item: t.catLootItem, amount: t.catLootAmount });
+            this.ctx.logEvent('⚔ 野猫（叼着鼠）被击杀！');
+          }
+          continue;
+        }
+        // 近身反击：捕猎期有鼠在 meleeRange 可砍猫（玩家以鼠墙迎击捕食者——猫强但非无敌）；
+        // 反击结算在捕获判定前：猫被砍死 → 掉落 + 不叼人（含"砍死猎人"的合理反制，2026-08-16）
+        const defender = this.nearestPawnInRange(h, t.meleeRange);
+        if (defender !== null) {
+          h.hp -= t.pawnDmg * dt;
+          if (h.hp <= 0) {
+            this.killHostile(defender, i, h.loot ?? { item: t.catLootItem, amount: t.catLootAmount });
+            this.ctx.logEvent('⚔ 野猫（哈基米）被鼠墙砍死！');
+            continue;
+          }
+        }
+        // 捕猎：接触 ≤ captureRange 的最近鼠 → 叼走（复用现有 DEX 闪避判定,不新造机制）
+        const prey = this.nearestPawnInRange(h, t.captureRange);
+        if (prey !== null) {
+          const dna = this.ctx.dnaOf(prey);
+          const dodgeChance = dna ? Math.max(t.minDodge, (dna.dex - t.dodgeBase) * t.dodgePerPoint) : 0;
+          const dodge = dna && this.ctx.rng.next() < dodgeChance;
+          if (!dodge) {
+            const pos = this.ctx.readPosition(prey);
+            this.ctx.bus.emit({ type: 'pawn_died', eid: prey, x: pos?.x ?? 0, y: pos?.y ?? 0, cause: 'captured' });
+            this.ctx.killPawn(prey);
+            // 逃跑方向 = 从营地中心指向猫（远离营地）
+            const dx = h.x - cx, dy = h.y - cy;
+            const dl = Math.hypot(dx, dy) || 1;
+            h.carried = { eid: prey, dirX: dx / dl, dirY: dy / dl };
+            this.ctx.logEvent('🐱 野猫叼起鼠鼠就跑！');
+          }
+        }
+        continue; // 捕食者不拆家、不原地磨血——目的只有一个：叼鼠
+      }
+      // ---- 非捕食者（掠夺者等）：原袭击逻辑（索敌 / 拆家 / DPS 对耗）----
       // RW-1 征召指定攻击（2026-08-15，drafting 玩法包 K_ATTACK 契约键）：
       // 被征召小人显式指定攻击的目标 → 由指定者优先接战（即便有更近的非征召小人在场；
       // 指定 = 玩家命令，优先于自动索敌）。战斗公式（伤害/闪避/掉落）零复制——只是把
@@ -120,7 +191,7 @@ export class RaidSystem implements GameSystem {
         if (b) {
           const r = this.ctx.world.damageBuilding(b.x, b.y, t.buildingDmg * dt);
           if (r.destroyed) {
-            this.ctx.logEvent('💥 建筑被野猫摧毁！');
+            this.ctx.logEvent('💥 建筑被敌人摧毁！');
             // 征服已删除（2026-08-14 重构：派系实体层删除，无单位可吞并）
           }
           continue;
@@ -130,23 +201,12 @@ export class RaidSystem implements GameSystem {
         h.hp -= t.pawnDmg * dt;
         this.ctx.growSkill(nearest, 'fight');
         if (h.hp <= 0) {
-          this.ctx.hostiles.splice(i, 1);
-          const loot = h.loot ?? { item: this.ctx.tuning.combat.catLootItem, amount: this.ctx.tuning.combat.catLootAmount };
-          // 私有物品（2026-08-14）：猎物掉落食物 → 击杀者个人口袋（私有），其他仍全局
-          if (loot.item === 'food') {
-            const st = this.ctx.pawnStates.get(nearest);
-            if (st) st.inventory = { food: (st.inventory?.food ?? 0) + loot.amount };
-          } else {
-            this.ctx.stockpile[loot.item] = (this.ctx.stockpile[loot.item] ?? 0) + loot.amount;
-          }
-          this.ctx.bus.emit({ type: 'resource_gained', eid: nearest, item: loot.item, amount: loot.amount });
-          // 战斗结果反馈（EWA）：击杀战利品量 → fight 吸引力（被杀的小人已死，不需记录）
-          this.ctx.recordOutcome(nearest, 'fight', loot.amount);
+          this.killHostile(nearest, i, h.loot ?? { item: t.catLootItem, amount: t.catLootAmount });
           continue;
         }
         const hk = this.ctx.readHealth(nearest);
         if (hk) {
-          // DEX 敏捷闪避（COC §3）：高敏捷有一定几率闪开野猫扑咬
+          // DEX 敏捷闪避（COC §3）：高敏捷有一定几率闪开扑咬
           const dna = this.ctx.dnaOf(nearest);
           const dodgeChance = dna ? Math.max(t.minDodge, (dna.dex - t.dodgeBase) * t.dodgePerPoint) : 0;
           const dodge = dna && this.ctx.rng.next() < dodgeChance;
@@ -157,12 +217,55 @@ export class RaidSystem implements GameSystem {
             const pos = this.ctx.readPosition(nearest);
             this.ctx.bus.emit({ type: 'pawn_died', eid: nearest, x: pos?.x ?? 0, y: pos?.y ?? 0, cause: 'combat' });
             this.ctx.killPawn(nearest);
-      } else {
-        this.ctx.setHealth(nearest, hk);
+          } else {
+            this.ctx.setHealth(nearest, hk);
+          }
+        }
       }
     }
+  }
+
+  // 击杀敌对单位：splice 移除 + 掉落（food 私有化进击杀者口袋，其他进全局库存）
+  private killHostile(killer: number, i: number, loot: { item: string; amount: number }): void {
+    this.ctx.hostiles.splice(i, 1);
+    if (loot.item === 'food' && killer >= 0) {
+      const st = this.ctx.pawnStates.get(killer);
+      if (st) st.inventory = { food: (st.inventory?.food ?? 0) + loot.amount };
+    } else {
+      this.ctx.stockpile[loot.item] = (this.ctx.stockpile[loot.item] ?? 0) + loot.amount;
     }
+    if (killer >= 0) this.ctx.recordOutcome(killer, 'fight', loot.amount);
+  }
+
+  // 捕食者定义（数据驱动：enemies 表 predator 标记,mod registerEnemy 可自定义捕食者）
+  private predatorOf(h: { enemyId?: string }): EnemyDef | undefined {
+    return h.enemyId ? this.ctx.mods.enemies[h.enemyId] : undefined;
+  }
+
+  // 捕食者索敌：离 (x,y) 最近的鼠位置（实时追捕,目的 = 叼鼠）
+  private nearestPawnTo(x: number, y: number): { x: number; y: number } | null {
+    let best: { x: number; y: number } | null = null;
+    let bd = Infinity;
+    for (const eid of this.ctx.pawnList) {
+      const pos = this.ctx.pawnPositions.get(eid);
+      if (!pos) continue;
+      const d = Math.hypot(pos.x - x, pos.y - y);
+      if (d < bd) { bd = d; best = pos; }
     }
+    return best;
+  }
+
+  // 半径内最近的鼠（捕获判定 / 反杀者），无则 null
+  private nearestPawnInRange(h: { x: number; y: number }, radius: number): number | null {
+    let best: number | null = null;
+    let bd = radius;
+    for (const eid of this.ctx.pawnList) {
+      const pos = this.ctx.pawnPositions.get(eid);
+      if (!pos) continue;
+      const d = Math.hypot(pos.x - h.x, pos.y - h.y);
+      if (d < bd) { bd = d; best = eid; }
+    }
+    return best;
   }
 
   // 指定攻击者（RW-1 征召，2026-08-15）：是否有被征召小人显式指定攻击下标为 hostileIndex

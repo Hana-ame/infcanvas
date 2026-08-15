@@ -21,6 +21,9 @@ export interface Hostile {
   speed?: number;     // 移速（enemy def 快照，避免每帧查表）
   dmgPerSec?: number; // 攻击力（部落战士比野猫强）
   loot?: { item: string; amount: number }; // 击杀掉落
+  // 捕食者携带态（2026-08-16）：叼走的鼠 eid + 逃跑方向（捕获时定的单位向量）；
+  // 携带中不索敌/不拆家,直冲方向跑离营地
+  carried?: { eid: number; dirX: number; dirY: number };
 }
 
 export interface BuildItem {

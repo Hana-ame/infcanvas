@@ -98,6 +98,8 @@ export interface CombatTuning {
   catSpeed: number;  // 敌人表缺 speed 字段时的兜底（天敌=野猫）         // 敌人表缺 speed 字段时的兜底
   catLootItem: string;      // 敌人表缺 loot 字段时的兜底
   catLootAmount: number;
+  captureRange: number;     // 捕食者叼鼠判定距离（格）（2026-08-16 用户设计"叼起鼠鼠就跑"）
+  captureFleeDist: number;  // 叼走后跑离营地中心该距离 = 得手消失（鼠损失不回场）
   pawnDmg: number;           // 小人近战每秒伤害
   initialRaidDelay: number;  // 开局首波前等待
   baseInterval: number;      // 基线袭击间隔
@@ -543,6 +545,9 @@ export const TUNING: TuningConfig = {
   combat: {
     raidEnemy: 'cat',  // 天敌=野猫（2026-08-14 世界观修正）
     unitRaidEnemy: 'raider',
+    // 捕食者规则（2026-08-16 用户设计"叼起鼠鼠就跑"）：接触捕获距离 + 得手消失距离（跑离营地中心）
+    captureRange: 1.2,
+    captureFleeDist: 32,
     catSpeed: 3.5,
     catLootItem: 'ore',
     catLootAmount: 2,

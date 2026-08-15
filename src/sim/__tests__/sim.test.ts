@@ -1073,7 +1073,9 @@ describe('mod 玩法（DATA_DRIVEN §6 验收）', () => {
   });
 
   it('registerExpansionPlan lets a mod add a new autobuild plan', () => {
+    // 禁敌袭:窗口 300s 内强化后的捕食者猫会叼光 2 鼠让 need 恒假,本测试聚焦"mod 加计划"
     const sim = new Sim({ seed: 204, pawnCount: 2, mods: (m) => {
+      m.disableSystem('raid');
       m.registerExpansionPlan({
         id: 'herb-farm-plan', defId: 'herbfarm', minWood: 5,
         need: (c) => c.pawnList.length >= 2,
@@ -2088,7 +2090,8 @@ describe('私有食物 + 互助（2026-08-14 用户设计：私有物品、好�
     let bAlive = false;
     const seeds = [20260803, 302, 303, 305, 307, 309, 311, 313];
     for (const seed of seeds) {
-      const sim = new Sim({ seed, pawnCount: 2 });
+      // 禁敌袭:120s 窗口内强化猫(叼人)会干扰"B 濒死"场景,互助机制测试聚焦自身
+      const sim = new Sim({ seed, pawnCount: 2, mods: (m) => m.disableSystem('raid') });
       sim.stockpile.food = 0; // 无公共粮仓，互助才有意义
       const [a, b] = sim.pawns;
       const stA = sim.pawnStates.get(a)!;
