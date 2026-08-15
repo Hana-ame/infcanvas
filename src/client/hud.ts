@@ -46,7 +46,7 @@ function injectStyle(): void {
 .hud button:hover{background:#4a4a4a;border-color:#777;}
 .hud button.on{background:rgba(68,204,255,.25);border-color:#4cf;}
 .hud-panel{pointer-events:auto;background:rgba(0,0,0,.8);border:1px solid #444;border-radius:10px;}
-.hud-top{position:absolute;top:0;left:0;right:0;padding:8px 14px;background:rgba(0,0,0,.6);display:flex;gap:18px;align-items:center;font-weight:600;flex-wrap:wrap;}
+.hud-top{position:absolute;top:0;left:0;right:0;padding:8px 14px;background:rgba(0,0,0,.6);display:flex;gap:18px;align-items:center;font-weight:600;flex-wrap:nowrap;overflow-x:auto;min-height:42px;z-index:12;} /* 顶部资源条单行滚动(2026-08-16 用户反馈菜单重叠:多资源+窄窗换行会把下方 hud 元素顶进重叠区) */
 .hud-top .warn{color:#f66;font-weight:700;}
 @keyframes blink{0%,100%{opacity:1}50%{opacity:.4}}
 .hud-top .warn{animation:blink 1s infinite;}
@@ -56,16 +56,16 @@ function injectStyle(): void {
 .hud-group>div:first-child{color:#888;font-size:10px;text-align:center;padding:1px 0;}
 .hud-corner{position:absolute;bottom:12px;left:12px;display:flex;gap:4px;pointer-events:auto;padding:6px;}
 .hud-corner button{padding:3px 9px;font:12px system-ui;}
-.hud-sel{position:absolute;top:54px;left:12px;padding:8px 12px;min-width:180px;display:none;line-height:1.6;}
+.hud-sel{position:absolute;top:60px;left:12px;padding:8px 12px;min-width:180px;display:none;line-height:1.6;}
 /* 选中鼠鼠 HUD 立绘（2026-08-15）：头部横排——左侧立绘 + 右侧资料列 */
 .hud-sel-head{display:flex;gap:12px;align-items:flex-start;}
 #selPortrait{width:104px;height:104px;flex:none;border-radius:10px;border:1px solid #555;background:radial-gradient(circle at 50% 35%,rgba(90,70,50,.85),rgba(20,16,10,.95));box-shadow:0 0 10px rgba(0,0,0,.6);display:none;}
-.hud-hint{position:absolute;top:54px;right:12px;padding:6px 10px;font-size:12px;text-align:right;max-width:340px;}
+.hud-hint{position:absolute;top:60px;right:12px;padding:6px 10px;font-size:12px;text-align:right;max-width:340px;}
 .hud-feed{position:absolute;bottom:12px;right:96px;padding:6px 10px;font-size:11px;line-height:1.5;max-width:220px;text-align:right;}
 .hud-feed div{border-top:1px solid #222;}
-.hud-center{position:absolute;top:54px;left:50%;transform:translateX(-50%);display:flex;gap:6px;pointer-events:auto;}
-.hud-pop{position:absolute;top:88px;left:50%;transform:translateX(-50%);padding:12px 14px;font-size:11px;line-height:1.7;max-width:520px;max-height:60vh;overflow:auto;display:none;}
-.hud-card{position:absolute;top:52px;left:50%;transform:translateX(-50%);padding:6px 14px;border:1px solid #a07ac0;background:rgba(70,40,90,.92);border-radius:10px;font-size:12px;display:none;white-space:nowrap;}
+.hud-center{position:absolute;top:60px;left:50%;transform:translateX(-50%);display:flex;gap:6px;pointer-events:auto;}
+.hud-pop{position:absolute;top:120px;z-index:25;left:50%;transform:translateX(-50%);padding:12px 14px;font-size:11px;line-height:1.7;max-width:520px;max-height:60vh;overflow:auto;display:none;}
+.hud-card{position:absolute;top:84px;left:50%;z-index:20;transform:translateX(-50%);padding:6px 14px;border:1px solid #a07ac0;background:rgba(70,40,90,.92);border-radius:10px;font-size:12px;display:none;white-space:nowrap;}
 .hud-card.visible{display:block;}
 .hud-meta{color:#aaa;}
 .hud-chip{border-radius:5px;padding:2px 7px;font:11px system-ui;margin-right:4px;}
@@ -97,6 +97,7 @@ export interface HudApi {
   hint: HTMLElement;
   refreshHint(bm: string | null): void;
   selectedBuilding: { current: { x: number; y: number } | null };
+  selectedTile: { current: { x: number; y: number } | null }; // 点选地面(2026-08-16 用户"点击地面能看到地面属性")
   toggleViewMode(): void;
   toggleFold(): void;
   togglePanel(name: 'helpToggle' | 'historyToggle' | 'factionToggle' | 'techsToggle'): void;
@@ -341,6 +342,7 @@ export function createHud(
 
   // 选中的建筑（main.ts 维护，HUD 读取）
   const selectedBuildingRef: { current: { x: number; y: number } | null } = { current: null };
+  const selectedTileRef: { current: { x: number; y: number } | null } = { current: null };
 
   // ---- 提示条 ----
   const hint = document.createElement('div');
@@ -529,6 +531,38 @@ export function createHud(
       return;
     }
 
+    // 点选地面:显示地形属性(2026-08-16 用户"地面需要有属性/点击地面能看到")——
+    // TileDef 属性现成(id/name/z/passable/buildable/moveCost/mineral/growable/shelter/harvest),只缺展示
+    if (selectedTileRef.current) {
+      const { x, y } = selectedTileRef.current;
+      const tid = sim.world.getTile(x, y);
+      const d = sim.mods.tiles[tid];
+      if (d) {
+        selPanel.dataset.eid = '-1';
+        selPortrait.style.display = 'none';
+        selJobs.style.display = 'none';
+        selOracle.style.display = 'none';
+        selTitle.innerHTML =
+          `<b>${d.emoji ? d.emoji + ' ' : ''}${d.name}</b> (${x},${y}) <span style="color:#888">${d.id}</span>`;
+        const yes = '<span style="color:#8d8">✓</span>';
+        const no = '<span style="color:#d88">✗</span>';
+        let body =
+          `可通行 ${d.passable ? yes : no} · 可建造 ${d.buildable ? yes : no} · 移动代价 ${d.moveCost ?? 1}<br>` +
+          `高度 ${d.z ?? 0}${d.shelter ? ' · 🏕 天然庇护' : ''}${d.mineral ? ' · ⛏ 矿' : ''}${d.growable ? ' · 🌱 可采集' : ''}`;
+        const hv = d.harvest;
+        if (hv) {
+          const prod = hv.product ? `→ ${sim.mods.items[hv.product]?.name ?? hv.product}` : '';
+          body += `<br>🧺 采集：${hv.time ?? 1}s · ${hv.dc ?? '-'} 检定 · 得 ${hv.yieldSuccess ?? 1}${
+            hv.yieldFail !== undefined ? `（失败 ${hv.yieldFail}）` : ''} ${prod}`;
+          if (d.harvestReplaces) body += `；采后变 ${d.harvestReplaces}`; // harvestReplaces 在 TileDef(不在 HarvestDef)
+        }
+        selBody.innerHTML = body;
+        selPanel.style.display = 'block';
+        return;
+      }
+      selectedTileRef.current = null; // 未知地形(动态生成/越界):清状态回退
+    }
+
     // 📜 结构化历史（DESIGN §3 仿真日志）
     // UIUX 2026-08-14：行内嵌坐标 data 属性，点击整行跳转镜头（委托一次监听）
     if (histPanel.style.display === 'block') {
@@ -631,6 +665,7 @@ export function createHud(
 
     const sel = sim.selectedIds;
     if (sel.length > 0) {
+      selectedTileRef.current = null; // 小人选中优先,清地面点选(互斥:点小人后地面面板不残留)
       const eid = sel[0];
       const p = sim.pawnProfile(eid);
       if (p) {
@@ -783,6 +818,7 @@ export function createHud(
     hint,
     refreshHint,
     selectedBuilding: selectedBuildingRef,
+    selectedTile: selectedTileRef,
     toggleViewMode,
     toggleFold,
     togglePanel,

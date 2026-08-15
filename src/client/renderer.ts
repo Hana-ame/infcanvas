@@ -6,7 +6,7 @@ import type { SimView } from './remote';
 import type { TileDef } from '../sim/defs';
 import { World } from '../sim/core/world';
 import { SvgAssets } from './svgLoader';
-import { pawnAssetIdFor } from './svgAssets';
+import { pawnAssetIdFor, hostileAssetId } from './svgAssets';
 import { jobLabelOf } from '../sim/defs/jobs';
 // 衣物染料色表（clothing 玩法包 2026-08-15：渲染染衣服的 tint 色）；渲染器属于默认玩法
 // 装配域，直接引用玩法包常量（色表是玩法语义，不进 shared/内核）
@@ -420,6 +420,13 @@ export class Renderer {
     }
   }
 
+  // 建筑/静态物锚点：始终居中于格（2026-08-16 修复"建筑偏了"——建筑图标此前走 placeEntity,
+  // iso 模式被锚到格底,单格/多格建筑整体偏下半格;建筑无"脚",应居中于 footprint）
+  private placeEntityCenter(g: Graphics, x: number, y: number): void {
+    g.pivot.set(16, 16);
+    g.position.set(x * TILE + TILE / 2, y * TILE + TILE / 2);
+  }
+
   // 地形图标（树/矿/水）—— SVG。树进入 entityLayer 参与 2.5D 遮挡。
   // 无限地图视口化（2026-08-14）：与地表同 chunk 缓存，只挂载视口内；重建时树精灵
   // 需要重新登记 treeSprites（2.5D 排序），先清树列表再逐 chunk 补
@@ -542,10 +549,15 @@ export class Renderer {
       const aid = b.def.sprite ?? `building:${b.def.id}`;
       const icon = this.makeIcon(aid);
       if (icon) {
-        // 图标定位到 footprint 中心
+        // 图标定位到 footprint 中心（居中锚,iso 不再偏下）
         const cx = (minX + maxX) / 2 / TILE;
         const cy = (minY + maxY) / 2 / TILE;
-        this.placeEntity(icon, cx, cy);
+        this.placeEntityCenter(icon, cx, cy);
+        if (this.viewMode === 'iso') {
+          // iso 前后遮挡：建筑按中心 y 排序（角色 +9 恒在其上）,避免多格建筑与角色层混乱
+          icon.zIndex = Math.round(cy) * 10 + 1;
+          bg.zIndex = Math.round(cy) * 10;
+        }
         icon.alpha = dmg < 0.5 ? 0.6 : 1;
         this.entityLayer.addChild(icon);
         this.buildingSprites.push({ g: icon, x: cx, y: cy });
@@ -654,13 +666,14 @@ export class Renderer {
     return { x: a.x0 + (a.x1 - a.x0) * k, y: a.y0 + (a.y1 - a.y0) * k };
   }
 
-  // 渲染入侵者（红色敌对）—— 用野猫 SVG
+  // 渲染入侵者（红色敌对）—— 用宿主敌对剪影(2026-08-16 修复:此前复用 pawn:strong 仅 tint,
+  // 猫/鼠剪影相同;enemyId 专属剪影(cat=尖耳长尾) + mod 新敌人兜底 generic + hostileTint 色阶)
   private renderHostiles(): void {
     let idx = 0;
     for (const h of this.sim.hostiles) {
       let g = this.hostileSprites.get(idx);
       if (!g) {
-        const icon = this.makeIcon('pawn:strong', 0.9);
+        const icon = this.makeIcon(hostileAssetId(h.enemyId), 0.9);
         if (!icon) continue;
         g = icon;
         g.eventMode = 'none';
@@ -786,8 +799,11 @@ export class Renderer {
   }
 
   setCamera(dx: number, dy: number): void {
-    this.camera.x -= dx / (TILE * this.camera.zoom);
-    this.camera.y -= dy / (TILE * this.camera.zoom);
+    // 拖拽平移 = 抓着地图跟手（2026-08-16 修复"鼠标拖动正好都反了"：
+    // 原 `-=` 是"滚动窗口"惯例——拖右看左；与 screenToWorld(屏幕右=世界 x 增) 自洽的跟手版本是 `+=`。
+    // 鼠标左键拖拽与触摸双指平移都走这里,一并修正）
+    this.camera.x += dx / (TILE * this.camera.zoom);
+    this.camera.y += dy / (TILE * this.camera.zoom);
   }
 
   // 缩放钳制 0.3x~4x（zoomBy/zoomAt 共用）：下限防地图翻转、上限防过度放大（可玩性边界）

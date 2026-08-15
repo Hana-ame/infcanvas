@@ -245,15 +245,23 @@ function attachScene(
     const world = renderer.screenToWorld(pos.x, pos.y);
     const b = sim.buildingAt(world.x, world.y);
     if (b) {
-      // 选中建筑
+      // 选中建筑（同时清地面点选,两状态互斥）
       hud.selectedBuilding.current = { x: world.x, y: world.y };
+      hud.selectedTile.current = null;
       sim.selected = [];
       renderer.clearSelection();
       hud.update(null);
       return;
     }
-    // 点空白：取消选择（先清后探测，避免点空白还粘着上一个选中）
+    // 点空白：选中地面格 → 显示地形属性（2026-08-16 用户"点击地面能看到地面属性"）。
+    // 与建筑/小人选中互斥;再点同一格 = 取消（回到无选中）
+    if (hud.selectedTile.current?.x === world.x && hud.selectedTile.current?.y === world.y) {
+      hud.selectedTile.current = null;
+    } else {
+      hud.selectedTile.current = { x: world.x, y: world.y };
+    }
     hud.selectedBuilding.current = null;
+    sim.selected = [];
     renderer.clearSelection();
     hud.update(null);
   });

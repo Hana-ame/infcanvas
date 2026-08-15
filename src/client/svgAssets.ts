@@ -44,14 +44,16 @@ export const BUILDING_SVG: Record<string, string> = {
     <path d="M16 20 L13 13 Q16 8 19 13 Z" fill="#ff8c42"/>
   `),
   wall: svg(`
-    <rect x="2" y="2" width="28" height="28" rx="2" fill="#8f8f8f"/>
-    <rect x="4" y="4" width="24" height="24" rx="1" fill="#a8a8a8"/>
-    <path d="M4 4 L28 28 M28 4 L4 28" stroke="#7a7a7a" stroke-width="2"/>
+    <rect x="0" y="0" width="32" height="32" fill="#8f8f8f"/>
+    <rect x="2" y="2" width="28" height="28" rx="1" fill="#a8a8a8"/>
+    <path d="M2 2 L30 30 M30 2 L2 30" stroke="#7a7a7a" stroke-width="2"/>
+    <rect x="6" y="6" width="8" height="5" fill="#9a9a9a" opacity="0.6"/>
+    <rect x="18" y="20" width="8" height="5" fill="#9a9a9a" opacity="0.6"/>
   `),
   floor: svg(`
-    <rect x="2" y="2" width="28" height="28" rx="2" fill="#b8a884"/>
-    <path d="M2 11 L30 11 M2 22 L30 22" stroke="#a08d6e" stroke-width="1.5"/>
-    <path d="M11 2 L11 30 M22 2 L22 30" stroke="#a08d6e" stroke-width="1.5"/>
+    <rect x="0" y="0" width="32" height="32" fill="#b8a884"/>
+    <path d="M0 11 L32 11 M0 22 L32 22" stroke="#a08d6e" stroke-width="1.5"/>
+    <path d="M11 0 L11 32 M22 0 L22 32" stroke="#a08d6e" stroke-width="1.5"/>
   `),
   door: svg(`
     <rect x="4" y="2" width="24" height="28" rx="2" fill="#8b6914"/>
@@ -60,27 +62,34 @@ export const BUILDING_SVG: Record<string, string> = {
     <rect x="7" y="4" width="4" height="24" fill="#7a5a10" opacity="0.5"/>
   `),
   farm: svg(`
-    <rect x="2" y="2" width="28" height="28" rx="2" fill="#5a7a2a"/>
-    <rect x="5" y="5" width="22" height="22" fill="#4a6a22"/>
-    <path d="M16 6 L13 12 H19 Z" fill="#9bc94a"/>
-    <path d="M16 12 L13 18 H19 Z" fill="#8ab842"/>
-    <path d="M16 18 L13 24 H19 Z" fill="#7ba83a"/>
+    <rect x="0" y="0" width="32" height="32" fill="#4a6a22"/>
+    <rect x="4" y="4" width="24" height="24" rx="1" fill="#5a7a2a"/>
+    <path d="M8 6 L6 8 H10 Z" fill="#a4d84e"/>
+    <path d="M16 5 L14 7 H18 Z" fill="#a4d84e"/>
+    <path d="M24 6 L22 8 H26 Z" fill="#a4d84e"/>
+    <path d="M8 14 L6 16 H10 Z" fill="#93c844"/>
+    <path d="M16 13 L14 15 H18 Z" fill="#93c844"/>
+    <path d="M24 14 L22 16 H26 Z" fill="#93c844"/>
+    <path d="M8 22 L6 24 H10 Z" fill="#82b83a"/>
+    <path d="M16 21 L14 23 H18 Z" fill="#82b83a"/>
+    <path d="M24 22 L22 24 H26 Z" fill="#82b83a"/>
   `),
   workbench: svg(`
-    <rect x="3" y="16" width="26" height="12" rx="2" fill="#5a3a1a"/>
-    <rect x="5" y="18" width="22" height="8" fill="#7a5230"/>
-    <rect x="7" y="6" width="4" height="10" fill="#8b5a2b"/>
-    <rect x="21" y="6" width="4" height="10" fill="#8b5a2b"/>
-    <circle cx="16" cy="20" r="2" fill="#c0c0c0"/>
-    <rect x="9" y="24" width="6" height="3" fill="#6a4a20"/>
+    <rect x="3" y="14" width="26" height="12" rx="2" fill="#5a3a1a"/>
+    <rect x="5" y="16" width="22" height="8" fill="#7a5230"/>
+    <rect x="7" y="26" width="4" height="4" fill="#6a4420"/>
+    <rect x="21" y="26" width="4" height="4" fill="#6a4420"/>
+    <circle cx="12" cy="20" r="2.5" fill="#c0c0c0"/>
+    <rect x="17" y="22" width="7" height="2.5" rx="1" fill="#8a5a2b"/>
+    <rect x="9" y="8" width="14" height="5" rx="1" fill="#8b5a2b"/>
   `),
   cave: svg(`
-    <path d="M4 28 Q4 6 16 6 Q28 6 28 28 Z" fill="#4a3a2a"/>
-    <path d="M8 28 Q8 12 16 12 Q24 12 24 28 Z" fill="#1a1208"/>
-    <ellipse cx="16" cy="26" rx="9" ry="3" fill="#0a0603"/>
-    <circle cx="13" cy="18" r="1.5" fill="#d4b94a"/>
-    <circle cx="19" cy="22" r="1.3" fill="#c9ad3f"/>
-    <path d="M16 12 Q18 6 16 2 Q14 6 16 12 Z" fill="#d4b94a" opacity="0.3"/>
+    <path d="M4 26 Q4 4 16 4 Q28 4 28 26 Z" fill="#4a3a2a"/>
+    <path d="M8 26 Q8 10 16 10 Q24 10 24 26 Z" fill="#1a1208"/>
+    <ellipse cx="16" cy="24" rx="9" ry="3" fill="#0a0603"/>
+    <circle cx="13" cy="16" r="1.5" fill="#e8c84a"/>
+    <circle cx="19" cy="20" r="1.3" fill="#d4b94a"/>
+    <path d="M16 10 Q18 4 16 0 Q14 4 16 10 Z" fill="#e8c84a" opacity="0.35"/>
   `),
   church: svg(`
     <rect x="8" y="12" width="16" height="16" fill="#8a6a9a"/>
@@ -314,4 +323,36 @@ export function pawnAssetIdFor(traits: readonly string[] | undefined): string {
   if (t.includes('热爱工作')) return 'pawn:workaholic';
   if (t.includes('夜猫子')) return 'pawn:owl';
   return 'pawn:mouse';
+}
+
+// 敌对单位 SVG（2026-08-16 用户反馈"鼠鼠和猫怎么长一样"——此前敌人复用 pawn:strong 仅 tint 改色,
+// 剪影完全相同无法区分）。cat = 尖耳 + 长尾 + 匍匐身形(与正面圆耳鼠剪影相反);
+// generic = 通用敌对剪影(细长人形暗影 + 斜纹,未单独建模的敌人兜底)。两表都受 hostileTint 着色。
+export const HOSTILE_SVG: Record<string, string> = {
+  cat: svg(`
+    <path d="M2 18 L7 4 L12 14 Z" fill="#b06060"/>
+    <path d="M17 13 L21 2 L26 13 Z" fill="#b06060"/>
+    <ellipse cx="15" cy="17" rx="11" ry="8" fill="#c08080"/>
+    <circle cx="9" cy="14" r="6" fill="#c89090"/>
+    <circle cx="9" cy="14" r="6" fill="none" stroke="#8a4a4a" stroke-width="1.5"/>
+    <path d="M4 12 L4.5 15 M7 11.5 L7.5 14.5" stroke="#6a3a3a" stroke-width="1.4" stroke-linecap="round"/>
+    <path d="M12 12.5 L12.5 15.5" stroke="#6a3a3a" stroke-width="1.4" stroke-linecap="round"/>
+    <circle cx="7" cy="14" r="1.7" fill="#2e1a1a"/>
+    <circle cx="11" cy="14" r="1.7" fill="#2e1a1a"/>
+    <path d="M15 24 Q15 29 20 30 Q25 29 26 23" stroke="#b06060" stroke-width="3.5" fill="none" stroke-linecap="round"/>
+    <path d="M3 20 Q0 18 2 15" stroke="#8a4a4a" stroke-width="1.4" fill="none"/>
+  `),
+  generic: svg(`
+    <ellipse cx="16" cy="16" rx="8" ry="11" fill="#888"/>
+    <circle cx="16" cy="7" r="5" fill="#999"/>
+    <path d="M9 16 L23 10 M10 21 L22 15" stroke="#555" stroke-width="2.2" opacity="0.75"/>
+    <circle cx="14" cy="7" r="1.4" fill="#222"/>
+    <circle cx="18" cy="7" r="1.4" fill="#222"/>
+  `),
+};
+
+// 敌人精灵选择：单独建模的 enemyId 用专属剪影，未知敌人（mod 新增）兜底 generic 剪影 + hostileTint 色调
+export function hostileAssetId(enemyId: string | undefined): string {
+  if (enemyId && HOSTILE_SVG[enemyId]) return `hostile:${enemyId}`;
+  return 'hostile:generic';
 }

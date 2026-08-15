@@ -13,7 +13,13 @@ export interface HistoryEntry {
   x?: number; y?: number; // 地点
   cause?: string;      // 原因（死亡/事件）
   data?: Record<string, unknown>; // 附加事实（数量/目标等）
+  level?: 'minor';     // 日常状态流（eat/rest/mood_changed）：recent 视图降噪（2026-08-16 用户
+                       // "历史被 mood 淹没"——20 条 recent 被高频吃饭/休息/心情刷屏,大事沉底。
+                       // 完整事实仍全部保留在 entries（可 query/导出），只影响 recent 概览视图）
 }
+
+// 日常状态流事件类型：recent 概览降噪（完整日志保留不删）
+const MINOR_TYPES = new Set<string>(['eat', 'rest', 'mood_changed']);
 
 export class HistoryLog {
   private entries: HistoryEntry[] = [];
@@ -31,6 +37,8 @@ export class HistoryLog {
       time: Math.round(now),
       day: Math.floor(day),
       type: ev.type,
+      // 日常状态流判 minor：吃饭/休息/心情变化属生理节律,高频低信息,不给 recent 概览占位
+      ...(MINOR_TYPES.has(ev.type) ? { level: 'minor' as const } : {}),
     };
     switch (ev.type) {
       case 'pawn_spawned':
@@ -95,7 +103,10 @@ export class HistoryLog {
   }
 
   get recent(): HistoryEntry[] {
-    return this.entries.slice(-20).reverse();
+    // 概览视图：优先最近 20 条高信息事件（major/normal,过滤 minor 状态流）；
+    // 若高信息不足 3 条（游戏刚开局全是吃饭睡觉）,回退最近 20 条原始,不丢新发生的事
+    const major = this.entries.filter((e) => e.level !== 'minor').slice(-20).reverse();
+    return major.length >= 3 ? major : this.entries.slice(-20).reverse();
   }
 
   get count(): number {
