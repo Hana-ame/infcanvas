@@ -1,11 +1,12 @@
-// DLC 框架压力测试（2026-08-16 用户点饼"以后要加大航海/一战/无线电/二战/飞天魔法 DLC，
-// 先试试现在加会不会搞坏框架"；追加：帝国、教国）——用 7 个**占位** DLC 包走真实玩法
-// 包装配面：系统（registerSystemDef + category + before 锚点）/ 命令 / 卡 / 科技 / 建筑 /
-// 物品 / 敌人 / 配方 / 策略卡。断言面：① 单包/组合乱序挂载不崩、执行序由 requires 拓扑
-// 自动拉齐；② 默认装配零回归；③ def 冲突被显式捕获（DLC 不能悄悄覆盖核心）；④ 契约表
-// 不登记 DLC 命令 = 不误伤（validateContracts 零违规）；⑤ 卸载（不挂 DLC）= 现状不变；
-// ⑥ 互斥世界观（帝国 vs 教国）由包自管拒绝——框架无互斥机制，包 apply 主动 throw 是
-// 表达"选线冲突"的既定位置。DLC 全部内联于本测试（压力实验非生产功能；真实落地另行建包）。
+// DLC 框架压力测试（2026-08-16 用户点饼"以后要加大航海/一战/无线电/二战/飞天魔法/帝国/教国
+// 等 DLC，先试试现在加会不会搞坏框架"；用户指示：**就是单独的 DLC**——7 个占位包相互独立
+// （requires 全空，无跨包依赖、无世界观缝合；此前自造的"帝国依赖大航海/教国依赖无线电/互斥"
+// 均已删除））——走真实玩法包装配面：系统（registerSystemDef + category + before 锚点）/ 命令 /
+// 卡 / 科技 / 建筑 / 物品 / 敌人 / 配方 / 策略卡。断言面：① 单包挂载不崩；② 七包乱序合挂
+// 33 系统组合步进不崩（清单顺序不承担图约束）；③ def 冲突被显式捕获（DLC 不能悄悄覆盖核心）；
+// ④ 契约表不登记 DLC 命令 = 不误伤（validateContracts 零违规）；⑤ 卸载（不挂）= 默认装配零
+// 回归；⑥ DLC 系统与默认系统同一卸载语义（disableSystem 单独禁用一个 DLC 系统后仍可跑）。
+// DLC 全部内联于本测试（压力实验非生产功能；真实落地另行建包进 playstyle 清单）。
 import { describe, it, expect } from 'vitest';
 import { Sim } from '../../sim/sim';
 import { ModRegistry } from '../../sim/mods/registry';
@@ -15,7 +16,7 @@ import type { ModPack } from '../pack';
 // 合法最小占位系统 ctor（注册 + 步进都需要 id/update——裸对象能注册但 step 会炸，踩坑）
 const stubSys = (id: string) => (): never => ({ id, update: () => {} }) as never;
 
-describe('DLC 框架压力测试（大航海/一战/无线电/二战/飞天魔法/帝国/教国 占位包）', () => {
+describe('DLC 框架压力测试（大航海/一战/无线电/二战/飞天魔法/帝国/教国 独立占位包）', () => {
   it('① 单 DLC 挂载：默认 26 系统 +1，装配/步进不崩，内核 behavior 不变，命令可用', () => {
     const m = ModRegistry.default();
     expect(m.systemDefs.length).toBe(25); // 注册面：25 个插件系统（behavior 内联内核表，不入 _systemDefs）
@@ -30,44 +31,31 @@ describe('DLC 框架压力测试（大航海/一战/无线电/二战/飞天魔�
     expect(sim.events.some((e) => e.text.includes('升帆远航'))).toBe(true);
   });
 
-  it('② 六 DLC 乱序同时挂（世俗线）：拓扑自动拉齐依赖，32 系统组合步进不崩', () => {
+  it('② 七独立 DLC 乱序同时挂：33 系统组合步进不崩（requires 全空 = 清单顺序不承担图约束）', () => {
     const m = ModRegistry.default();
     // 预登记目录（消费面同 playstyleManager：先 registerPack 全清单，再 mount 聚合/单个——requires
-    // 挂在全局包目录上，未登记的依赖会显式报"缺少前置包"（踩坑见 ⑤，非框架缺陷））
+    // 挂在全局包目录上；独立包 requires 全空，乱序挂载天然安全）
     for (const p of [dlcAgeOfSail(), dlcWw1(), dlcRadio(), dlcWw2(), dlcSkyMagic(), dlcEmpire(), dlcTheocracy()]) m.registerPack(p);
-    // 乱序挂：依赖者先挂 → 拓扑自动拉齐被依赖包（本组合走**世俗线**：帝国在场 → 教国被自身
-    // 互斥拒绝（见 ⑦）；所以这里只挂帝国，教权线独立在 ⑦ 验证）
-    m.mount(dlcWw2());      // requires dlc-ww1 → 自动先挂
-    m.mount(dlcSkyMagic()); // requires dlc-radio
+    // 乱序挂（7 个相互独立，无依赖可拉齐——验证任意序合挂正确）
+    m.mount(dlcWw2());
+    m.mount(dlcSkyMagic());
     m.mount(dlcRadio());
     m.mount(dlcAgeOfSail());
-    m.mount(dlcWw1());      // 二战前置（已挂 → 幂等跳过）
-    m.mount(dlcEmpire());   // requires dlc-age-of-sail（海上帝国）：依赖已挂 → 幂等
+    m.mount(dlcWw1());
+    m.mount(dlcEmpire());
+    m.mount(dlcTheocracy());
     const sim = new Sim({ seed: 53, pawnCount: 2, registry: m });
-    for (const id of ['dlc:sail', 'dlc:ww1', 'dlc:radio', 'dlc:ww2', 'dlc:sky', 'dlc:empire']) {
+    for (const id of ['dlc:sail', 'dlc:ww1', 'dlc:radio', 'dlc:ww2', 'dlc:sky', 'dlc:empire', 'dlc:church']) {
       expect(sim.systemIds).toContain(id);
     }
-    expect(sim.systemIds).toHaveLength(26 + 6); // 世俗线 6 系统
-    expect(sim.systemIds).not.toContain('dlc:church'); // 教国被互斥挡在门外
-    for (const pid of ['dlc-ww1', 'dlc-radio', 'dlc-ww2', 'dlc-sky-magic', 'dlc-age-of-sail', 'dlc-empire']) {
+    expect(sim.systemIds).toHaveLength(26 + 7);
+    for (const pid of ['dlc-ww1', 'dlc-radio', 'dlc-ww2', 'dlc-sky-magic', 'dlc-age-of-sail', 'dlc-empire', 'dlc-theocracy']) {
       expect(m.packIds).toContain(pid);
     }
-    expect(m.packIds).not.toContain('dlc-theocracy');
     for (let i = 0; i < 180; i++) sim.step(0.5); // 组合步进不崩
   });
 
-  it('③ requires 依赖闭包：只挂二战 → 一战自动先挂；只挂帝国 → 大航海自动先挂（先于依赖者）', () => {
-    const m = ModRegistry.default();
-    m.registerPack(dlcWw1());
-    m.registerPack(dlcAgeOfSail());
-    m.mount(dlcWw2());
-    m.mount(dlcEmpire());
-    expect(m.packIds.indexOf('dlc-ww1')).toBeLessThan(m.packIds.indexOf('dlc-ww2'));
-    expect(m.packIds.indexOf('dlc-age-of-sail')).toBeLessThan(m.packIds.indexOf('dlc-empire'));
-    for (const pid of ['dlc-ww1', 'dlc-ww2', 'dlc-age-of-sail', 'dlc-empire']) expect(m.packIds).toContain(pid);
-  });
-
-  it('④ def 冲突被显式捕获：DLC 不得悄悄覆盖核心（建筑/命令/表外系统同 id 均抛错；内核 id 顶不动）', () => {
+  it('③ def 冲突被显式捕获：DLC 不得悄悄覆盖核心（建筑/命令/表外系统同 id 均抛错；内核 id 顶不动）', () => {
     const m = ModRegistry.default();
     // 建筑撞核心 → 抛错
     expect(() => m.registerBuilding({ id: 'campfire', name: '伪装篝火', category: 'structure', meta: {}, hp: 99 } as never))
@@ -84,18 +72,19 @@ describe('DLC 框架压力测试（大航海/一战/无线电/二战/飞天魔�
     expect(() => m.registerSystemDef({ id: 'behavior', label: '假行为', category: 'ai', ctor: stubSys('behavior') })).not.toThrow();
   });
 
-  it('⑤ 契约不误伤：挂 DLC（命令不入契约表 = 不被查）→ validateContracts 零违规，命令照常工作', () => {
+  it('④ 契约不误伤：挂 DLC（命令不入契约表 = 不被查）→ validateContracts 零违规，命令照常工作', () => {
     const m = ModRegistry.default();
     for (const p of [dlcWw1(), dlcRadio(), dlcSkyMagic()]) m.registerPack(p); // 目录预登记（同 ②）
     m.mount(dlcWw1());
-    m.mount(dlcSkyMagic()); // requires 无线电 → 连带 radio-call 命令可用
+    m.mount(dlcRadio()); // 独立包:无线电要命令在场必须显式挂载(此前靠 requires 连带,已随独立化删除)
+    m.mount(dlcSkyMagic());
     expect(validateContracts(m)).toHaveLength(0); // 已登记契约（wear/draft/strategy…）全绿
     const sim = new Sim({ seed: 54, pawnCount: 2, registry: m });
     sim.issueCommand({ type: 'radio-call', x: 0, y: 0, args: { channel: 7 } });
     expect(sim.events.some((e) => e.text.includes('无线电'))).toBe(true);
   });
 
-  it('⑥ 卸载 = 现状不变：不挂 DLC 的默认装配与基线一致（零回归对照）', () => {
+  it('⑤ 卸载 = 现状不变：不挂 DLC 的默认装配与基线一致（零回归对照）', () => {
     const m = ModRegistry.default();
     const sim = new Sim({ seed: 55, pawnCount: 2, registry: m });
     expect(sim.systemIds).toHaveLength(26);
@@ -105,38 +94,30 @@ describe('DLC 框架压力测试（大航海/一战/无线电/二战/飞天魔�
     for (let i = 0; i < 120; i++) sim.step(1);
   });
 
-  it('⑦ 互斥世界观（帝国 vs 教国）：框架无互斥机制，冲突由包 apply 主动拒绝——不破坏挂载器', () => {
+  it('⑥ DLC 系统与默认系统同一卸载语义：disableSystem 单独禁用一个 DLC 系统后仍可跑', () => {
     const m = ModRegistry.default();
-    m.registerPack(dlcEmpire());
-    m.registerPack(dlcTheocracy());
-    m.mount(dlcEmpire()); // 先挂帝国
-    expect(m.packIds).toContain('dlc-empire');
-    // 教国检测到帝国在场 → apply 主动 throw（"选线冲突"由包自管；框架只承担 requires 的"能挂"层面）
-    expect(() => m.mount(dlcTheocracy())).toThrow(/互斥/);
-    // 失败不污染挂载器：教国未挂入、帝国仍在、后续挂载不受影响
-    expect(m.packIds).not.toContain('dlc-theocracy');
-    expect(m.packIds).toContain('dlc-empire');
-    m.mount(dlcAgeOfSail()); // 依赖预登记 + 失败后继续挂载仍正常
-    expect(m.packIds).toContain('dlc-age-of-sail');
-    // 教权线单独成立：无帝国在场 → 教国正常挂载（requires 无线电自动先挂），28 系统可步进
-    const m2 = ModRegistry.default();
-    m2.registerPack(dlcRadio());
-    m2.registerPack(dlcTheocracy());
-    m2.mount(dlcTheocracy());
-    const sim2 = new Sim({ seed: 56, pawnCount: 2, registry: m2 });
-    expect(sim2.systemIds).toContain('dlc:church');
-    expect(sim2.systemIds).toHaveLength(26 + 2);
-    sim2.issueCommand({ type: 'convert', x: 0, y: 0 });
-    expect(sim2.events.some((e) => e.text.includes('传教'))).toBe(true);
-    for (let i = 0; i < 120; i++) sim2.step(1);
+    for (const p of [dlcWw1(), dlcRadio(), dlcSkyMagic()]) m.registerPack(p);
+    m.mount(dlcWw1());
+    m.mount(dlcRadio());
+    m.mount(dlcSkyMagic());
+    m.disableSystem('dlc:ww1'); // 挂载后按 id 禁用（与默认系统同一过滤：isSystemEnabled）
+    const sim = new Sim({ seed: 56, pawnCount: 2, registry: m });
+    expect(sim.systemIds).toHaveLength(26 + 2); // 3 挂 1 禁 → 装配只收 2 个 DLC 系统
+    expect(sim.systemIds).not.toContain('dlc:ww1');
+    expect(sim.systemIds).toContain('dlc:radio');
+    expect(sim.systemIds).toContain('dlc:sky');
+    for (let i = 0; i < 120; i++) sim.step(1); // 禁用后组合步进不崩
+    // 禁用只影响装配：命令处理器仍随包在场（命令契约语义：处理器随包不随系统卸载——见 contracts.ts）
+    expect(m.commandHandlers.has('trench')).toBe(true);
+    expect(m.commandHandlers.has('radio-call')).toBe(true);
   });
 });
 
-// ---- 占位 DLC 包（内联实验对象；真实落地时可复用此骨架：requires 显式 + apply 只调注册面）----
+// ---- 占位 DLC 包（内联实验对象；真实落地时可复用此骨架：requires 显式空数组 + apply 只调注册面）----
 
 function dlcAgeOfSail(): ModPack {
   return {
-    id: 'dlc-age-of-sail', name: '大航海 DLC（占位）', requires: [],
+    id: 'dlc-age-of-sail', name: '大航海 DLC（占位）', requires: [], // 独立包：无跨包依赖
     apply(m: ModRegistry): void {
       m.registerSystemDef({ id: 'dlc:sail', label: '远航', category: 'world', ctor: stubSys('dlc:sail') });
       m.registerCommand('set-sails', (ctx) => { ctx.logEvent(`⛵ 升帆远航（目标 ${ctx.selected[0] ?? 0}）`); });
@@ -148,7 +129,7 @@ function dlcAgeOfSail(): ModPack {
 
 function dlcWw1(): ModPack {
   return {
-    id: 'dlc-ww1', name: '一战 DLC（占位）', requires: [],
+    id: 'dlc-ww1', name: '一战 DLC（占位）', requires: [], // 独立包
     apply(m: ModRegistry): void {
       m.registerSystemDef({ id: 'dlc:ww1', label: '堑壕战', category: 'raid', before: 'raid', ctor: stubSys('dlc:ww1') });
       m.registerCommand('trench', (ctx) => { ctx.logEvent('🪖 挖掘堑壕'); });
@@ -160,7 +141,7 @@ function dlcWw1(): ModPack {
 
 function dlcRadio(): ModPack {
   return {
-    id: 'dlc-radio', name: '无线电 DLC（占位）', requires: [],
+    id: 'dlc-radio', name: '无线电 DLC（占位）', requires: [], // 独立包
     apply(m: ModRegistry): void {
       m.registerSystemDef({ id: 'dlc:radio', label: '无线电', category: 'world', ctor: stubSys('dlc:radio') });
       m.registerCommand('radio-call', (ctx) => { ctx.logEvent('📻 无线电呼叫（占位）'); });
@@ -172,7 +153,7 @@ function dlcRadio(): ModPack {
 
 function dlcWw2(): ModPack {
   return {
-    id: 'dlc-ww2', name: '二战 DLC（占位）', requires: ['dlc-ww1'], // 同世界观延续（一战前置）
+    id: 'dlc-ww2', name: '二战 DLC（占位）', requires: [], // 独立包
     apply(m: ModRegistry): void {
       m.registerSystemDef({ id: 'dlc:ww2', label: '装甲战争', category: 'raid', before: 'raid', ctor: stubSys('dlc:ww2') });
       m.registerCommand('barrage', (ctx) => { ctx.logEvent('💥 炮火覆盖（占位）'); });
@@ -182,7 +163,7 @@ function dlcWw2(): ModPack {
 
 function dlcSkyMagic(): ModPack {
   return {
-    id: 'dlc-sky-magic', name: '飞天魔法 DLC（占位）', requires: ['dlc-radio'], // 无线电（占位世界观缝合）
+    id: 'dlc-sky-magic', name: '飞天魔法 DLC（占位）', requires: [], // 独立包
     apply(m: ModRegistry): void {
       m.registerSystemDef({ id: 'dlc:sky', label: '飞天魔法', category: 'world', ctor: stubSys('dlc:sky') });
       m.registerCommand('levitate', (ctx) => { ctx.logEvent('🧙 群体漂浮术（占位）'); });
@@ -193,7 +174,7 @@ function dlcSkyMagic(): ModPack {
 
 function dlcEmpire(): ModPack {
   return {
-    id: 'dlc-empire', name: '帝国 DLC（占位）', requires: ['dlc-age-of-sail'], // 海上帝国：殖民扩张线
+    id: 'dlc-empire', name: '帝国 DLC（占位）', requires: [], // 独立包
     apply(m: ModRegistry): void {
       m.registerSystemDef({ id: 'dlc:empire', label: '帝国', category: 'world', ctor: stubSys('dlc:empire') });
       m.registerCommand('decree-colony', (ctx) => { ctx.logEvent('👑 帝国敕令：拓殖新地（占位）'); });
@@ -204,13 +185,8 @@ function dlcEmpire(): ModPack {
 
 function dlcTheocracy(): ModPack {
   return {
-    id: 'dlc-theocracy', name: '教国 DLC（占位）', requires: ['dlc-radio'], // 无线电传教线
+    id: 'dlc-theocracy', name: '教国 DLC（占位）', requires: [], // 独立包
     apply(m: ModRegistry): void {
-      // 世界观互斥：与帝国线互斥（选线冲突由包自管——框架无互斥机制，requires 只表达"能挂"；
-      // 主动拒绝是包级策略。真实 DLC 中可在商店/清单层做更友好的"换线提示"）
-      if (m.packIds.includes('dlc-empire')) {
-        throw new Error('mod: dlc-theocracy 与 dlc-empire 世界观互斥（帝权 vs 教权），不能同挂');
-      }
       m.registerSystemDef({ id: 'dlc:church', label: '教国', category: 'world', ctor: stubSys('dlc:church') });
       m.registerCommand('convert', (ctx) => { ctx.logEvent('⛪ 传教布道（占位）'); });
       m.registerStrategyCard({ id: 'dlc:crusade', label: '圣战令', action: 'walkAndWork', workType: 'hunt', duration: 90, weight: 8, condition: { kind: 'always' }, reason: '占位' });
