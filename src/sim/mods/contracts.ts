@@ -10,7 +10,6 @@
 //   meta.cookSpiced）不入表——契约表只登记**跨包/跨层**键（写方 ≠ 读方）。building meta
 //   深合并共存（registry.overrideDef 深合并，registry.ts:454 背景）与本表正交。
 import type { ModRegistry } from './registry';
-import { weightRulesOf } from './query';
 
 // ---- 跨包键常量（写方/读方引用处唯一权威；改名 = 编译期全网纠错）----
 export const K_WARMTH = 'warmth';      // item.meta.warmth：clothing 写（正=御寒/负=散热）、thermo 读
@@ -20,11 +19,7 @@ export const K_WORN = 'worn';          // pawn.extra.worn：clothing 写（{ bod
 // 的 check 谓词依赖它做"衣物族"检测 → 定常量防拼错（审计 2026-08-15：check 曾裸串 'dye'，
 // 键改名时校验防线会静默失效，与"拼错 = 编译期错误"纪律冲突）
 export const K_DYE = 'dye';
-// ---- RW-1（2026-08-15 工作优先级 + 征召战斗）----
-// pawn.extra[K_WORK_PRIORITIES]：work-priority 玩法包写（Record<jobId, 0|1|2|3|4>）、
-// 权重规则/服务端 protocol 透传读。**跨包/跨层键**（包写 + server 协议读 + 客户端 HUD 读）
-// 入契约表；值语义 = 缺键 = 未设置（自主），0 = 显式禁止。
-export const K_WORK_PRIORITIES = 'workPriorities';
+// ---- RW-1（2026-08-15 征召战斗；工作优先级 M1 已按用户裁决撤回 = 无此键）----
 // pawn.extra[K_DRAFTED]：drafting 玩法包写（boolean 征召标志）、behavior 是否自决/渲染/服务端
 // protocol 读。跨包/跨层键入契约表；值语义 = true = 征召中（不自主决策）。
 export const K_DRAFTED = 'drafted';
@@ -66,14 +61,6 @@ export const CONTRACTS: MetaContract[] = [
     // 本条目为登记 + 文档语义。恒真：不抓主动卸载（卸载 thermo = 用户选择，非拼错缺陷，
     // "卸载不破坏核心"纪律优先；校验只抓"写方在场却漏写/写错"，见上两条）
     check: () => true,
-  },
-  {
-    key: 'pawn.extra.workPriorities',
-    writer: 'work-priority', reader: 'behavior(权重规则)/server protocol/HUD',
-    type: 'Record<jobId, 0|1|2|3|4>（缺键 = 未设置 = 自主；0 = 禁止）',
-    // 运行时数据（随档）。拼错防护靠 K_WORK_PRIORITIES 常量；写方在场但"权重规则未注册"
-    // 会静默失效，故 predicate = 若包在场则必须有对应权重规则（workPriority 规则）。
-    check: (m) => !m.packIds.includes('work-priority') || weightRulesOf().some((r) => r.id === 'workPriority'),
   },
   {
     key: 'pawn.extra.drafted',
@@ -118,13 +105,6 @@ export const COMMAND_CONTRACTS: CommandContract[] = [
     check: (m) => !hasWearables(m) || m.commandHandlers.has('wear'),
   },
   {
-    type: 'set-work-priority',
-    args: ['priority'], // job 走 Command.job 顶层位；priority 走 args 通用位（缺省 = 恢复自动）
-    writer: 'hud/play.ts/客户端', reader: 'work-priority',
-    // 写方（work-priority 包）在场 → 命令处理器必须已注册（防处理器被删但玩法数据还在）。
-    check: (m) => !m.packIds.includes('work-priority') || m.commandHandlers.has('set-work-priority'),
-  },
-  {
     type: 'draft',
     args: ['drafted'],  // drafted 走 args 通用位（true = 征召）
     writer: 'hud/客户端', reader: 'drafting',
@@ -135,6 +115,15 @@ export const COMMAND_CONTRACTS: CommandContract[] = [
     args: ['hostileIndex'], // hostileIndex = protocol hostiles.i（下标）；pawnId 用顶层位
     writer: 'hud/客户端（右键敌人）', reader: 'drafting',
     check: (m) => !m.packIds.includes('drafting') || m.commandHandlers.has('attack'),
+  },
+  {
+    type: 'strategy',
+    args: ['cardId'], // cardId = 策略卡 id（registry.strategyCards 表）；pawnId 可选（选中插卡用）
+    writer: 'hud/客户端（神谕/策略面板）', reader: 'oracle-guidance',
+    // RW-1 M1 修订（2026-08-15）：玩家工作影响唯一通道 = 神谕引导（目标/蓝图/插卡）。
+    // cmdValidate 走通用通道（pawnId 存在性即可），cardId 合法性由包处理器把关（与 wear 同模式）；
+    // 契约登记 = 包在场则处理器必须已注册（防"面板在但命令没人接"静默失效）。
+    check: (m) => !m.packIds.includes('oracle-guidance') || m.commandHandlers.has('strategy'),
   },
 ];
 
@@ -150,12 +139,9 @@ export const PROTOCOL_CONTRACTS: MetaContract[] = [
     type: 'string?（穿着衣物 itemId；染色款 = `${dye}_${base}`，前缀即染料 id）', check: () => true },
   { key: 'protocol.items.w', writer: 'server', reader: 'client（HUD 穿衣按钮过滤）',
     type: 'boolean?（ItemDef.meta.wearable 透传）', check: () => true },
-  // RW-1（2026-08-15）：工作优先级 + 征召经协议下发（Field = 值语义文档；server 从
-  // pawn.extra 填充，client/HUD 读取渲染 Work Tab / 征召按钮）。值语义：workPriorities =
-  // Record<jobId, 0|1|2|3|4>（缺省 = 全自动）、drafted = boolean（true = 征召中）。
-  // 约定：改字段名/值格式会静默破坏远程 Work Tab 编辑与征召同步（与 worn 染色同理）。
-  { key: 'protocol.pawns.workPriorities', writer: 'server', reader: 'client（Work Tab/HUD）',
-    type: 'Record<jobId, 0|1|2|3|4>?（缺省/空 = 全自动）', check: () => true },
+  // RW-1（2026-08-15）：征召经协议下发（Field = 值语义文档；server 从 pawn.extra 填充，
+  // client/HUD 读取渲染征召按钮）。值语义：drafted = boolean（true = 征召中）。变更会静默
+  // 破坏远程征召同步（与 worn 染色同理）。工作优先级 M1 已撤回 → 无此协议字段。
   { key: 'protocol.pawns.drafted', writer: 'server', reader: 'client（征召渲染/HUD）',
     type: 'boolean?（缺省 = 未征召）', check: () => true },
 ];

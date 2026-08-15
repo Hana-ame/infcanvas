@@ -116,6 +116,7 @@ export function makeMinCtx(seed = 1, override?: Partial<MinCtx>): MinCtx {
     grantTechFragment: (id) => { _fragments.push(id); return true; },
     fragmentsNeeded: (id) => 1,
     setOracleGoal: () => {},
+    printCard: () => null, // RW-1 M1 修订：接口新增印卡通道；最小 ctx 桩 = 不插卡（null）
     addProductionNear: (x, y, item, amount) => { ctx.stockpile[item] = (ctx.stockpile[item] ?? 0) + amount; },
     upgradeBuilding: (x, y, defId) => { _upgrades.push({ x, y, defId }); return true; },
     isNight: () => false,

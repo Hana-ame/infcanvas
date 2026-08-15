@@ -31,10 +31,7 @@ import type { ScriptedEvent } from './systems/eventSystem';
 import { SYSTEM_DEFS, CATEGORY_ORDER, type SystemDef } from './defs/systems';
 import { jobLabelOf } from './defs/jobs';
 import { INTERESTS } from './defs/interests';
-// RW-1（2026-08-15 工作优先级）：assign 快捷方式写/迁移 workPriorities。helper 语义归
-// work-priority 玩法包（引擎只调语义不实现玩法）；K_WORK_PRIORITIES = 跨包键常量。
-import { migrateFromAssignedJob, applyAssignedJobShortcut } from '../mods/packs/work-priority';
-import { K_WORK_PRIORITIES, K_DRAFTED } from './mods/contracts';
+import { K_DRAFTED } from './mods/contracts';
 // 2026-08-15 内核纯引擎：不再硬引用 BehaviorSystem/SocialUnitSystem 类——
 // behavior/socialUnit 迁出为玩法包，经 provide 能力让渡。仅取执行器类型签名。
 import type { IntentExecutor, WorkExecutor } from './systems/cardSystem';
@@ -386,12 +383,7 @@ export class Sim implements SimContext {
         const st = ctx.pawnStates.get(eid);
         if (!st) continue;
         st.assignedJob = cmd.job || undefined;
-        // RW-1（2026-08-15）：指派职业 = 工作优先级快捷方式。assignedJob 仍是旧机制展示，
-        // 同时把优先级表强制写为（主职业=1、其他=0）——assign 是显式"只干这行"指令，覆盖细调
-        // 是预期；load 迁移是幂等版（不覆盖细调），两者语义分离（work-priority 包 helper）。
-        // 卸载 work-priority 后仅写 extra 无人消费，无害（卸载不破坏核心）。
-        applyAssignedJobShortcut(st);
-        ctx.logEvent(st.assignedJob ? `📋 指派 #${eid} 为 ${jobLabelOf(cmd.job!)}（其他工作禁止，见工作面板）` : `📋 取消 #${eid} 的指派`);
+        ctx.logEvent(st.assignedJob ? `📋 指派 #${eid} 为 ${jobLabelOf(cmd.job!)}` : `📋 取消 #${eid} 的指派`);
       }
     });
     this.mods.registerCommand('oracle', (ctx, cmd) => {
@@ -932,9 +924,8 @@ export class Sim implements SimContext {
     desires: Record<DesireId, number>;
     oracleBuff?: { until: number; mood: number };
     assignedJob?: string;
-    // RW-1（2026-08-15）：工作优先级 + 征召（extra 存档扩展点）——与 RemoteSim.pawnProfile
-    // 同契约，HUD 用同一读取面渲染 Work Tab / 征召按钮，无需区分本地/远程。
-    workPriorities?: Record<string, number>;
+    // RW-1（2026-08-15）：征召（extra 存档扩展点）——与 RemoteSim.pawnProfile 同契约，
+    // HUD 用同一读取面渲染征召按钮，无需区分本地/远程。
     drafted?: boolean;
     lastDecision?: { drawn: string[]; picked: string; time: number };
   } | null {
@@ -949,7 +940,6 @@ export class Sim implements SimContext {
       desires: st.desires ?? initDesires(this.rng, this.tuning.desire),
       oracleBuff: st.oracleBuff,
       assignedJob: st.assignedJob,
-      workPriorities: (st.extra?.[K_WORK_PRIORITIES] as Record<string, number> | undefined),
       drafted: st.extra?.[K_DRAFTED] === true,
       lastDecision: st.lastDecision,
     };
@@ -1047,11 +1037,7 @@ export class Sim implements SimContext {
         st.inventory = p.inventory ?? {};
         st.oracleBuff = p.oracleBuff;
         st.assignedJob = p.assignedJob;
-        // RW-1（2026-08-15）：旧档 assignedJob（顶层随档）迁移为工作优先级（extra 扩展点）。
-        // 迁移 = 主职业=1、其他=0，保留玩家已有指派；新档已写 extra[K_WORK_PRIORITIES] 时不
-        // 覆盖（migrateFromAssignedJob 幂等）。assignedJob 字段本身保留（HUD 展示/向后兼容）。
         if (p.extra) st.extra = p.extra;
-        migrateFromAssignedJob(st); // 旧档迁移不丢 assignedJob（RW-1 完成定义）
         st.fireId = p.fireId ?? null;
         st.knownFires = p.knownFires;
         if (p.needs) this.setNeeds(eid, p.needs);

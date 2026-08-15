@@ -233,7 +233,6 @@ function buildSnapshotLike(sim: Sim): SnapshotMsg {
         desires: p.desires,
         lastDecision: p.lastDecision ? { ...p.lastDecision } : undefined,
         worn: '',
-        workPriorities: p.workPriorities,
         drafted: p.drafted === true || undefined,
       };
     }),

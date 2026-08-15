@@ -124,17 +124,10 @@ const rulePriority: WeightRule = {
 };
 
 // 指派职业（Q10）：强制主导对应工作卡，其他工作卡权重压到极低（倍率读 tuning）
-// RW-1（2026-08-15）：work-priority 玩法包新增 workPriority 规则（before:'job'），把
-// assignedJob 演化为每工作 0~4 优先级。当 pawn 已有工作优先级（view.workPriorities 非空）
-// 时，本规则**让位**——优先级调制完全由 workPriority 规则承担，避免双重调制（assign
-// 快捷方式会把 assignedJob 迁移为 workPriorities，两者会同时在场）。仅在无优先级的旧
-// 行为（纯 assignedJob，如 hg 玩法或未迁移）下兜底。
 const ruleJob: WeightRule = {
   id: 'job',
   label: '指派职业',
   apply(w, card, pawn, ctx) {
-    const pri = ctx?.view.workPriorities;
-    if (pri && Object.keys(pri).length > 0) return w; // 优先级在场 → 交 workPriority 规则
     const job = ctx?.view.assignedJob;
     const cardT = ctx?.view.tuning?.card;
     if (job && cardT) {

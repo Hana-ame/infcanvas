@@ -47,7 +47,7 @@ import { populationPack } from './population';
 import { eventsPack } from './events';
 import { bootstrapPack } from './bootstrap';
 import { clothingPack } from './clothing';
-import { workPriorityPack } from './work-priority';
+import { oracleGuidancePack } from './oracle-guidance';
 import { draftingPack } from './drafting';
 
 // 包目录对照表（id → 真包对象；管理器/测试用）。id 校验失败即抛错——防清单改错 id 后
@@ -76,7 +76,7 @@ export const PLAYSTYLE_PACKS: Record<string, ModPack> = {
   events: eventsPack,
   bootstrap: bootstrapPack,
   clothing: clothingPack,
-  'work-priority': workPriorityPack,
+  'oracle-guidance': oracleGuidancePack,
   drafting: draftingPack,
 };
 
@@ -113,7 +113,7 @@ export const DEFAULT_PLAYSTYLE_PACKS: string[] = [
   'autobuild',
   'bootstrap',
   'clothing',
-  'work-priority',
+  'oracle-guidance',
   'drafting',
 ];
 

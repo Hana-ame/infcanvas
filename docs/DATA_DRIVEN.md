@@ -636,3 +636,18 @@ overrideTuning(patch: DeepPartial<TuningConfig>): this  // 覆盖平衡参数（
 - **命令契约**：`draft {args.drafted: boolean}`（batch 走 selected；征召清工作态+路径、解除清攻击指定）+ `attack {args.hostileIndex: number}`（只作用于已征召小人；cmdValidate 校验 pawnId 存在 + hostileIndex ∈ [0, hostiles.length)）。
 - **协议字段**：`pawns.drafted?: boolean`（snapshot + delta，标量 diff，缺省 undefined = 未征召；server 从 extra 归一 `=== true || undefined`）。attackTarget 不下发（服务端内部结算数据，客户端无需）。
 - **契约登记**（contracts.ts 三类表追加）：`pawn.extra.drafted` / `pawn.extra.attackTarget`（check = drafting 包在场 → draft/attack 命令处理器必须已注册）、COMMAND `draft [drafted]` / `attack [hostileIndex]`、PROTOCOL `pawns.drafted`。
+
+### 15.3 神谕卡式工作引导包（oracle-guidance，2026-08-15 追加）
+
+**§15.1（work-priority 包）已撤回**（用户裁决：逐小人数字优先级 = 直接管理意图进选择链）；本节为修订 M1 的数据面。默认挂载（playstyle 清单 25 包不变——worker 包数 24→23、oracle-guidance 加入）。
+
+| 数据 | 位置 | 语义 |
+| --- | --- | --- |
+| 降旨冷却 / 目标时长 | 包内 CFG `{ cooldownSeconds: 45, defaultDuration: 120 }`（HUD 展示镜像 ORACLE_CFG cooldownSeconds，权威在包命令处理器） | 防止面板变遥控器；目标时长与随机神谕一致（同槽 sim.oracleGoal 不跳变） |
+| 冷却存储 | `WeakMap<SimContext, number>`（模块级闭包，键 = ctx 对象身份，GC 安全） | **瞬态不随档**（与 commandCooldown 同设计，§14 三层边界"瞬时工作态"）。为什么不用模块级 Map：跨 Sim 实例串扰 |
+| 新增策略卡 | 伐木令 `oracle:chop`（workType 'chop'，weight 8）/ 采矿令 `oracle:mine`（workType 'mine'，weight 7） | 条件 `stockLow` 阈值读 tuning 路径 `population.foodThreshold`（数据驱动铁律：mod 可覆盖）；意义 = 2026-08-13「伐木令退位为可选神谕目标」定案落库，随机神谕同样采样（引导非经济平衡，经济调节归 economy 包账本） |
+| 插卡 id 前缀 | 习惯卡 id = `strategy:${cardId}`（HUD 以 `strategy:` 前缀识别"身上策略卡"） | printCard 插入后仍走抽 3 选 1 卡池（非保证执行）；选中小人才插（无选中 = 仅降目标） |
+| 蓝图副作用 | 策略卡 `blueprint` 声明 → build 命令入队（nearCamp 营地旁环扫 / far 远环扫，半径回退，与 dummyLlm 同构；**LLM 层冻结禁改 §8，包内自带落点扫描**） | 队列去重（buildQueue 已有同 defId → 跳过）= "只入队一次"；建成后形成闭环始终是引擎既有建造语义 |
+
+- **契约登记**：**零新增** pawn.extra 键、零协议字段（strategy 命令走 COMMAND_CONTRACTS 新增登记：`strategy [cardId]`，发令方 hud/客户端 → 处理器 oracle-guidance，check = 包在场 → 处理器必须已注册；cmdValidate 走通用通道——pawnId 存在性即可，cardId 合法性由包处理器把关，与 wear 同模式）。
+- **SimContext.printCard**（唯一内核扩展）：Sim 早已实现的 LLM 印卡通道上接口（策略卡/习惯卡插入槽位）；为什么进接口：纯插件无法不经接口触碰小人槽位（槽位是引擎数据）。

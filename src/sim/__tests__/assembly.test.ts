@@ -16,9 +16,10 @@
 // 内核 = 0 系统纯演算框架——"纯引擎可跑"断言从 2 系统降为 0 系统。
 // 2026-08-15 clothing 制衣玩法包（用户需求：服装制作/染料/设计=科技抽卡/材质）：
 // BASE_SYSTEM_ORDER 扩为 25 系统（clothing 在产出组末尾 cook 后、raid 前）。
-// 2026-08-15 RW-1 玩法包（M1 work-priority 纯规则/命令无系统 + M2 drafting 征召战斗）：
+// 2026-08-15 RW-1 玩法包（M2 drafting 征召战斗；M1 工作优先级已按用户裁决撤回）：
 // drafting 注册系统 id 'drafting'（category 'raid'，清单末位 → raid 组内 raid 后），
-// 默认装配 25→26 系统；work-priority 无系统（权重规则 + 命令，不进系统装配面）。
+// 默认装配 25→26 系统；oracle-guidance（神谕卡式引导）无系统（命令 + 策略卡 + 冷却，
+// 不进系统装配面；see docs/RW_SPRINT2.md）。
 // 2026-08-15 一致性重构（用户裁决：插件/mod 不要有不一致行为）：行为决策引擎本质是引擎
 // 服务，从玩法包迁回内核（SYSTEM_DEFS 内联 ctor = 内核 1 系统）；执行序改为**类别语义序
 // （CATEGORY_ORDER）× 组内注册序推导**（sim.registerSystems），默认装配执行序与旧表

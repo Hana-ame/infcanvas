@@ -8,11 +8,16 @@ import type { BehaviorCardDef } from '../sim/ai/pawn';
 import type { SimView } from './remote';
 import { DESIRES } from '../sim/core/desires';
 import { JOBS, jobLabelOf } from '../sim/defs/jobs';
+import { evalStrategyCondition, type StrategyCardDef, type StrategyCtx } from '../sim/defs/strategyCards';
 import { weatherLabel } from '../sim/core/env';
 import { keybindings, ACTIONS } from './keybindings';
 import type { ActionId } from './keybindings';
 import { svgDataUri, HUD_SVG, BUILDING_SVG, PAWN_SVG, pawnAssetIdFor } from './svgAssets';
 import { K_WORN } from '../sim/mods/contracts';
+
+// 神谕/策略面板展示用冷却/目标时长（RW-1 M1 修订）：仅本地估算展示用——权威闸在
+// oracle-guidance 玩法包命令处理器（CFG.cooldownSeconds=45），二者镜像；远程无此面板。
+const ORACLE_CFG = { cooldownSeconds: 45 };
 
 // SVG 图标（data URI，DOM <img>）；无素材的 id 回退 emoji
 function icon(id: string, size = 16): string {
@@ -66,20 +71,8 @@ function injectStyle(): void {
 .hud-chip{border-radius:5px;padding:2px 7px;font:11px system-ui;margin-right:4px;}
 .hud-jobrow{display:flex;gap:4px;flex-wrap:wrap;margin:4px 0;}
 .hud-tag{font-size:11px;}
-/* RW-1 Work Tab（工作优先级，2026-08-15）：紧凑表格——行=小人、列=工作（JOBS 表数据驱动）；
-   单元格按钮 = 优先级，点击循环 空白→1→2→3→4→0→空白；1 最强（绿色）→ 0 禁止（红叉） */
-.hud-work{margin-top:6px;border-collapse:collapse;}
-.hud-work td,.hud-work th{border:1px solid #333;padding:1px 3px;font-size:10px;text-align:center;min-width:26px;}
-.hud-work th{color:#aaa;background:rgba(255,255,255,.04);}
-.hud-work .pawn{color:#4cf;text-align:left;padding:1px 6px;}
-.hud-work button{width:100%;min-height:18px;border:0;background:transparent;color:#888;cursor:pointer;font-size:11px;}
-.hud-work button:hover{background:rgba(255,255,255,.1);}
-.hud-work .p1{color:#7cffa0;font-weight:bold;}
-.hud-work .p2{color:#c8ff7c;}
-.hud-work .p3{color:#ffe08a;}
-.hud-work .p4{color:#ffcaa0;}
-.hud-work .p0{color:#ff6b6b;text-decoration:line-through;}
-.hud-work .rowsel{background:rgba(76,204,255,.12);}
+/* RW-1 M1 修订（2026-08-15）：Work Tab 数字优先级已撤回（用户裁决：直接管理意图进选择链
+   违背一切皆抽卡）；神谕/策略面板用普通 hud-pop 列表，不再需要 .hud-work 表格 CSS */
 `;
   document.head.appendChild(st);
 }
@@ -380,9 +373,14 @@ export function createHud(
   facBtn.innerHTML = `${icon('factions')} 派系`;
   const techBtn = document.createElement('button');
   techBtn.innerHTML = `${icon('card')} 科技`;
-  const workBtn = document.createElement('button');
-  workBtn.innerHTML = `${icon('tools')} 工作`; // 工具图标 = 工作优先级面板入口（HUD_SVG 无 work，回退 tools）
-  centerBtns.append(helpBtn, histBtn, facBtn, techBtn, workBtn);
+  // RW-1 M1 修订（2026-08-15）：神谕/策略面板入口（oracle 图标）——玩家降策略卡引导
+  // 工作方向（伐木令/采矿令/垦田令…），一切效果走神谕目标层 + 蓝图副作用 + 插卡（可选）。
+  // 远程模式（SimView 无 strategyCards 数据）隐藏：观看模式只读，降旨是单机玩法。
+  const oracleBtn = document.createElement('button');
+  oracleBtn.innerHTML = `${icon('oracle')} 神谕/策略`;
+  // 远程观看模式（SimView.mods 无 strategyCards 数据源）→ 隐藏（降旨面板是单机玩法）
+  if (!('strategyCards' in (sim.mods as unknown as object))) oracleBtn.style.display = 'none';
+  centerBtns.append(helpBtn, histBtn, facBtn, techBtn, oracleBtn);
   root.appendChild(centerBtns);
 
   const helpPanel = document.createElement('div');
@@ -394,6 +392,7 @@ export function createHud(
     `📱 <b>触摸</b>：点选 · 长按移动 · 双指拖动/缩放<br>` +
     `⌨️ <b>键盘</b>：${k('pause')} 暂停 · ${k('speed1')}/${k('speed2')}/${k('speed3')} 调速 · ${k('cancel')} 取消/退出建造 · ${k('buildWall')} 建墙 · ${k('viewToggle')} 视角 · ${k('menuFold')} 菜单折叠<br>` +
     `🃏 <b>策略卡</b>：神谕按局面降下策略卡（顶部紫色横幅），缺粮垦田、人丁旺拓荒迁徙<br>` +
+    `⛪ <b>神谕/策略面板</b>：点顶部「神谕/策略」按钮也可自己降旨引导工作（伐木令/采矿令/垦田令…）——只引导不指令，小人可能不听；冷却 45s<br>` +
     `🏗 <b>建造菜单</b>：下方按类分组选建筑 → 地图点击放置（绿=可建，红=不可）<br>` +
     `🧠 <b>小人自主</b>：小人自己伐木/采矿/建造/祈祷/疗伤，心情差会违抗安排<br>` +
     `📋 <b>指派职业</b>：选中小人 → 面板按钮指派伐木工/矿工/农民/工匠/渔民（或自由）<br>` +
@@ -432,26 +431,22 @@ export function createHud(
   histBtn.addEventListener('click', () => toggle(histPanel));
   facBtn.addEventListener('click', () => toggle(facPanel));
   techBtn.addEventListener('click', () => toggle(techPanel));
-  // RW-1 Work Tab（工作优先级，2026-08-15）：点击单元格循环优先级并下发命令。
-  // 行 = 小人、列 = JOBS 表工作；与事件委托面板同级（innerHTML 重建不丢委托点击）。
-  const workPanel = document.createElement('div');
-  workPanel.className = 'hud-pop';
-  workPanel.style.maxWidth = '560px';
-  workPanel.style.maxHeight = '70vh';
-  root.appendChild(workPanel);
-  panels.push(workPanel);
-  workBtn.addEventListener('click', () => toggle(workPanel));
-  // 单元格点击委托：data-wjob=工作 id、data-weid=小人 eid → 循环优先级并下发命令
-  workPanel.addEventListener('click', (e) => {
-    const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-wjob]');
+  // 神谕/策略面板（RW-1 M1 修订）：卡片列表 = sim.mods.strategyCards（本地直读；远程无
+  // 数据源 → 按钮隐藏）。点击卡 → strategy 命令（降旨）。面板状态行（生效目标/冷却）在
+  // update 每帧重建；点击走事件委托（innerHTML 重建不丢）。
+  const oraclePanel = document.createElement('div');
+  oraclePanel.className = 'hud-pop';
+  oraclePanel.style.maxWidth = '560px';
+  oraclePanel.style.maxHeight = '70vh';
+  root.appendChild(oraclePanel);
+  panels.push(oraclePanel);
+  let oracleLastIssued = 0; // 冷却本地估算（秒；权威闸在 sim 命令处理器，这里只做展示）
+  oracleBtn.addEventListener('click', () => toggle(oraclePanel));
+  oraclePanel.addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-card]');
     if (!btn) return;
-    const eid = Number(btn.dataset.weid);
-    const job = btn.dataset.wjob!;
-    const p = sim.pawnProfile(eid);
-    if (!p || !(job in JOBS)) return;
-    const cur = p.workPriorities?.[job]; // undefined = 空白（未设置/自主）
-    const next = cur === undefined ? 1 : cur === 1 ? 2 : cur === 2 ? 3 : cur === 3 ? 4 : cur === 4 ? 0 : undefined;
-    sim.issueCommand({ type: 'set-work-priority', x: 0, y: 0, pawnId: eid, job, args: { priority: next } });
+    oracleLastIssued = sim.time;
+    sim.issueCommand({ type: 'strategy', x: 0, y: 0, pawnId: sim.selectedIds[0], args: { cardId: btn.dataset.card } });
   });
   const togglePanel = (name: 'helpToggle' | 'historyToggle' | 'factionToggle' | 'techsToggle'): void => {
     const map = { helpToggle: helpPanel, historyToggle: histPanel, factionToggle: facPanel, techsToggle: techPanel } as const;
@@ -590,26 +585,48 @@ export function createHud(
         (lockedBuildings.length > 0 ? `<br><b>🔒 未解锁建造：</b>${lockedBuildings.join('、')}` : '');
     }
 
-    // 🗂 Work Tab（RW-1 工作优先级，2026-08-15）：行=小人、列=JOBS 表工作数据驱动。
-    // 每帧重建表格（纯文本 + data 属性按钮，点击走委托）；仅显示时重建省开销。
-    if (workPanel.style.display === 'block') {
-      const jobIds = Object.keys(JOBS) as string[];
-      const html = `<b>🗂 工作优先级（工作面板）</b> ` +
-        `<span style="color:#888">点击单元格循环：空白(自动)→1(最高)→2→3→4→0(禁止)→空白；<br>紧急需求（吃/睡/治疗/理智）优先于一切工作优先级</span><br>` +
-        `<table class="hud-work"><tr><th>小人</th>${jobIds.map((j) => `<th>${JOBS[j].label}</th>`).join('')}</tr>` +
-        sim.pawns.map((eid) => {
-          const p = sim.pawnProfile(eid);
-          if (!p) return '';
-          const cls = sim.selectedIds.includes(eid) ? 'rowsel' : '';
-          const cells = jobIds.map((j) => {
-            const v = p.workPriorities?.[j];
-            const label = v === undefined ? '' : String(v);
-            const pcls = v === undefined ? '' : `p${v}`;
-            return `<td><button data-wjob="${j}" data-weid="${eid}" class="${pcls}" title="${JOBS[j].label}">${label}</button></td>`;
-          }).join('');
-          return `<tr class="${cls}"><td class="pawn">#${eid}</td>${cells}</tr>`;
-        }).join('') + `</table>`;
-      workPanel.innerHTML = html;
+    // ⛪ 神谕/策略面板（RW-1 M1 修订）：生效目标 + 冷却 + 可降策略卡列表。
+    // 卡片表 = sim.mods.strategyCards（本地注册表直读；远程无数据 → 按钮已隐藏，面板不渲染）。
+    // 可用态 = evalStrategyCondition（SimView 字段组 slim ctx，见 StrategyCtx）。
+    if (oraclePanel.style.display === 'block') {
+      const ox = sim as unknown as { oracleGoal?: { workType?: string; label: string; until: number } | null; time?: number } | null;
+      const goal = ox?.oracleGoal ?? null;
+      const goalRow = goal
+        ? `🕯 生效目标：<b>${goal.label}</b>（${goal.workType ?? '无工作加成'}，剩余 ${nf(Math.max(0, goal.until - (ox?.time ?? 0)))}s）`
+        : '🕯 当前无神谕目标（小人全自主）';
+      const cooling = Math.max(0, ORACLE_CFG.cooldownSeconds - (sim.time - oracleLastIssued));
+      const coldRow = cooling > 0
+        ? `<span style="color:#caa">冷却中（${nf(cooling)}s 后可再降旨）</span>`
+        : '冷却就绪，可降旨';
+      const cards = (sim as unknown as { mods?: { strategyCards?: StrategyCardDef[] } }).mods?.strategyCards ?? [];
+      // slim ctx：SimView 各字段与 SimContext 形状不同（world/tuning 是轻量视图），
+      // 运行时字段齐全（本地模式），类型经 unknown 收窄——eval 只读这些字段。
+      const cardCtx = {
+        stockpile: sim.stockpile,
+        world: sim.world,
+        pawnList: sim.pawns,
+        buildQueue: sim.buildQueueItems,
+        isNight: () => sim.isNight(),
+        tuning: sim.tuning,
+      } as unknown as StrategyCtx;
+      const oracleGoalMul = ((sim.tuning as unknown as { card?: { oracleGoalMul?: number } }).card?.oracleGoalMul ?? 3);
+      const rows = cards.map((c) => {
+        const ready = evalStrategyCondition(cardCtx, c.condition);
+        const effect = c.workType
+          ? `工作：抽卡权重 ${c.workType}×${oracleGoalMul}（引导非指令）`
+          : '叙事（无权重加成）';
+        const bp = c.blueprint
+          ? ` + 蓝图：${sim.mods.buildings[c.blueprint.defId]?.name ?? c.blueprint.defId}`
+          : '';
+        const selNote = sim.selectedIds.length > 0 ? '（会给你选中的小人发目标卡）' : '';
+        return `<button data-card="${c.id}" ${ready ? '' : 'disabled style="opacity:.45"'} title="${
+          ready ? '降下' : '局面未满足条件（如缺粮/缺资源）'
+        }">${c.label}</button> ${c.reason ?? ''} <span style="color:#888">${effect}${bp}${selNote}</span><br>`;
+      }).join('');
+      oraclePanel.innerHTML =
+        `<b>⛪ 神谕/策略卡</b> · 降旨引导小人工作方向（神谕只引导：小人可抽不到/可违抗；<br>冷却 ${ORACLE_CFG.cooldownSeconds}s 防遥控）<br>` +
+        `<span style="color:#9cf">${goalRow}</span><br><span>${coldRow}</span><br>` +
+        (rows || '<span style="color:#888">暂无策略卡</span>');
     }
 
     const sel = sim.selectedIds;
@@ -652,20 +669,14 @@ export function createHud(
           `<b>${pawnIcon(p.dna.traits)} 小人 ${eid}</b> (${Math.round(p.pos.x)},${Math.round(p.pos.y)})<br>` +
           `<span style="color:#4cf">工作：${p.job || '闲逛'}</span>` +
           (p.assignedJob ? `<br><span style="color:#9cf">指派：${jobLabelOf(p.assignedJob)}</span>` : '') +
-          // RW-1 工作优先级摘要（数据驱动 JOBS 表）：列出已设置项，全部未设置 = 全自动
+          // RW-1 M1 修订：身上策略卡/目标卡（slots 中 id 以 strategy: 前缀者，神谕指引插卡）。
+          // 替代旧 Work Tab 优先级摘要（已撤回——玩家工作影响只走策略卡/神谕目标，见 RW_SPRINT2）
           (() => {
-            const wp = p.workPriorities;
-            const set = wp && Object.keys(wp).length > 0
-              ? Object.entries(wp).filter(([, v]) => v !== undefined && v !== 0)
-                .map(([j, v]) => `${JOBS[j]?.label ?? j}${v}`).join('、')
-              : '';
-            const forbidden = wp && Object.keys(wp).length > 0
-              ? Object.entries(wp).filter(([, v]) => v === 0).map(([j]) => JOBS[j]?.label ?? j).join('、')
-              : '';
-            return (set || forbidden)
-              ? `<br><span style="color:#caa">优先级：${set || '—'}</span>` +
-                (forbidden ? `<br><span style="color:#f77">禁止：${forbidden}</span>` : '')
-              : `<br><span style="color:#888">工作优先级：全自动</span>`;
+            const strat = p.slots.filter((c) => c !== null && c!.id.startsWith('strategy:'));
+            const label = strat.map((c) => (c!.mastery ?? 0) > 0 ? `${c!.name}×${c!.mastery}` : c!.name).join('、');
+            return label
+              ? `<br><span style="color:#caa">🃏 身上策略卡：${label}</span>`
+              : `<br><span style="color:#888">身上策略卡：无</span>`;
           })();
         selBody.innerHTML =
           `HP ${nf(hk?.hp)}/${nf(hk?.maxHp)} · 信仰 ${nf(p.faith)}<br>` +

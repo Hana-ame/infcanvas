@@ -59,10 +59,6 @@ export interface CardView {
   oracleGoal?: { workType: string; label: string; until: number } | null;
   // 指派职业（Q10 生产线）：当前小人固定从事的工作
   assignedJob?: string;
-  // RW-1 工作优先级（work-priority 玩法包）：jobId → 0(禁止)|1|2|3|4（1 最高）。
-  // 缺键 = 未设置 = 自主（权重规则不改动）；与 assignedJob 并存的后者被 assign 快捷方式
-  // 迁移为前者（主职业=1、其他=0）。抽卡权重合成按此调制工作卡（workPriority 规则读它）。
-  workPriorities?: Record<string, number>;
   // 行为结果学习（EWA 吸引模型）：经验记忆（期望收益）→ 权重倍率（1=中性，>1 偏做，<1 回避）
   leanOf?(eid: number, key: string): number;
   // 个人经济预期（按工作类型）：这个活预期能赚多少 → 经济理性调制工作选择

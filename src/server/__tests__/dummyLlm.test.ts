@@ -153,7 +153,7 @@ describe('dummy planner（feedback / random）', () => {
   it('makeDummyCardPlanner：interval 累计 → 降旨目标（不碰选择链）', () => {
     const sim = new Sim({ seed: 27, pawnCount: 2 });
     sim.time = 60; sim.dayTime = 0.5; // 白天（dayTime 在 step 时才重算，需同步设置）
-    sim.stockpile.wood = 1; // 缺木不降令（经济账本调节）；改为缺粮垦田场景验证降旨
+    sim.stockpile.wood = 100; sim.stockpile.ore = 100; // 木/矿充足 → 伐木令/采矿令（RW-1 M1 新增卡，条件=缺木/缺矿）不匹配，隔离出"唯一缺粮 → 垦田令"场景
     const planner = makeDummyCardPlanner(sim, { mode: 'feedback', interval: 60 });
     planner.tick(59);
     expect(planner.printed).toBe(0);

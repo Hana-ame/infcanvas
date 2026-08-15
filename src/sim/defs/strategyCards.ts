@@ -34,8 +34,12 @@ export interface StrategyCardDef {
   reason?: string;            // 降旨原因（横幅显示）
 }
 
+// 条件求值上下文 = SimContext 子集（RW-1 M1 修订：HUD 面板用 SimView 字段组装 slim ctx
+// 判"当前可用"；服务端/玩法包直接传全量 SimContext——结构兼容，无需额外适配层）
+export type StrategyCtx = Pick<SimContext, 'stockpile' | 'world' | 'pawnList' | 'buildQueue' | 'isNight' | 'tuning'>;
+
 // 求值：tuning 引用 → 数值（支持点路径 'population.foodThreshold'；数据驱动铁律：阈值读 tuning，mod 可覆盖）
-function num(v: number | { tuning: string; div?: number }, ctx: SimContext): number {
+function num(v: number | { tuning: string; div?: number }, ctx: StrategyCtx): number {
   if (typeof v === 'number') return v;
   let raw: unknown = ctx.tuning;
   for (const k of v.tuning.split('.')) raw = (raw as Record<string, unknown>)[k];
@@ -43,7 +47,7 @@ function num(v: number | { tuning: string; div?: number }, ctx: SimContext): num
   return (v.div ?? 1) > 1 ? n / (v.div ?? 1) : n;
 }
 
-export function evalStrategyCondition(ctx: SimContext, cond: StrategyCondition): boolean {
+export function evalStrategyCondition(ctx: StrategyCtx, cond: StrategyCondition): boolean {
   const s = ctx.stockpile;
   switch (cond.kind) {
     case 'stockLow': {

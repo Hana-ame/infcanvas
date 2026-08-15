@@ -64,6 +64,10 @@ export interface SimContext {
   oracleGoal: { workType: string; label: string; until: number } | null; // 神谕目标（影响目标层）
   // 神谕设定目标（策略卡 = 神谕目标：只调制工作系列权重 ×oracleGoalMul，不插小人卡槽、不碰选择链）
   setOracleGoal(def: { workType?: string; label: string; duration: number }): void;
+  // 印卡 API（RW-1 M1 修订，2026-08-15 加入接口）：策略卡/习惯卡插入小人槽位（空槽优先、
+  // 满则顶掉 weight 最低卡），插入后仍走抽 3 选 1 卡池。Sim 早已实现（LLM 印卡通道，
+  // DESIGN §6）；唯一原因是玩法包命令处理器需要它——纯插件无法不经接口触碰小人槽位。
+  printCard(def: import('../ai/pawn').BehaviorCardDef, opts?: { target?: number | 'random'; note?: string }): number | null;
   socialUnits: {
     // 2026-08-14 重构：派系实体层删除，只剩"篝火记忆 + 归属"工具
     onCampfireBuilt(key: number): void;
