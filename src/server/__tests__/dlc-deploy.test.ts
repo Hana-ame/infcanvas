@@ -51,5 +51,4 @@ describe('DLC 自动部署（mods/ 目录扫描）', () => {
     expect(sim.events.some((e) => e.text.includes('斯安威斯坦'))).toBe(true);
     expect(sim.pawnStates.get(eid)?.extra?.cyber).toBe('dlc:sandevistan');
   });
-  });
 });
