@@ -1,0 +1,85 @@
+{
+  "manifest": {
+    "id": "dlc-sky-magic",
+    "name": "飞天魔法 DLC",
+    "version": "0.1.0",
+    "description": "独立 DLC 占位包:飞行扫帚/魔力水晶、魔法塔(飞行术科技门控)、飞天令、幼龙",
+    "author": "infcanvas",
+    "requires": {
+      "coreVersion": "0.1.0"
+    }
+  },
+  "defs": {
+    "items": [
+      {
+        "id": "dlc:broom",
+        "name": "飞行扫帚",
+        "desc": "占位",
+        "category": "tool",
+        "meta": {
+          "fly": 1
+        }
+      },
+      {
+        "id": "dlc:mana-crystal",
+        "name": "魔力水晶",
+        "desc": "占位",
+        "category": "material",
+        "meta": {
+          "mana": 1
+        }
+      }
+    ],
+    "buildings": [
+      {
+        "id": "dlc:mage-tower",
+        "name": "魔法塔",
+        "size": {
+          "x": 1,
+          "y": 1
+        },
+        "hp": 150,
+        "color": "#6a4a8a",
+        "emoji": "🪄",
+        "passable": true,
+        "buildTime": 35,
+        "costWood": 40,
+        "tech": "dlc:flight"
+      }
+    ],
+    "techs": [
+      {
+        "id": "dlc:flight",
+        "name": "飞行术",
+        "desc": "占位",
+        "unlocks": [
+          "dlc:mage-tower"
+        ]
+      }
+    ],
+    "strategyCards": [
+      {
+        "id": "dlc:fly",
+        "label": "飞天令",
+        "action": "walkAndWork",
+        "workType": "hunt",
+        "duration": 90,
+        "weight": 8,
+        "condition": {
+          "kind": "always"
+        },
+        "reason": "占位"
+      }
+    ],
+    "enemies": [
+      {
+        "id": "dlc:drake",
+        "name": "幼龙",
+        "hp": 50,
+        "speed": 1.5,
+        "climb": 2,
+        "dmg": 6
+      }
+    ]
+  }
+}

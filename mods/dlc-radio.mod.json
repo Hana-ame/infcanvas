@@ -1,0 +1,83 @@
+{
+  "manifest": {
+    "id": "dlc-radio",
+    "name": "无线电 DLC",
+    "version": "0.1.0",
+    "description": "独立 DLC 占位包:无线电台、电台塔(无线电科技门控)、呼叫令、无线电消息事件",
+    "author": "infcanvas",
+    "requires": {
+      "coreVersion": "0.1.0"
+    }
+  },
+  "defs": {
+    "items": [
+      {
+        "id": "dlc:radio",
+        "name": "无线电台",
+        "desc": "占位",
+        "category": "tool",
+        "meta": {
+          "comms": true
+        }
+      }
+    ],
+    "buildings": [
+      {
+        "id": "dlc:radio-tower",
+        "name": "电台塔",
+        "size": {
+          "x": 1,
+          "y": 1
+        },
+        "hp": 100,
+        "color": "#3a6a8a",
+        "emoji": "📡",
+        "passable": true,
+        "buildTime": 20,
+        "costWood": 20,
+        "tech": "dlc:radio-tech",
+        "capabilities": [
+          "comms"
+        ]
+      }
+    ],
+    "techs": [
+      {
+        "id": "dlc:radio-tech",
+        "name": "无线电",
+        "desc": "占位",
+        "unlocks": [
+          "dlc:radio-tower"
+        ]
+      }
+    ],
+    "strategyCards": [
+      {
+        "id": "dlc:radio-call",
+        "label": "呼叫令",
+        "action": "idle",
+        "duration": 30,
+        "weight": 5,
+        "condition": {
+          "kind": "always"
+        },
+        "reason": "占位"
+      }
+    ],
+    "events": [
+      {
+        "id": "dlc:radio_msg",
+        "name": "陌生波段的消息",
+        "weight": 2,
+        "cooldown": 180,
+        "effects": [
+          {
+            "kind": "mood",
+            "amount": 4,
+            "text": "📻 无线电里传来陌生波段的消息,众人若有所思"
+          }
+        ]
+      }
+    ]
+  }
+}

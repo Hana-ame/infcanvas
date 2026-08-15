@@ -1,0 +1,76 @@
+{
+  "manifest": {
+    "id": "dlc-ww2",
+    "name": "二战 DLC",
+    "version": "0.1.0",
+    "description": "独立 DLC 占位包:特种钢、炮台(装甲战争科技门控)、炮火令、装甲车",
+    "author": "infcanvas",
+    "requires": {
+      "coreVersion": "0.1.0"
+    }
+  },
+  "defs": {
+    "items": [
+      {
+        "id": "dlc:steel",
+        "name": "特种钢",
+        "desc": "占位",
+        "category": "material",
+        "meta": {
+          "alloy": true
+        }
+      }
+    ],
+    "buildings": [
+      {
+        "id": "dlc:turret",
+        "name": "炮台",
+        "size": {
+          "x": 1,
+          "y": 1
+        },
+        "hp": 200,
+        "color": "#5a5a6a",
+        "emoji": "🔫",
+        "passable": false,
+        "buildTime": 30,
+        "costWood": 30,
+        "tech": "dlc:armor-warfare"
+      }
+    ],
+    "techs": [
+      {
+        "id": "dlc:armor-warfare",
+        "name": "装甲战争",
+        "desc": "占位",
+        "unlocks": [
+          "dlc:turret"
+        ]
+      }
+    ],
+    "strategyCards": [
+      {
+        "id": "dlc:barrage",
+        "label": "炮火令",
+        "action": "walkAndWork",
+        "workType": "build",
+        "duration": 90,
+        "weight": 8,
+        "condition": {
+          "kind": "always"
+        },
+        "reason": "占位"
+      }
+    ],
+    "enemies": [
+      {
+        "id": "dlc:armor",
+        "name": "装甲车",
+        "hp": 60,
+        "speed": 1.0,
+        "climb": 1,
+        "dmg": 8
+      }
+    ]
+  }
+}

@@ -1,0 +1,77 @@
+{
+  "manifest": {
+    "id": "dlc-2077",
+    "name": "赛博朋克 2077 DLC",
+    "version": "0.1.0",
+    "description": "独立 DLC 占位包:斯安威斯坦义体、义体医生诊所(义体技术科技门控)、义体强化令、巡逻无人机",
+    "author": "infcanvas",
+    "requires": {
+      "coreVersion": "0.1.0"
+    }
+  },
+  "defs": {
+    "items": [
+      {
+        "id": "dlc:sandevistan",
+        "name": "斯安威斯坦(义体:神经反应加速)",
+        "desc": "占位",
+        "category": "implant",
+        "meta": {
+          "cyber": true,
+          "reflex": 2
+        }
+      }
+    ],
+    "buildings": [
+      {
+        "id": "dlc:ripperdoc",
+        "name": "义体医生诊所",
+        "size": {
+          "x": 1,
+          "y": 1
+        },
+        "hp": 60,
+        "color": "#ff5233",
+        "emoji": "🦾",
+        "passable": true,
+        "buildTime": 30,
+        "costWood": 15,
+        "tech": "dlc:chrome"
+      }
+    ],
+    "techs": [
+      {
+        "id": "dlc:chrome",
+        "name": "义体技术",
+        "desc": "占位",
+        "unlocks": [
+          "dlc:ripperdoc"
+        ]
+      }
+    ],
+    "strategyCards": [
+      {
+        "id": "dlc:chrome-up",
+        "label": "义体强化令",
+        "action": "walkAndWork",
+        "workType": "build",
+        "duration": 90,
+        "weight": 8,
+        "condition": {
+          "kind": "always"
+        },
+        "reason": "占位"
+      }
+    ],
+    "enemies": [
+      {
+        "id": "dlc:dron",
+        "name": "巡逻无人机",
+        "hp": 30,
+        "speed": 1.2,
+        "climb": 1,
+        "dmg": 5
+      }
+    ]
+  }
+}

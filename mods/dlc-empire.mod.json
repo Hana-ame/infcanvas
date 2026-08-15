@@ -1,0 +1,85 @@
+{
+  "manifest": {
+    "id": "dlc-empire",
+    "name": "帝国 DLC",
+    "version": "0.1.0",
+    "description": "独立 DLC 占位包:铸币/丝绸、皇宫(帝国法统科技门控)、拓殖令、叛军",
+    "author": "infcanvas",
+    "requires": {
+      "coreVersion": "0.1.0"
+    }
+  },
+  "defs": {
+    "items": [
+      {
+        "id": "dlc:coin",
+        "name": "帝国铸币",
+        "desc": "占位",
+        "category": "material",
+        "meta": {
+          "value": 1
+        }
+      },
+      {
+        "id": "dlc:silk",
+        "name": "丝绸",
+        "desc": "占位",
+        "category": "material",
+        "meta": {
+          "luxury": 1
+        }
+      }
+    ],
+    "buildings": [
+      {
+        "id": "dlc:palace",
+        "name": "皇宫",
+        "size": {
+          "x": 2,
+          "y": 2
+        },
+        "hp": 400,
+        "color": "#8a6a3a",
+        "emoji": "🏰",
+        "passable": true,
+        "buildTime": 60,
+        "costWood": 120,
+        "tech": "dlc:imperium"
+      }
+    ],
+    "techs": [
+      {
+        "id": "dlc:imperium",
+        "name": "帝国法统",
+        "desc": "占位",
+        "unlocks": [
+          "dlc:palace"
+        ]
+      }
+    ],
+    "strategyCards": [
+      {
+        "id": "dlc:colony",
+        "label": "拓殖令",
+        "action": "walkAndWork",
+        "workType": "build",
+        "duration": 90,
+        "weight": 8,
+        "condition": {
+          "kind": "always"
+        },
+        "reason": "占位"
+      }
+    ],
+    "enemies": [
+      {
+        "id": "dlc:rebel",
+        "name": "叛军",
+        "hp": 35,
+        "speed": 1.1,
+        "climb": 1,
+        "dmg": 5
+      }
+    ]
+  }
+}

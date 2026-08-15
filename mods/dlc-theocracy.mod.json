@@ -1,0 +1,80 @@
+{
+  "manifest": {
+    "id": "dlc-theocracy",
+    "name": "教国 DLC",
+    "version": "0.1.0",
+    "description": "独立 DLC 占位包:圣典、大教堂(神学科技门控,心情光环)、圣战令、异端",
+    "author": "infcanvas",
+    "requires": {
+      "coreVersion": "0.1.0"
+    }
+  },
+  "defs": {
+    "items": [
+      {
+        "id": "dlc:tome",
+        "name": "圣典",
+        "desc": "占位",
+        "category": "tool",
+        "meta": {
+          "faith": 1
+        }
+      }
+    ],
+    "buildings": [
+      {
+        "id": "dlc:cathedral",
+        "name": "大教堂",
+        "size": {
+          "x": 2,
+          "y": 2
+        },
+        "hp": 350,
+        "color": "#8a7a6a",
+        "emoji": "⛪",
+        "passable": true,
+        "buildTime": 50,
+        "costWood": 100,
+        "tech": "dlc:theology",
+        "aura": {
+          "radius": 5,
+          "moodPerSec": 0.3
+        }
+      }
+    ],
+    "techs": [
+      {
+        "id": "dlc:theology",
+        "name": "神学",
+        "desc": "占位",
+        "unlocks": [
+          "dlc:cathedral"
+        ]
+      }
+    ],
+    "strategyCards": [
+      {
+        "id": "dlc:crusade",
+        "label": "圣战令",
+        "action": "walkAndWork",
+        "workType": "hunt",
+        "duration": 90,
+        "weight": 8,
+        "condition": {
+          "kind": "always"
+        },
+        "reason": "占位"
+      }
+    ],
+    "enemies": [
+      {
+        "id": "dlc:heretic",
+        "name": "异端",
+        "hp": 28,
+        "speed": 1.0,
+        "climb": 1,
+        "dmg": 4
+      }
+    ]
+  }
+}
