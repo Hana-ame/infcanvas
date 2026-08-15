@@ -74,8 +74,10 @@ export class AutonomousBuildSystem implements GameSystem {
 
   private evaluate(maxPerEval: number): void {
     const w = this.ctx.world;
-    const cx = Math.floor(w.width / 2);
-    const cy = Math.floor(w.height / 2);
+    // 营地锚点 = 现存篝火/教堂的 barycenter（2026-08-16 用户⑬"AI 自动扩展领地"：
+    // 此前固定以地图中心为圆心 —— 营地拓荒/多营地后 AI 仍绕着出生点扩建。
+    // 以营地为中心向外环形找位 = 领地随营地迁移/茁壮向外扩）。无营地 → 出生点（地图中心）兜底。
+    const camp = this.settlementCenter();
     // 内置计划 + mod 注册计划（mod 优先，可覆盖/追加）
     const plans = [...buildBasePlans(this.ctx), ...this.ctx.mods.expansionPlans];
     let pushed = 0;
@@ -90,7 +92,7 @@ export class AutonomousBuildSystem implements GameSystem {
       if (plan.onExisting) {
         spot = this.findUpgradeSource(plan.defId);
       } else {
-        spot = this.findBuildSpot(cx, cy, plan.defId);
+        spot = this.findBuildSpot(camp.x, camp.y, plan.defId);
       }
       if (spot) {
         // 成本与手动队列一致（def.costWood/costOre；缺省 size²×2 木 / 0 矿）
@@ -104,6 +106,21 @@ export class AutonomousBuildSystem implements GameSystem {
         pushed++;
       }
     }
+  }
+
+  // 营地中心：现存 campfire/church（church=campfire 升级,同为营地锚）坐标的平均值；
+  // 一个营地都没有 → 出生点（地图中心）兜底
+  private settlementCenter(): { x: number; y: number } {
+    const w = this.ctx.world;
+    let sx = 0, sy = 0, n = 0;
+    for (const [key, b] of w.buildings) {
+      if (b.def.id === 'campfire' || b.def.id === 'church') {
+        const p = World.keyToXY(key);
+        sx += p.x; sy += p.y; n++;
+      }
+    }
+    if (n > 0) return { x: Math.round(sx / n), y: Math.round(sy / n) };
+    return { x: Math.floor(w.width / 2), y: Math.floor(w.height / 2) };
   }
 
   // 找一个可升级源建筑（def.upgradesTo === targetDefId），用于原地升级

@@ -227,7 +227,7 @@ function attachScene(
       const wt = renderer.screenToWorld(e.clientX, e.clientY);
       const def = sim.buildingDef(buildMode);
       const can = def ? sim.world.canBuildFootprint(wt.x, wt.y, def) : sim.world.canBuildAt(wt.x, wt.y);
-      renderer.setGhost(wt, can ? 0x4cf : 0xf44);
+      renderer.setGhost(wt, can ? 0x4cf : 0xf44, def?.id); // defId→footprint 整块预览(⑬自由建造设计)
     }
   });
   window.addEventListener('mouseup', () => {

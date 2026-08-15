@@ -55,6 +55,7 @@ export class Renderer {
   private ghost: Graphics;
   private ghostPos: { x: number; y: number } | null = null;
   private ghostColor = 0x4cf;
+  private ghostDefId: string | null = null; // 2026-08-16 用户⑬自由建造设计:多格建筑按 footprint 整块预览
   // 蓝图层（排队中的建造）
   private blueprintLayer: Graphics;
   private lastBuildQueueVersion = -1;
@@ -758,9 +759,10 @@ export class Renderer {
     this.camera.y = wy;
   }
 
-  // 建造幽灵预览
-  setGhost(worldTile: { x: number; y: number }, color?: number): void {
+  // 建造幽灵预览:defId 存在时按建筑 footprint 整块高亮(2×2 农田/教堂不再只见单格)
+  setGhost(worldTile: { x: number; y: number }, color?: number, defId?: string): void {
     this.ghostPos = worldTile;
+    if (defId !== undefined) this.ghostDefId = defId;
     if (color) this.ghostColor = color;
   }
 
@@ -772,9 +774,13 @@ export class Renderer {
   private renderGhost(): void {
     this.ghost.clear();
     if (!this.ghostPos) return;
-    const gx = this.ghostPos.x * TILE;
-    const gy = this.ghostPos.y * TILE;
-    this.ghost.rect(gx, gy, TILE, TILE);
+    // footprint 覆盖格集合:多格建筑整块预览;footprintOf 异常时退单格
+    let tiles: { x: number; y: number }[] = [{ x: this.ghostPos.x, y: this.ghostPos.y }];
+    if (this.ghostDefId) {
+      const foot = this.sim.world.footprintOf(this.ghostPos.x, this.ghostPos.y);
+      if (foot && foot.length > 0) tiles = foot;
+    }
+    for (const t of tiles) this.ghost.rect(t.x * TILE + 1, t.y * TILE + 1, TILE - 2, TILE - 2);
     this.ghost.fill(this.ghostColor);
     this.ghost.alpha = 0.4;
   }

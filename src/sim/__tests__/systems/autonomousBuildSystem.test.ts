@@ -47,3 +47,21 @@ describe('AutonomousBuildSystem 独立测试（最小 ctx，无 Sim）', () => {
     expect(ctx2.buildQueue.length).toBe(0);
   });
 });
+  it('营地(篝火)不在地图中心 → 扩展以营地为中心(2026-08-16 用户⑬ AI自动扩展领地)', () => {
+    // 篝火放 (4,4)（16×16 地图中心是 (8,8)）;食物为 0 → 触发 farm 计划
+    const ctx2 = makeMinCtx(16, { rng: { next: () => 0.01, int: () => 0 } as never });
+    // 篝火定点放 (1,1):远离地图中心 (8,8)。注意不能循环嵌套找位(break 只跳内层
+    // 会放满整排 → 191 个篝火占满地图,findBuildSpot 就找不到空地了——曾踩坑)
+    expect(ctx2.world.placeBuilding(1, 1, 'campfire', 'player')).toBe(true);
+    ctx2.stockpile.wood = 999;
+    ctx2.stockpile.food = 0;
+    const sys2 = new AutonomousBuildSystem(ctx2);
+    const t = ctx2.tuning.autobuild;
+    for (let i = 0; i < Math.ceil(t.evaluateMax) + 2; i++) sys2.update(1);
+    const farm = ctx2.buildQueue.find((b) => b.defId === 'farm');
+    expect(farm).toBeDefined();
+    // 蓝图落点应靠近篝火 (1,1) 而非地图中心 (8,8)
+    const dCamp = Math.hypot(farm!.x - 1, farm!.y - 1);
+    const dCenter = Math.hypot(farm!.x - 8, farm!.y - 8);
+    expect(dCamp).toBeLessThan(dCenter);
+  });
