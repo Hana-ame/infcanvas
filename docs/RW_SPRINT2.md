@@ -108,3 +108,19 @@ raidSystem 指定者优先、UI/渲染/协议/校验 —— 全部保留。位�
 - 面板内卡条件判定用 SimView 字段组装 slim ctx——远程无 defs 数据 → 面板仅本地（已定）。
 - 插卡会顶掉低 weight 基础卡（printCard 既有语义，含随机神谕）——文档注明属设计内。
 - 撤回 11 个优先级测试 → 总用例数下降（394 基线保留，回补 8+ 新测试）。
+## 11. 变更地图（2026-08-16 追加：给出本轮全部文档落点，供后人/未来 agent 检索）
+
+> 为什么有本节：设计铁律"docs 只增不减"意味着旧描述仍在原文里（Work Tab 优先级等），
+> 后来者若只看旧文会被误导。本节 = 一页索引：哪份文档、哪个位置、说了什么、"旧说法作废"
+> 的显式标注在哪。
+
+| 主题 | 文档落点 | 内容要点 |
+|---|---|---|
+| 本轮计划（修订版） | 本文件 RW_SPRINT2.md §1–§10 | M1 撤回原因 + 修订数据模型 + 测试矩阵 + 完成定义 |
+| 设计裁决（现行语义） | docs/DESIGN.md **§22**（2026-08-15 追加） | 神谕双通道裁决：① 神谕引导通道（软约束）② 指挥命令通道（硬约束/M2 例外）；§21 的 M1 部分**作废**、M2 部分有效 |
+| 玩家玩法 | docs/PLAYING.md「神谕/策略面板（工作方向引导，RW-1 M1 修订）」**§起点行 247，撤回注记行 249** | 面板用法：降旨→目标/蓝图/插卡；小人可能不听/违抗；上方「工作优先级（Work Tab）」章节（行 230 起）**已撤回** |
+| 数据面 | docs/DATA_DRIVEN.md **§15.3**（行 640 起） | oracle-guidance 包 CFG（cooldown 45 / duration 120）/ 策略卡数据 / 插卡前缀 / 蓝图副作用；§15.1（work-priority 包，行 614 起）**已撤回** |
+| 进展记录 | docs/PROGRESS.md 行 182–185 | 撤回+落地（182）、M2 保持（183）、收尾验证（184）、补验（185）；行 181 为 drafting 完整记录 |
+| 代码锚点 | `src/mods/packs/oracle-guidance.ts`（strategy 命令 + WeakMap 冷却 + 蓝图扫描 + 2 策略卡） | 全部在玩法包内；`SimContext.printCard`（src/sim/systems/context.ts，唯一内核接口扩展）；COMMAND_CONTRACTS `strategy [cardId]`（src/sim/mods/contracts.ts）；HUD「⛪ 神谕/策略」面板（src/client/hud.ts） |
+| 测试 | `src/mods/packs/__tests__/oracle-guidance.test.ts`（12 用例） | ①–⑧ 任务矩阵 + ⑨ 卸载安全 + ⑩ 旧档残留兼容 |
+| 提交链 | 4658f0f（修订计划）→ 900ad18（feat 神谕卡式引导）→ df4ab13（M2，先行）→ 0ce57bd（docs 同步）→ 4a82aae（验证补测） | 每提交可跑绿；M1 撤回与修订合并在 900ad18 |
