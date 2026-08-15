@@ -35,11 +35,21 @@ describe('DLC 自动部署（mods/ 目录扫描）', () => {
     expect(reg.strategyCards.some((c) => c.id === 'dlc:crusade')).toBe(true);
     expect(reg.strategyCards.some((c) => c.id === 'dlc:chrome-up')).toBe(true);
 
-    // 纯 defs 声明不改系统装配（系统/命令入口在 scripts，此处 DLC 零 scripts）；全量 mods/ 目录
-    // 含 demo-berry（scripts 注册 berrySpoil 系统）→ 27 = 26 默认 + 1 脚本系统——正是"要系统→scripts"对照
+    // 全量 mods/ 装配 = 26 默认 + demo-berry(berrySpoil) + 2077(dlc:cyber) = 28;
+    // 其余 7 个 DLC 纯 defs 零系统——活的分界演示:内容声明不改装配,系统/命令必须 scripts
     const sim = new Sim({ seed: 8, pawnCount: 2, registry: reg });
-    expect(sim.systemIds).toHaveLength(27);
-    expect(sim.systemIds.some((id) => id.startsWith('dlc:'))).toBe(false); // 8 个 DLC 均零系统
+    expect(sim.systemIds).toHaveLength(28);
+    expect(sim.systemIds).toContain('dlc:cyber'); // 2077 scripts 系统(before:craft 锚点进 production 组)
+    for (const absent of ['dlc:sail', 'dlc:ww1', 'dlc:radio', 'dlc:ww2', 'dlc:sky', 'dlc:empire', 'dlc:church']) {
+      expect(sim.systemIds).not.toContain(absent); // 纯 defs DLC 零系统
+    }
     for (let i = 0; i < 120; i++) sim.step(1); // 全量 DLC 内容 + 默认装配步进不崩
+
+    // 2077 scripts 命令:装义体 → 事件 + pawn.extra.cyber 随档扩展点
+    const eid = sim.pawns[0];
+    sim.issueCommand({ type: 'dlc:install-cyber', x: 0, y: 0, pawnId: eid });
+    expect(sim.events.some((e) => e.text.includes('斯安威斯坦'))).toBe(true);
+    expect(sim.pawnStates.get(eid)?.extra?.cyber).toBe('dlc:sandevistan');
+  });
   });
 });

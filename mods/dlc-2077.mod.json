@@ -3,7 +3,7 @@
     "id": "dlc-2077",
     "name": "赛博朋克 2077 DLC",
     "version": "0.1.0",
-    "description": "独立 DLC 占位包:斯安威斯坦义体、义体医生诊所(义体技术科技门控)、义体强化令、巡逻无人机",
+    "description": "独立 DLC:斯安威斯坦义体 + 义体医生诊所(义体技术科技门控) + 义体强化令 + 巡逻无人机;scripts 义体玩法(install-cyber 命令 + dlc:cyber 系统,before:craft 锚点插 production 组)",
     "author": "infcanvas",
     "requires": {
       "coreVersion": "0.1.0"
@@ -73,5 +73,6 @@
         "dmg": 5
       }
     ]
-  }
+  },
+  "scripts": "// 赛博朋克 2077 义体玩法(scripts 函数式扩展示例:未来 DLC 需要系统/命令时的写法)\n// 义体状态 = pawn.extra.cyber(单包自洽键,写读同包,存档扩展点随档;不入契约表)\n// 命令:把斯安威斯坦装到选中/指定小人身上(与 draft 命令同 ctx/pawnStates 契约)\nm.registerCommand('dlc:install-cyber', (ctx, cmd) => {\n  const eids = cmd.pawnId !== undefined ? [cmd.pawnId] : ctx.selected;\n  for (const eid of eids) {\n    const st = ctx.pawnStates.get(eid);\n    if (!st) continue;\n    st.extra = Object.assign({}, st.extra, { cyber: 'dlc:sandevistan' });\n    ctx.logEvent('🦾 义体医生为 #' + eid + ' 植入斯安威斯坦(神经反应加速)');\n  }\n});\n// 义体系统:装配进 production 组(craft 之前,表外系统 before 锚点;\n// 每 60s 义体携带者触发神经加速叙事,占位效果)\nm.registerSystemDef({\n  id: 'dlc:cyber',\n  label: '义体改造',\n  category: 'production',\n  before: 'craft',\n  ctor: (sim) => {\n    let acc = 0;\n    return {\n      id: 'dlc:cyber',\n      update(dt) {\n        acc += dt;\n        if (acc < 60) return;\n        acc = 0;\n        for (const [eid, st] of sim.pawnStates) {\n          if (st.extra && st.extra.cyber) {\n            sim.logEvent('⚡ #' + eid + ' 的斯安威斯坦闪过一道银光(神经反应加速)');\n          }\n        }\n      },\n    };\n  },\n});\n"
 }
