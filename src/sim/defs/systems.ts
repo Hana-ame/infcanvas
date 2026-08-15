@@ -60,6 +60,9 @@ export const SYSTEM_DEFS: Record<string, SystemDef> = {
   cook:       { id: 'cook',        label: '烹饪',     category: 'production' },
   clothing:   { id: 'clothing',    label: '制衣',     category: 'production' },
   raid:       { id: 'raid',        label: '敌袭',     category: 'raid' },
+  // RW-1 征召（2026-08-15，drafting 玩法包）：category 'raid'——接敌驱动与战斗结算同类别
+  //（先结算接敌再续追）。占位条目仅声明类别归属（ctor 由 drafting 包 registerSystemDef 回填）。
+  drafting:   { id: 'drafting',    label: '征召',     category: 'raid' },
   population: { id: 'population',  label: '补员',     category: 'world' },
   events:     { id: 'events',      label: '剧本事件', category: 'world' },
   techPool:   { id: 'techPool',    label: '科技池',   category: 'world' },

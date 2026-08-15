@@ -13,7 +13,7 @@ import { JOB_CARD, JOBS } from '../defs/jobs';
 import { BUILTIN_INTENTS, BUILTIN_WORKS } from '../defs/executors';
 import { fulfill } from '../core/desires';
 // RW-1 工作优先级：decide 把 pawn.extra[K_WORK_PRIORITIES] 暴露给权重规则（跨包键走常量）
-import { K_WORK_PRIORITIES } from '../mods/contracts';
+import { K_WORK_PRIORITIES, K_DRAFTED } from '../mods/contracts';
 
 // 意图执行器：mod 可注册新意图
 export type IntentExecutor = (ctx: SimContext, eid: number, st: PawnState, intent: BehaviorIntent) => void;
@@ -58,6 +58,19 @@ export class BehaviorSystem implements GameSystem {
       if (!st) continue;
       const pos = this.ctx.readPosition(eid);
       if (!pos) continue;
+
+      // RW-1 征召门（2026-08-15，drafting 玩法包 K_DRAFTED 契约键）：
+      // 征召中的小人**不自主**——不抽卡/不工作/不休闲/不吃不睡不治疗，保持站位；
+      // 玩家 move 命令依然有效（path 继续走完）。为什么动内核：抽卡决策是引擎内部循环，
+      // 纯插件无法在不动引擎的前提下阻止它（只读一个契约键，是最小协议扩展）。
+      // 被动衰减不豁免：needs/san 照跑（下方理智/紧急分支被这扇门挡住，征召只挡"自主行动"）。
+      // Key point: 门放在理智分支**之前**——征召 = 完全听指挥，连理智崩溃的自主乱跑也不执行
+      //（但精神崩溃的危险依然存在，解除征召后立即恢复）。
+      if (st.extra?.[K_DRAFTED] === true) {
+        st.job = '待命';
+        if (st.path && st.pathIndex < st.path.length) this.walk(eid, st, pos, dt); // 玩家命令的路径照走
+        continue;
+      }
 
       // 理智崩溃：狂乱行为由 SanSystem 接管（发呆/乱跑），不自动决策
       // 崩溃前遗留的路径仍推进（否则 path 走不完 + SanSystem 见 path 早退 = 永久冻结）

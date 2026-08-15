@@ -148,6 +148,25 @@ function attachScene(
     const world = renderer.screenToWorld(pos.x, pos.y);
     if (buildMode) {
       sim.issueCommand({ type: 'build', x: world.x, y: world.y, buildingId: buildMode });
+    // RW-1 征召右键攻击（2026-08-15）：右键点在敌人身上 + 有被征召小人选中 = 攻击命令
+    //（移动到目标近旁交战，公式在 raidSystem 不复制）。未征召选中 → 反馈提示；无选中回退移动。
+    } else if (sim.hostiles.some((h) => Math.round(h.x) === Math.round(world.x) && Math.round(h.y) === Math.round(world.y))) {
+      const hst = sim.hostiles.find((h) => Math.round(h.x) === Math.round(world.x) && Math.round(h.y) === Math.round(world.y))!;
+      const draftedSel = sim.selectedIds.filter((eid) => sim.pawnProfile(eid)?.drafted === true);
+      if (draftedSel.length > 0) {
+        // hostileIndex 与协议快照对齐：远程快照自带 i，本地 Sim 数组下标用 indexOf
+        const idx = (hst as { i?: number }).i ?? sim.hostiles.indexOf(hst);
+        for (const eid of draftedSel) {
+          sim.issueCommand({ type: 'attack', x: 0, y: 0, pawnId: eid, args: { hostileIndex: idx } });
+        }
+        renderer.showMoveMarker(sim.pawnPositions.get(draftedSel[0]) ?? null, world);
+      } else if (sim.selectedIds.length > 0) {
+        // 反馈（无 bus 监听者，直接进事件 feed——HUD 读 sim.events 渲染）
+        sim.events.push({ time: sim.time, text: '⚠ 攻击需要先征召小人（选中面板 ⚔ 按钮）' });
+      } else {
+        // 无选中：退回普通移动（右键空地 = 移动，右键敌人无选中 = 忽略）
+        // 保持原有移动逻辑为空？（不动作）
+      }
     // 移动选中 pawn。带 pawnId：远程模式 server 无 selected 镜像，显式指定
     } else if (sim.selectedIds.length > 0) {
       sim.issueCommand({ type: 'move', x: world.x, y: world.y, pawnId: sim.selectedIds[0] });

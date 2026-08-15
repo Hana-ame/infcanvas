@@ -67,6 +67,25 @@ export function validateCommand(sim: Sim, raw: unknown, guard: CmdGuardState, no
     }
     return { ok: true };
   }
+  // RW-1 M2 draft（征召）：drafted = 布尔开关；pawnId 缺省 = 走 selected（服务端无选中镜像
+  // 时处理器自行容错）。攻击/征召命令都要求 pawnId 存在（无 pawnId 的事后校验在命令行）。
+  if (c.type === 'draft') {
+    const a = (c.args ?? {}) as Record<string, unknown>;
+    if (typeof a.drafted !== 'boolean') return fail('drafted must be boolean');
+    if (c.pawnId !== undefined && !isPawn(c.pawnId)) return fail('bad pawnId');
+    return { ok: true };
+  }
+  // RW-1 M2 attack（指定攻击）：pawnId 必须存在 + hostileIndex ∈ [0, hostiles 数量)。
+  // 越界下标 = 目标已死/不存在（击杀会 splice 数组），拒收防止打空气。
+  if (c.type === 'attack') {
+    if (!isPawn(c.pawnId)) return fail('bad pawnId');
+    const a = (c.args ?? {}) as Record<string, unknown>;
+    const hi = a.hostileIndex;
+    if (typeof hi !== 'number' || !Number.isInteger(hi) || hi < 0 || hi >= sim.hostiles.length) {
+      return fail('bad hostileIndex');
+    }
+    return { ok: true };
+  }
   // move/mine：坐标类命令强制合法坐标 + 显式 pawnId（观察模式 server 无 selected 镜像，
   // 命令只允许指挥存在的 pawn——pawnId 缺失/非法 = 协议漏洞静默无效，必须拒绝）
   if (c.type === 'move' || c.type === 'mine') {

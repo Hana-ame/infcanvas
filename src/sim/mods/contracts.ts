@@ -83,6 +83,14 @@ export const CONTRACTS: MetaContract[] = [
     // 处理器（防处理器被删但玩法数据还在的配置漂移）。
     check: (m) => !m.packIds.includes('drafting') || m.commandHandlers.has('draft'),
   },
+  {
+    key: 'pawn.extra.attackTarget',
+    writer: 'drafting', reader: 'raidSystem（结算读优先指定者）',
+    type: '{ hostileIndex: number }（指定攻击目标，下标即 protocol hostiles.i）',
+    // 运行时数据（随档）。拼错防护靠 K_ATTACK 常量；drafting 包在场则必须有 attack 命令
+    // 处理器（指定攻击的唯一入口 = 玩家右键敌人发 attack 命令）。
+    check: (m) => !m.packIds.includes('drafting') || m.commandHandlers.has('attack'),
+  },
 ];
 
 // 是否有衣物族（clothing 写方在场的代理信号：有 meta.wearable 物品 = clothing 已装配）
@@ -121,6 +129,12 @@ export const COMMAND_CONTRACTS: CommandContract[] = [
     args: ['drafted'],  // drafted 走 args 通用位（true = 征召）
     writer: 'hud/客户端', reader: 'drafting',
     check: (m) => !m.packIds.includes('drafting') || m.commandHandlers.has('draft'),
+  },
+  {
+    type: 'attack',
+    args: ['hostileIndex'], // hostileIndex = protocol hostiles.i（下标）；pawnId 用顶层位
+    writer: 'hud/客户端（右键敌人）', reader: 'drafting',
+    check: (m) => !m.packIds.includes('drafting') || m.commandHandlers.has('attack'),
   },
 ];
 

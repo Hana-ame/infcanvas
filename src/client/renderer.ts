@@ -294,6 +294,21 @@ export class Renderer {
         drawBar(cx, top, hk.hp / hk.maxHp);
       }
     }
+    // 征召标记（RW-1 M2，drafting 玩法包）：被征召的小人画屏幕恒定大小圈环（半径/线宽都按
+    // 1/zoom 反缩放 → 任意缩放级别屏幕观感一致）。圈环 = "听我指挥"的命令标识，与血条
+    //（被动状态）区分：征召队一眼可辨，蜜蜂则无标记。
+    for (const eid of this.sim.pawns) {
+      const pr = this.sim.pawnProfile(eid);
+      if (!pr?.drafted) continue;
+      const pos = this.sim.pawnPositions.get(eid);
+      if (!pos) continue;
+      const interp = this.interpPos(eid, { x: pos.x, y: pos.y }, this.pawnAnim);
+      const cx = interp.x * TILE + TILE / 2;
+      const cy = this.viewMode === 'iso' ? interp.y * TILE + TILE : interp.y * TILE + TILE / 2;
+      const r = Math.max(12, 22 / this.camera.zoom);
+      this.hpBarLayer.circle(cx, cy, r);
+      this.hpBarLayer.stroke({ color: 0xffd24c, width: Math.max(1, 2.5 / this.camera.zoom), alpha: 0.95 });
+    }
   }
 
   private updateMarker(dt: number): void {

@@ -279,6 +279,7 @@ export function createHud(
         <div id="selTitle"></div>
         <div id="selBody" class="hud-meta"></div>
         <div id="selJobs" class="hud-jobrow"></div>
+        <div id="selDraft" class="hud-jobrow" style="margin-top:4px;"></div>
         <div id="selWear" class="hud-jobrow" style="margin-top:4px;"></div>
         <div id="selOracle" style="display:none;"><button data-act="oracle" style="border-color:#a07ac0;background:#5a3a6a;">${icon('oracle')} 发布神谕</button></div>
       </div>
@@ -289,6 +290,7 @@ export function createHud(
   const selJobs = selPanel.querySelector<HTMLElement>('#selJobs')!;
   const selOracle = selPanel.querySelector<HTMLElement>('#selOracle')!;
   const selPortrait = selPanel.querySelector<HTMLImageElement>('#selPortrait')!;
+  const selDraft = selPanel.querySelector<HTMLElement>('#selDraft')!;
   // 职业按钮（一次创建，永不再生）
   const mkJobBtn = (label: string, job: string): HTMLButtonElement => {
     const b = document.createElement('button');
@@ -326,6 +328,17 @@ export function createHud(
       if (eid >= 0) {
         sim.selected = [eid];
         sim.issueCommand({ type: 'assign', x: 0, y: 0, job: act.slice(4), pawnId: eid });
+      }
+    } else if (act === 'draft') {
+      // RW-1 征召（2026-08-15）：批量开/关征召。以当前小人为基准：已征召 → 解除全部选中，
+      // 未征召 → 征召全部选中（RimWorld 群选指挥语义）。batch 由 draft 命令处理器支持
+      //（pawnId 缺省 = 走 selected）。
+      if (eid >= 0) {
+        const drafted = sim.pawnProfile(eid)?.drafted === true;
+        sim.selected = [...sim.selectedIds];
+        for (const seid of sim.selectedIds) {
+          sim.issueCommand({ type: 'draft', x: 0, y: 0, pawnId: seid, args: { drafted: !drafted } });
+        }
       }
     } else if (act.startsWith('wear:')) {
       // 穿衣/换衣/脱衣（itemId 空 = 脱衣）；穿戴逻辑全在 clothing 玩法包命令处理器
@@ -626,6 +639,11 @@ export function createHud(
         if (!wornNow && wearable.length === 0) {
           selWear.innerHTML = '<span style="color:#777;font-size:11px;">🪡 衣橱空（做衣服或织布后可用）</span>';
         }
+        // RW-1 征召行（2026-08-15）：征召/解除征召按钮（选中组批量为基准小人的状态）。
+        // drafted = "不自主行事，听你指挥"（右键敌人 = 攻击，移动命令仍有效）
+        const draftedNow = p.drafted === true;
+        selDraft.innerHTML = `<button data-act="draft" style="${draftedNow ? 'border-color:#ffd24c;background:#5a4a16;' : ''}">${draftedNow ? '☮ 解除征召' : '⚔ 征召'}</button>` +
+          (draftedNow ? '<span style="color:#ffd24c;font-size:11px;"> 征召中：不自主行事（右键敌人 = 攻击）</span>' : '');
         const nd = p.needs;
         const hk = p.health;
         const slotCards = p.slots.filter((c) => c !== null).map((c) => (c!.mastery ?? 0) > 0 ? `${c!.name}×${c!.mastery}` : c!.name).join('、') || '无';

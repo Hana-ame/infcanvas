@@ -16,6 +16,9 @@
 // 内核 = 0 系统纯演算框架——"纯引擎可跑"断言从 2 系统降为 0 系统。
 // 2026-08-15 clothing 制衣玩法包（用户需求：服装制作/染料/设计=科技抽卡/材质）：
 // BASE_SYSTEM_ORDER 扩为 25 系统（clothing 在产出组末尾 cook 后、raid 前）。
+// 2026-08-15 RW-1 玩法包（M1 work-priority 纯规则/命令无系统 + M2 drafting 征召战斗）：
+// drafting 注册系统 id 'drafting'（category 'raid'，清单末位 → raid 组内 raid 后），
+// 默认装配 25→26 系统；work-priority 无系统（权重规则 + 命令，不进系统装配面）。
 // 2026-08-15 一致性重构（用户裁决：插件/mod 不要有不一致行为）：行为决策引擎本质是引擎
 // 服务，从玩法包迁回内核（SYSTEM_DEFS 内联 ctor = 内核 1 系统）；执行序改为**类别语义序
 // （CATEGORY_ORDER）× 组内注册序推导**（sim.registerSystems），默认装配执行序与旧表
@@ -32,13 +35,13 @@ import { DEFAULT_PLAYSTYLE_PACKS } from '../../mods/packs/playstyle';
 const KERNEL_IDS = KERNEL_SYSTEM_IDS;
 // 玩法包系统 id 全集（默认清单 DEFAULT_PLAYSTYLE_PACKS 里各包注册的系统）：
 // 改装配面时此处须与 playstyle.ts 清单同步（防清单改动后断言失真）
-const PACK_IDS = ['needs', 'san', 'desire', 'economy', 'socialUnit', 'social', 'gather', 'build', 'farm', 'craft', 'repair', 'medicine', 'power', 'thermo', 'trade', 'prison', 'cook', 'clothing', 'raid', 'population', 'events', 'techPool', 'autobuild', 'bootstrap'];
+const PACK_IDS = ['needs', 'san', 'desire', 'economy', 'socialUnit', 'social', 'gather', 'build', 'farm', 'craft', 'repair', 'medicine', 'power', 'thermo', 'trade', 'prison', 'cook', 'clothing', 'raid', 'drafting', 'population', 'events', 'techPool', 'autobuild', 'bootstrap'];
 
 // 期望执行序（2026-08-15 起由类别序 × 组内注册序推导；本数组 = 推导结果快照 = 测试文档）：
 // needs(数值修正) → ai(behavior 决策引擎) → society(socialUnit/social) → production
 // (产出 12 系统，clothing 组内末位 = 清单末位) → raid → world(population/events/techPool/
 // autobuild——清单序调整后与旧 BASE_SYSTEM_ORDER 一致) → boot(bootstrap 恒表尾)
-const EXPECTED_ORDER = ['needs', 'san', 'desire', 'economy', 'behavior', 'socialUnit', 'social', 'gather', 'build', 'farm', 'craft', 'repair', 'medicine', 'power', 'thermo', 'trade', 'prison', 'cook', 'clothing', 'raid', 'population', 'events', 'techPool', 'autobuild', 'bootstrap'];
+const EXPECTED_ORDER = ['needs', 'san', 'desire', 'economy', 'behavior', 'socialUnit', 'social', 'gather', 'build', 'farm', 'craft', 'repair', 'medicine', 'power', 'thermo', 'trade', 'prison', 'cook', 'clothing', 'raid', 'drafting', 'population', 'events', 'techPool', 'autobuild', 'bootstrap'];
 
 function systemOrder(seed = 3): string[] {
   return [...new Sim({ registry: ModRegistry.default(), pawnCount: 1, seed }).systemIds];
@@ -54,9 +57,9 @@ describe('插件化：正向组装（内核引擎 + 玩法包 = 最终模拟器�
     expect(KERNEL_IDS).not.toContain('bootstrap');
   });
 
-  it('默认装配 = 25 系统（clothing 制衣 2026-08-15 加入），且执行序 = 类别推导序（EXPECTED_ORDER 快照）', () => {
+  it('默认装配 = 26 系统（RW-1 drafting 征召 2026-08-15 加入），且执行序 = 类别推导序（EXPECTED_ORDER 快照）', () => {
     const order = systemOrder();
-    expect(order).toHaveLength(25);
+    expect(order).toHaveLength(26);
     // 产出位序：farm→craft→repair→medicine→power→thermo→trade→prison→cook→clothing 必须位于 raid 前
     const raidIdx = order.indexOf('raid');
     expect(order.indexOf('farm')).toBeLessThan(raidIdx);
@@ -68,6 +71,8 @@ describe('插件化：正向组装（内核引擎 + 玩法包 = 最终模拟器�
     for (const p of ['medicine', 'power', 'thermo', 'trade', 'prison', 'cook', 'clothing']) {
       expect(order.indexOf(p)).toBeLessThan(raidIdx);
     }
+    // 征召驱动系统与 raid 同期（category 'raid'，清单末位 → 组内 raid 之后）
+    expect(order.indexOf('drafting')).toBeGreaterThan(raidIdx);
     // 科技/扩张在敌袭/补员后（world 类别：population/events/techPool/autobuild）
     expect(order.indexOf('techPool')).toBeGreaterThan(raidIdx);
     expect(order.indexOf('autobuild')).toBeGreaterThan(raidIdx);

@@ -4,6 +4,7 @@ import type { GameSystem } from './registry';
 import type { SimContext } from './context';
 import type { EventBus } from '../core/events';
 import { World } from '../core/world';
+import { K_ATTACK } from '../mods/contracts'; // RW-1 征召指定攻击（drafting 包契约键）
 
 export class RaidSystem implements GameSystem {
   id = 'raid';
@@ -90,13 +91,28 @@ export class RaidSystem implements GameSystem {
     }
     for (let i = this.ctx.hostiles.length - 1; i >= 0; i--) {
       const h = this.ctx.hostiles[i];
+      // RW-1 征召指定攻击（2026-08-15，drafting 玩法包 K_ATTACK 契约键）：
+      // 被征召小人显式指定攻击的目标 → 由指定者优先接战（即便有更近的非征召小人在场；
+      // 指定 = 玩家命令，优先于自动索敌）。战斗公式（伤害/闪避/掉落）零复制——只是把
+      // "谁接敌"从"纯最近"改为"主选指定者"。指定者未到近战距离时仍回落自动索敌（防
+      // 指定者长途奔袭期间基地白挨打）。K_ATTACK 存 hostileIndex（与协议快照下标对齐）。
       let nearest: number | null = null;
       let nd = t.meleeRange;
-      for (const eid of this.ctx.pawnList) {
-        const pos = this.ctx.pawnPositions.get(eid);
-        if (!pos) continue;
-        const d = Math.hypot(pos.x - h.x, pos.y - h.y);
-        if (d < nd) { nd = d; nearest = eid; }
+      const designator = this.attackDesignatorOf(i);
+      if (designator !== null) {
+        const dpos = this.ctx.pawnPositions.get(designator);
+        if (dpos) {
+          const d = Math.hypot(dpos.x - h.x, dpos.y - h.y);
+          if (d < nd) { nd = d; nearest = designator; }
+        }
+      }
+      if (nearest === null) {
+        for (const eid of this.ctx.pawnList) {
+          const pos = this.ctx.pawnPositions.get(eid);
+          if (!pos) continue;
+          const d = Math.hypot(pos.x - h.x, pos.y - h.y);
+          if (d < nd) { nd = d; nearest = eid; }
+        }
       }
       // 没有足够近的小人时，攻击附近建筑（墙优先）
       if (nearest === null) {
@@ -147,6 +163,21 @@ export class RaidSystem implements GameSystem {
     }
     }
     }
+  }
+
+  // 指定攻击者（RW-1 征召，2026-08-15）：是否有被征召小人显式指定攻击下标为 hostileIndex
+  // 的敌人。扫描 pawn.extra[K_ATTACK]（drafting 包契约键）；返回指定者 eid 或 null。
+  // 背景：击杀会 splice 敌人数组（下标错位），DraftSystem.resolveTarget 会回写修正下标，
+  // 这里只按当前下标找——错位窗口内回落自动索敌（近战结算不崩，只是指定暂时失效）。
+  // 指定攻击者：与 hostileIndex 对齐的征召小人（征召指挥优先于最近者；raid 敌对单位
+  // 下标会因击杀 splice 漂移，指定方在 drafting.resolveTarget 里持续修正下标）。
+  // 类型防御：extra 是运行时 JSON（手写档可能给非数字 hostileIndex → 严格 === 不匹配即忽略）
+  private attackDesignatorOf(hostileIndex: number): number | null {
+    for (const eid of this.ctx.pawnList) {
+      const a = this.ctx.pawnStates.get(eid)?.extra?.[K_ATTACK] as Record<string, unknown> | undefined;
+      if (a && typeof a.hostileIndex === 'number' && a.hostileIndex === hostileIndex) return eid;
+    }
+    return null;
   }
 
   // 半径内最近的建筑（野猫拆家；被毁建筑若为核心 → 触发征服吞并，见 updateCombat）
