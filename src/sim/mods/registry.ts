@@ -28,19 +28,21 @@ import { CARD_PREDICATES as BUILTIN_PREDICATES } from '../defs/cards';
 import { EVENT_PREDICATES } from '../defs/events';
 import type { StrategyCardDef } from '../defs/strategyCards';
 import { STRATEGY_CARDS } from '../defs/strategyCards';
-import { TECHS } from '../defs/techs';
+import { TECHS, TECH_ORDER } from '../defs/techs';
 import type { TechDef } from '../defs/techs';
 import { makeExploreCard } from '../defs/explore';
 import { BUILTIN_WEIGHT_RULES, type WeightRule } from '../defs/weightRules';
 import { SOCIAL_LINES, type SocialLineTable, type TopicTemplate } from '../defs/socialLines';
 import type { CardContext } from '../ai/pawn';
 import { predicateStore, weightRuleStore, socialLinesStore } from './query';
-// 默认玩法包（2026-08-14 插件化重构）：玩法系统全部由玩法包提供，内核只留基础系统
-import { farmingPack } from '../../mods/packs/farming';
-import { craftingPack } from '../../mods/packs/crafting';
-import { repairPack } from '../../mods/packs/repair';
-import { techPoolPack } from '../../mods/packs/tech-pool';
-import { autobuildPack } from '../../mods/packs/autobuild';
+// 玩法包契约 + 包目录 + 远程加载（2026-08-14：前置依赖有向图 / URL 远程包）
+// 2026-08-15 自动组 DAG：挂载序由 topoSort（Kahn）从 requires 推导，框架不维护顺序。
+import { registerPack as registerPackGlobal, loadRemote, topoSort, type ModPack } from '../../mods/pack';
+import type { Command } from '../sim';
+import type { SimContext } from '../systems/context';
+// 默认装配的第一个插件 = 管理器（2026-08-15）：默认玩法清单校验/组 DAG 都在
+// playstyleManager.apply 里——本文件不再 import 任何玩法包（框架与玩法解耦）。
+import { playstyleManager } from '../../mods/packs/playstyle';
 
 // 生命周期钩子上下文（step:before / step:after，见 sim.step）
 export interface HookContext {
@@ -49,6 +51,9 @@ export interface HookContext {
 }
 
 type RegistryMap = Map<string, unknown>;
+
+// 命令处理器（2026-08-15 纯引擎）：玩法包注册，Sim.issueCommand 路由器分发
+export type CommandHandler = (ctx: SimContext, cmd: Command) => void;
 
 // 登记项（含冲突检测）
 export class ModRegistry {
@@ -60,6 +65,8 @@ export class ModRegistry {
   cards = new Map<string, BehaviorCard>();
   intents = new Map<string, IntentExecutor>();
   works = new Map<string, WorkExecutor>();
+  // 命令处理器（2026-08-15 纯引擎：Sim.issueCommand 路由到此处；build/mine/oracle/assign）
+  commandHandlers = new Map<string, CommandHandler>();
   recipesMap = new Map<string, RecipeDef>();
   // 行为结果学习表（EWA）：per-key scale 归一化。跨 Sim 实例共享（与 DESIRES 同策略）
   private static leanStore: Map<LeanKey, LeanDef> = new Map(Object.entries(BUILTIN_LEANS));
@@ -74,10 +81,14 @@ export class ModRegistry {
   // 禁用的系统 id（2026-08-14 用户指摘"为什么不能卸载插件"：装配时跳过。
   // 让"只留采集狩猎"等玩法包能撤掉 farm/techPool/autobuild 等默认系统）
   private _disabledSystems = new Set<string>();
+  // 已挂载的玩法包 id（幂等；拓扑序 apply 的"已解析节点"）
+  private mountedPacks = new Set<string>();
   private hooks = new Map<string, Array<(ctx: HookContext) => void>>();
   private cache = new Map<string, Record<string, unknown>>();
 
-  // 默认装配（Sim 构造与服务端 mod 管理器共用：先建注册表、挂载包，再交给 Sim）
+  // 默认装配（Sim 构造与服务端 mod 管理器共用：先建注册表、挂载管理器，再交给 Sim）
+  // 2026-08-15 第一个插件 = 管理器：默认装配不再由框架内置——策略卡/内置科技登记后，
+  // 只 mount playstyleManager（清单校验 + 组 DAG 拉齐玩法包都在管理器 apply 里）。
   static default(): ModRegistry {
     const r = new ModRegistry({
       tiles: TILES, buildings: BUILDINGS, items: ITEMS, enemies: ENEMIES,
@@ -86,27 +97,64 @@ export class ModRegistry {
     for (const c of STRATEGY_CARDS) r.registerStrategyCard(c); // 内置策略卡表（神谕降旨全数据化）
     // 内置科技统一走 registerTech（含探索卡生成）——mod 追加科技走同一入口 = DLC 科技
     for (const techId of Object.keys(TECHS)) r.registerTech(TECHS[techId]);
-    // 默认玩法包（2026-08-14 插件化重构：模拟器 = 内核 11 系统 + 玩法包叠加）。
-    // 默认装配全部 → new Sim() 即完整模拟器；玩法包可被 disableSystem 撤换
-    //（hunter-gatherer = 换装：卸载 5 个默认玩法系统 + 注册狩猎系统）。
-    // 注意注册顺序：before:'raid' 同锚点插入保序（sim.registerSystems 按注册序排同组），
-    // 故产出包按 farm→craft→repair 声明，最终执行序 = farm→craft→repair→raid。
-    farmingPack(r);
-    craftingPack(r);
-    repairPack(r);
-    techPoolPack(r);
-    autobuildPack(r);
+    r.mount(playstyleManager);
     return r;
+  }
+
+  // ---- 玩法包挂载（2026-08-14：前置依赖有向图解析 + 幂等 + 远程）----
+  // mount(pack)：包自动登记进全局目录；requires 未挂载 → 从目录递归先挂；
+  // 前置包不在目录 → 抛错（提示先 registerPack / loadRemote 该前置）。
+  // 同一包挂载两次（或跨 registry）→ 幂等跳过（apply 只执行一次）。
+  mount(pack: ModPack): this {
+    registerPackGlobal(pack); // 幂等：同对象重复注册安全，不同定义抛错
+    // 2026-08-15 自动组 DAG：topoSort 闭包收集（pack + 全部可达 requires）+ Kahn 拓扑
+    // 排序推导挂载序（前置先 apply，环/缺前置在此检出）——顺序不再由调用方维护。
+    const order = topoSort([pack]);
+    for (const p of order) {
+      if (this.mountedPacks.has(p.id)) continue; // 幂等：已挂载跳过（apply 只执行一次）
+      // 注意：apply 非事务性——中途抛错时已注册的 def 不会回滚（重试会因
+      // def 级冲突二次报错，属已知限制；def 级重复检测把这种失败变成显式错误）。
+      p.apply(this);
+      this.mountedPacks.add(p.id);
+    }
+    return this;
+  }
+
+  // 预登记包到全局目录（供其它包依赖；不立即挂载——挂载时机由 mount 调用方决定）
+  registerPack(pack: ModPack, source?: string): this {
+    registerPackGlobal(pack, source);
+    return this;
+  }
+
+  // 远程包：给 URL 就挂载（fetch → ES module → 目录 → 依赖解析）。
+  // 其 requires 若指向另一个远程包，需先 loadRemote 前置（目录里没有就抛错提示）。
+  async loadRemote(url: string): Promise<ModPack> {
+    const pack = await loadRemote(url);
+    this.mount(pack);
+    return pack;
+  }
+  get packIds(): string[] {
+    return [...this.mountedPacks];
   }
 
   // 科技注册（DLC 扩展口）：注册即自动接入——hasTech 谓词 / noBuilding 谓词 / 探索卡
   //（探索卡 = 娱乐系列：科技建筑解锁初期只有娱乐抽卡能命中建造意图，用户机制）
   registerTech(def: TechDef): this {
+    // 注意（2026-08-15 clothing 包踩坑）：TECHS 是模块级全局表——同进程第二个
+    // ModRegistry.default() 的内置循环会遍历到前次玩法包注册的科技（如 craft:clothing），
+    // 首次注册曾抛 "explore:loom 已存在"。但"全局表已有 def" ≠ "本实例已注册"：
+    // 谓词与探索卡是**实例级装配**，每次 default() 都要注册（registerPredicate 自身幂等；
+    // 探索卡 = this.cards 覆盖式 set——同 id 同 def 的重复路径（内置表 + 玩法包 apply）
+    // 覆盖无害，且保证每个实例的卡片池完整）。
+    // TECH_ORDER 同步 push（2026-08-15 修复）：TECH_ORDER 曾 = Object.keys(TECHS)
+    // 模块加载快照，registerTech 只写 TECHS → DLC 科技（制衣 4 项）永远进不了抽卡池
+    // （TechPoolSystem 165 分钟抽不到 craft:clothing）。幂等：已存在不重复 push。
     TECHS[def.id] = def;
+    if (!TECH_ORDER.includes(def.id)) TECH_ORDER.push(def.id);
     this.registerPredicate(`hasTech-${def.id}`, (c) => c.view.techs?.has(def.id) ?? false);
     for (const b of def.unlocks) {
       this.registerPredicate(`noBuilding-${b}`, (c) => !(c.view.hasBuildingWithTag?.(b) ?? false));
-      this.registerCardDef(makeExploreCard(b, def.id));
+      this.cards.set(`explore:${b}`, cardFromDef(makeExploreCard(b, def.id)));
     }
     return this;
   }
@@ -231,6 +279,15 @@ export class ModRegistry {
   registerIntent(id: string, fn: IntentExecutor): this {
     if (this.intents.has(id)) throw new Error(`mod: intent "${id}" 已存在`);
     this.intents.set(id, fn);
+    return this;
+  }
+
+  // 命令处理器（2026-08-15 纯引擎：Sim.issueCommand 是路由器，玩法包注册各命令处理器）。
+  // 引擎内建 'move'（实体移动）；build/mine/oracle/assign 等由玩法包 registerCommand。
+  // handler 签名 (ctx, cmd)：ctx = SimContext（引擎实现），cmd = Command（引擎协议）
+  registerCommand(type: string, fn: CommandHandler): this {
+    if (this.commandHandlers.has(type)) throw new Error(`mod: command "${type}" 已存在`);
+    this.commandHandlers.set(type, fn);
     return this;
   }
 
@@ -397,10 +454,13 @@ export class ModRegistry {
   }
 
   // ---- 覆盖既有定义（部分字段合并，不改未覆盖字段）----
+  // 2026-08-14 改深合并：此前浅合并 patch 会整体替换嵌套对象（如 meta）——thermo 给
+  // campfire 补 meta.heat、cooking 再补 meta.cookSpiced 时后挂包把先挂包的 meta 整个冲掉。
+  // 深合并后嵌套字段按 key 共存（数组/标量仍整体替换，语义与浅合并一致）。
   overrideDef(kind: 'tile' | 'building' | 'item' | 'card' | 'recipe' | 'enemy', id: string, patch: Record<string, unknown>): this {
     const map = this.mapFor(kind);
     if (!map || !map.has(id)) throw new Error(`mod: 覆盖目标 ${kind} "${id}" 不存在`);
-    map.set(id, { ...(map.get(id) as Record<string, unknown>), ...patch });
+    map.set(id, deepMerge(map.get(id) as Record<string, unknown>, patch));
     const cacheKey = kind === 'card' ? null : kind + 's';
     if (cacheKey) this.cache.delete(cacheKey);
     return this;

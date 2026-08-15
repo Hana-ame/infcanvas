@@ -3,6 +3,7 @@
 // mod 新 passive 建筑带 recipe 即接入（曾踩坑：只认 farm tag 导致水井 water 永不产出）
 import type { GameSystem } from './registry';
 import type { SimContext } from './context';
+import { World } from '../core/world';
 
 export class FarmSystem implements GameSystem {
   id = 'farm';
@@ -15,8 +16,8 @@ export class FarmSystem implements GameSystem {
       if (!b.def.recipe) continue; // 任意 passive recipe 建筑（农田/水井/mod 建筑）
       const recipe = this.ctx.recipe(b.def.recipe);
       if (!recipe || recipe.kind !== 'passive') continue;
-      const x = key % this.ctx.world.width;
-      const y = Math.floor(key / this.ctx.world.width);
+      // 新 key 编码（2026-08-14 无限地图）：World.keyToXY 解码（负坐标支持）
+      const { x, y } = World.keyToXY(key);
       this.ctx.addProductionNear(x, y, recipe.output.item, recipe.output.amount * dt, b.faction);
     }
   }

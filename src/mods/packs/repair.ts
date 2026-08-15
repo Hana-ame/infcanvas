@@ -6,11 +6,18 @@
 import type { ModRegistry } from '../../sim/mods/registry';
 import { RepairSystem } from '../../sim/systems/repairSystem';
 import type { Sim } from '../../sim/sim';
+import type { ModPack } from '../pack';
 
-export function repairPack(m: ModRegistry): void {
+export const repairPack: ModPack = {
+  id: 'repair',
+// 依赖（2026-08-15 显式化）：无硬前置——修缮自足
+  requires: [],
+  apply(m: ModRegistry): void {
   m.registerSystemDef({
     id: 'repair', label: '修缮', category: 'production',
     ctor: (s: Sim) => new RepairSystem(s),
     before: 'raid',
   });
-}
+  }
+};
+

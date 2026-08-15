@@ -42,6 +42,8 @@ export interface CardView {
   hasRaft(): boolean;
   // 通用建筑 tag 查询（mod 谓词注册口：registerPredicate 里可查任意建筑 tag）
   hasBuildingWithTag?(tag: string): boolean;
+  // 距最近 warmth（篝火）建筑距离；-1 = 全图无火（"夜归篝火"类谓词用，mod 注册口）
+  campfireDist?(eid: number): number;
   // 已解锁科技（探索卡谓词 hasTech-xxx 用）
   techs?: ReadonlySet<string>;
   buildQueueCount: number;

@@ -63,3 +63,21 @@ describe('GatherSystem 独立测试（最小 ctx，无 Sim）', () => {
     expect(capGainTo(0.5, 10)).toBe(0.5); // 小数原样（不做取整，钳制只限制上限）
   });
 });
+
+  it('采集香料丛（growable harvest spice）→ spice 进全局库存', () => {
+    // 发现背景（2026-08-14 香料玩法）：香料丛 = 可通行灌木（不像树挡路），growable +
+    // harvest 数据驱动自动接入 workChop 谓词（growable && harvest）；产物 spice 非食物，
+    // 走全局 stockpile（私有化只针对 food）。
+    const ctx = makeMinCtx(6);
+    ctx.world.setTile(10, 10, 'spiceBush');
+    const sys = attach(ctx, new GatherSystem(ctx));
+    const eid = ctx.spawnPawn(10, 10);
+    const st = ctx._pawnStates.get(eid)!;
+    st.chopXY = { x: 10, y: 10 };
+    st.chopProgress = 0;
+    ctx.setPosition(eid, { x: 10, y: 10 });
+    for (let i = 0; i < 4; i++) sys.update(1); // harvest.time=1.5s，4s 必采完
+    expect(st.chopXY).toBeUndefined();
+    expect(ctx.stockpile.spice ?? 0).toBeGreaterThan(0); // 香料进全局
+    expect(ctx.world.getTile(10, 10)).toBe('grass'); // 采完变草地（growable 缺省替换）
+  });

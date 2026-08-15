@@ -1,6 +1,7 @@
 // RemoteSim —— 连 P1 server 的客户端视图（DESIGN §5：权威在 server）
 // 实现与本地 Sim 同构的读取面，HUD/Renderer 无需区分本地/远程。
 // 用法：?remote=ws://127.0.0.1:8080
+import { K_WEARABLE } from '../sim/mods/contracts';
 import { EventBus, type GameEvent } from '../sim/core/events';
 import type { BehaviorCard } from '../sim/ai/pawn';
 import type { TileDef, BuildingDef, ItemDef } from '../sim/defs';
@@ -9,6 +10,7 @@ import type { WelcomeTuning } from '../shared/protocol';
 import type { FactionTuning } from '../sim/defs/tuning';
 import type { Command } from '../sim/sim';
 import type { ServerMsg, WelcomeMsg, SnapshotMsg, DeltaMsg } from '../shared/protocol';
+import { World, type ChunkData } from '../sim/core/world';
 
 // 协议快照里建筑形状
 interface SnapBuilding {
@@ -45,7 +47,8 @@ export interface SimViewBuilding { def: BuildingDef; defId: string; hp: number; 
 
 export interface SimView {
   techs?: ReadonlySet<string>; // 已解锁科技（单机有；远端缺省 undefined → 全部可见）
-  techsMap?: Record<string, { name: string; desc: string }>; // 科技表（单机有；远端可选）
+  techsMap?: Record<string, { name: string; desc: string; fragments: number }>; // 科技表（2026-08-14 加 fragments=所需碎片数；单机有；远端可选）
+  techFragments?: Record<string, number>; // 已集碎片（2026-08-14 碎片制；单机有；远端缺省 → 只显已解锁）
   stockpile: Record<string, number>;
   hostiles: SimViewHostile[];
   paused: boolean; speed: number; time: number; dayLength: number; tickHz: number;
@@ -87,10 +90,12 @@ export interface SimView {
 }
 
 // ---- 世界视图（只读；tile 增量由 event 更新） ----
+// 无限地图（DESIGN §370 双图层 P0 快照形态）：tileGrid = 已生成 chunk 的完整地形
+//（chunk 键支持负坐标）；未收到 chunk 的区域 = 未知（'mountain'，P2 流式 watchArea 拉取）
 class RemoteWorld {
   width = 192;
   height = 192;
-  private grid: string[] = [];
+  private chunks = new Map<number, string[]>(); // chunkKey → 完整地形 tile id 数组
   buildings = new Map<number, SnapBuilding>();
   buildingVersion = 0;
   private defs: Record<string, BuildingDef>;
@@ -99,23 +104,31 @@ class RemoteWorld {
     this.defs = defs;
   }
 
-  setWorld(w: WelcomeMsg['world'], grid: string[]): void {
+  setWorld(w: WelcomeMsg['world'], chunks: ChunkData[]): void {
     this.width = w.width;
     this.height = w.height;
-    this.grid = grid;
+    this.chunks = new Map();
+    for (const c of chunks) this.chunks.set((c.x + 32768) + (c.y + 32768) * 65536, c.tiles);
   }
 
   getTile(x: number, y: number): string {
-    if (x < 0 || y < 0 || x >= this.width || y >= this.height) return 'water';
-    return this.grid[y * this.width + x] ?? 'grass';
+    const cx = Math.floor(x / 64);
+    const cy = Math.floor(y / 64);
+    const chunk = this.chunks.get((cx + 32768) + (cy + 32768) * 65536);
+    if (!chunk) return 'mountain'; // 未知区域（server 未下发；P2 流式补齐）
+    return chunk[(y - cy * 64) * 64 + (x - cx * 64)] ?? 'grass';
   }
 
   setTile(x: number, y: number, id: string): void {
-    if (x < 0 || y < 0 || x >= this.width || y >= this.height) return;
-    this.grid[y * this.width + x] = id;
+    const cx = Math.floor(x / 64);
+    const cy = Math.floor(y / 64);
+    const ck = (cx + 32768) + (cy + 32768) * 65536;
+    const chunk = this.chunks.get(ck);
+    if (!chunk) return; // 未下发的 chunk：无本地地形，忽略（server 权威）
+    chunk[(y - cy * 64) * 64 + (x - cx * 64)] = id;
   }
 
-  buildKey(x: number, y: number): number { return y * this.width + x; }
+  buildKey(x: number, y: number): number { return x + y * 2 ** 31; }
 
   buildingAt(x: number, y: number): SnapBuilding | null {
     const b = this.buildings.get(this.buildKey(x, y));
@@ -149,7 +162,8 @@ class RemoteWorld {
   applySnapshot(snap: SnapshotMsg): void {
     this.buildings = new Map();
     for (const b of snap.buildings) {
-      this.buildings.set(this.buildKey(b.x, b.y), {
+      // key = 协议自带（World 编码，2026-08-15 审计修复：与 delta 身份统一，不再重拼）
+      this.buildings.set(b.key, {
         ...b,
         def: this.defs[b.defId] ?? { id: b.defId, name: b.defId, size: { x: 1, y: 1 }, hp: b.maxHp, color: '#888', passable: true, buildTime: 3 },
       });
@@ -351,7 +365,8 @@ export class RemoteSim {
         };
       }
       for (const [id, d] of Object.entries(m.items)) {
-        this.mods.items[id] = { id, name: d.name, stackable: true, maxStack: 99 };
+        // w = 可穿标记（clothing 玩法包：HUD 穿衣按钮过滤；读 ItemDef.meta.wearable）
+        this.mods.items[id] = { id, name: d.name, meta: d.w ? { [K_WEARABLE]: true } : undefined };
       }
       this.resolveConnected?.();
     } else if (m.type === 'snapshot') {
@@ -432,6 +447,10 @@ export class RemoteSim {
         if (pd.slots) merged.slots = pd.slots;
         if (pd.desires) merged.desires = pd.desires;
         if (pd.lastDecision) merged.lastDecision = pd.lastDecision;
+        // worn 合并（2026-08-15 审计：diff.ts 已发 worn 变化，此处漏合并 → 远程穿衣后
+        // pawnCache.worn 不更新，染色 tint 等 5s 全量对账才刷新；'' = 脱衣（协议归一），
+        // || undefined 归一为空 —— wornOf 返回值统一（snapshot/delta 无穿着都是 undefined））
+        if (pd.worn !== undefined) merged.worn = pd.worn || undefined;
         this.pawnCache.set(pd.eid, merged);
         if (pd.x !== undefined && pd.y !== undefined) this.pawnPositions.set(pd.eid, { x: pd.x, y: pd.y });
         if (!old) pawnListChanged = true;
@@ -448,8 +467,10 @@ export class RemoteSim {
         if (b.removed) {
           this.world.buildings.delete(b.key);
         } else {
+          // 新 key 编码（2026-08-14 无限地图）：World.keyToXY 解码（负坐标支持）
+          const { x, y } = World.keyToXY(b.key);
           this.world.buildings.set(b.key, {
-            defId: b.defId, x: b.key % this.world.width, y: Math.floor(b.key / this.world.width),
+            defId: b.defId, x, y,
             hp: b.hp, maxHp: b.maxHp, faction: b.faction, footprint: b.footprint,
             def: this.mods.buildings[b.defId] ?? fallbackDef(b.defId),
           });
@@ -468,6 +489,12 @@ export class RemoteSim {
   healthOf(eid: number): { hp: number; maxHp: number } | null {
     const p = this.pawnCache.get(eid);
     return p ? { hp: p.hp, maxHp: p.maxHp } : null;
+  }
+
+  // 穿着衣物物品 id（clothing 玩法包 2026-08-15）：渲染染色 tint 用——远程端 pawn 数据在
+  // pawnCache（快照 worn 字段，server 从 PawnState.extra.worn.body 契约填充）
+  wornOf(eid: number): string | undefined {
+    return this.pawnCache.get(eid)?.worn;
   }
 
   pawnProfile(eid: number): SimViewPawn | null {

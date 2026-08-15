@@ -12,7 +12,8 @@ import { BUILDINGS } from '../defs';
 import type { GameSystem } from '../systems/registry';
 import { spawnWildCamp } from '../defs/events';
 import { carryCapOf, capGainTo } from '../systems/gatherSystem';
-import berryMod from '../../mods/demo-berry';
+import { ModRegistry } from '../mods/registry';
+import { demoBerryPack } from '../../mods/demo-berry';
 
 describe('SimRng', () => {
   it('is deterministic for same seed', () => {
@@ -832,7 +833,8 @@ describe('营地与涌现派系（2026-08-14 重构：派系 = 个体关系涌�
     // 找出生 campfire key
     const fireKey = [...sim.world.buildings.keys()].find((k) => sim.world.buildings.get(k)!.def.id === 'campfire')!;
     // 狼在场但无损失 → 不迁
-    sim.hostiles.push({ x: fireKey % sim.world.width, y: Math.floor(fireKey / sim.world.width), hp: 50, maxHp: 50, targetX: 0, targetY: 0 });
+    const { x: fkx, y: fky } = World.keyToXY(fireKey); // 新 key 编码（2026-08-14 无限地图）
+    sim.hostiles.push({ x: fkx, y: fky, hp: 50, maxHp: 50, targetX: 0, targetY: 0 });
     for (let i = 0; i < 10; i++) sim.step(sim.tuning.faction.migrateCheckEvery);
     expect(sim.factionsView().length).toBe(before);
     // 营地真实被毁（💥 入记忆）+ 威胁在场 → 连续周期后另起篝火。
@@ -844,7 +846,7 @@ describe('营地与涌现派系（2026-08-14 重构：派系 = 个体关系涌�
     for (let i = 0; i < 15; i++) {
       // 狼在营地旁 8 格（威胁半径 10 内满足 nearThreat，但落点环扫 r=8~14
       // 远离旧营地 ≥migrateMinDist=10，狼又不堵住落点）
-      sim.hostiles.push({ x: (fireKey % sim.world.width) + 8, y: Math.floor(fireKey / sim.world.width), hp: 5000, maxHp: 5000, targetX: 0, targetY: 0 });
+      sim.hostiles.push({ x: fkx + 8, y: fky, hp: 5000, maxHp: 5000, targetX: 0, targetY: 0 });
       sim.step(sim.tuning.faction.migrateCheckEvery);
     }
     expect(sim.factionsView().length).toBeGreaterThan(before);
@@ -995,7 +997,7 @@ describe('mod 玩法（DATA_DRIVEN §6 验收）', () => {
 
   it('registerEnemy + raidEnemy swaps in a brand-new enemy type', () => {
     const sim = new Sim({ seed: 214, pawnCount: 2, mods: (m) => {
-      m.registerEnemy({ id: 'boar', name: '野猪', hp: 40, speed: 4, dmg: 6, loot: { item: 'wood', amount: 3 } });
+      m.registerEnemy({ id: 'boar', name: '野猪', hp: 40, speed: 4, climb: 1, dmg: 6, loot: { item: 'wood', amount: 3 } });
       m.overrideTuning({ combat: { raidEnemy: 'boar' } });
     } });
     let h: typeof sim.hostiles[0] | undefined;
@@ -1011,7 +1013,7 @@ describe('mod 玩法（DATA_DRIVEN §6 验收）', () => {
 
   it('registerRecipe adds a new production (herb farm passive)', () => {
     const sim = new Sim({ seed: 201, pawnCount: 2, mods: (m) => {
-      m.registerItem({ id: 'herb', name: '草药', stackable: true, maxStack: 99 });
+      m.registerItem({ id: 'herb', name: '草药' });
       m.registerRecipe({ id: 'herb-farm', name: '草药田', kind: 'passive', output: { item: 'herb', amount: 0.5 } });
       m.registerBuilding({
         id: 'herbfarm', name: '草药田', size: { x: 1, y: 1 }, hp: 60, color: '#3a8a3a',
@@ -1134,12 +1136,14 @@ describe('mod 玩法（DATA_DRIVEN §6 验收）', () => {
     const sim = new Sim({
       seed: 208, pawnCount: 1,
       mods: (m) => m.registerHook('step:before', (ctx) => {
-        (ctx as { sim: Sim }).sim.stockpile.wood += 1;
+        // 用 ore 而非 wood 作改状态探针：初始营火带 cook 配方（2026-08-14），
+        // step 内 cook 系统会消耗 wood，断言 wood 会被烹饪抵消（实测 +1 变 0）
+        (ctx as { sim: Sim }).sim.stockpile.ore += 1;
       }),
     });
-    const before = sim.stockpile.wood;
+    const before = sim.stockpile.ore ?? 0;
     sim.step(1 / 20);
-    expect(sim.stockpile.wood).toBe(before + 1);
+    expect(sim.stockpile.ore).toBe(before + 1);
   });
 
   it('mod work card satisfies a desire via data declaration (no job-text matching)', () => {
@@ -1218,7 +1222,7 @@ describe('mod 玩法（DATA_DRIVEN §6 验收）', () => {
 
   it('craft building uses its own recipe, not the fixed workbench one', () => {
     const sim = new Sim({ seed: 212, pawnCount: 0, mods: (m) => {
-      m.registerItem({ id: 'drink', name: '酒', stackable: true, maxStack: 50 });
+      m.registerItem({ id: 'drink', name: '酒' });
       m.registerRecipe({ id: 'brew', name: '酿酒', kind: 'batch', input: [{ item: 'wood', amount: 5 }], output: { item: 'drink', amount: 1 }, interval: 2 });
       m.registerBuilding({
         id: 'brewery', name: '酒坊', size: { x: 1, y: 1 }, hp: 200, color: '#aa8833', emoji: '🍺',
@@ -1453,18 +1457,30 @@ describe('数据驱动系统装配表（defs/systems.ts 逻辑组件层）', () 
     expect(sim.systemIds[sim.systemIds.length - 1]).toBe('tail-probe');
   });
 
-  it('mod 可替换核心行为/单位系统（单例回填）', () => {
+  it('mod 可替换核心行为系统（禁用原系统 + 自建新系统 + 能力让渡）', () => {
+    // 2026-08-15 纯引擎：behavior 由 behavior 玩法包提供（同 id 再注册会冲突）。
+    // 替换契约升级为"禁用原系统 → 自建新 id 系统 → 构造时 provide('behavior') 能力让渡"，
+    // Sim 的 intent/work 回填走 getter（旧机制 = Sim 硬赋值 this.behavior 单例）。
+    let cap!: { id: string; update(): void; registerIntent: (id: string, fn: unknown) => void; registerWork: (t: string, fn: unknown) => void };
     const sim = new Sim({ seed: 3, pawnCount: 2, mods: (m) => {
+      m.disableSystem('behavior');
       m.registerSystemDef({
-        id: 'behavior', label: '替换行为', category: 'ai',
-        // 替换行为系统的契约：需实现 intent/work 注册（Sim 单例回填后调用）
-        ctor: (s) => ({ id: 'behavior', update() { }, registerIntent() { }, registerWork() { } }),
+        id: 'behavior-custom', label: '替换行为', category: 'ai',
+        ctor: (s) => {
+          cap = { id: 'behavior-custom', update() { }, registerIntent() { }, registerWork() { } };
+          s.provide('behavior', cap); // 能力让渡：Sim 回填 intents/works 到此实例
+          return cap;
+        },
       });
-      // mod 意图仍应挂到新实例（回填单例）
+      // mod 意图仍应挂到新实例（能力让渡后回填）
       m.registerIntent('dance', () => ({ done: true } as never));
     } });
-    expect(sim.systemIds[3]).toBe('behavior');
-    sim.step(1); // 不崩，且 intent 注册不抛（实例回填成功）
+    expect(sim.systemIds).not.toContain('behavior');
+    expect(sim.systemIds).toContain('behavior-custom');
+    sim.step(1); // 不崩，且 intent 注册不抛（能力回填成功）
+    // 验证回填真的发生：Sim.behavior getter（能力）指向新实例，intents 已挂入
+    const probe = sim as unknown as { getCap<T>(cap: string): T | null };
+    expect(probe.getCap<typeof cap>('behavior')).toBe(cap);
   });
 });
 
@@ -1502,7 +1518,10 @@ describe('寻路策略表（tuning.path 参数数据化）', () => {
 
 describe('demo mod 逻辑组件层闭环（demo-berry）', () => {
   it('谓词 + 声明式卡 + 系统装配表全链路', () => {
-    const sim = new Sim({ seed: 9, pawnCount: 2, mods: berryMod });
+    // 2026-08-14 完全插件化：demo mod 已是 ModPack，经 mount 装配（注册表 API 路径）
+    const mods = ModRegistry.default();
+    mods.mount(demoBerryPack);
+    const sim = new Sim({ seed: 9, pawnCount: 2, registry: mods });
     // 卡进表：浆果盛宴（声明式 def → 工厂生成，谓词已组合进 condition）
     const card = sim.mods.cards.get('berryFeast')!;
     expect(card).toBeDefined();
@@ -1988,7 +2007,8 @@ describe('B 方案：篝火 = 区域历史载体，伙伴/敌人由交流篝火�
     expect(sim.world.buildings.has(fireKey)).toBe(true);
     // 摧毁营地 campfire
     sim.world.damageBuilding(fireKey % sim.world.width, Math.floor(fireKey / sim.world.width), 9999);
-    sim.bus.emit({ type: 'building_destroyed', x: fireKey % sim.world.width, y: Math.floor(fireKey / sim.world.width), defId: 'campfire' });
+    const { x: dkx, y: dky } = World.keyToXY(fireKey);
+    sim.bus.emit({ type: 'building_destroyed', x: dkx, y: dky, defId: 'campfire' });
     // reassign 周期后 fireId 不得指向已销毁建筑（可 null = 游牧，或另一 campfire）
     for (let i = 0; i < 2; i++) sim.step(sim.tuning.faction.reassignInterval);
     const fid = sim.pawnStates.get(eid)!.fireId;
@@ -2005,9 +2025,11 @@ describe('B 方案：篝火 = 区域历史载体，伙伴/敌人由交流篝火�
     const sim = new Sim({ seed: 903, pawnCount: 1 });
     sim.tuning.autobuild.campfireTarget = 0; // 隔离 AI 自主建 campfire
     const fireKey = sim.pawnStates.get(sim.pawns[0])!.fireId!;
+    // 新 key 编码（2026-08-14 无限地图）：World.keyToXY 解码（负坐标支持）
+    const { x: dkx, y: dky } = World.keyToXY(fireKey);
     const before = sim.factionsView().length;
     // 狼在场但无建筑损失 → 不迁（狼 hp 大 + 位置在 campfire 上 8 格，威胁半径内但不拆核心）
-    sim.hostiles.push({ x: (fireKey % sim.world.width) + 8, y: Math.floor(fireKey / sim.world.width), hp: 5000, maxHp: 5000, targetX: 0, targetY: 0 });
+    sim.hostiles.push({ x: dkx + 8, y: dky, hp: 5000, maxHp: 5000, targetX: 0, targetY: 0 });
     for (let i = 0; i < 15; i++) sim.step(sim.tuning.faction.migrateCheckEvery);
     expect(sim.factionsView().length).toBe(before); // 无 💥 记忆 → 不迁
     // 营地真实被毁（💥 入史）+ 威胁在场 → 连续周期后另起篝火
@@ -2015,7 +2037,7 @@ describe('B 方案：篝火 = 区域历史载体，伙伴/敌人由交流篝火�
     sim.socialUnits.addMemory(fireKey, '💥 建筑被摧毁（围栏）');
     sim.socialUnits.addMemory(fireKey, '💥 建筑被摧毁（围栏）');
     for (let i = 0; i < 15; i++) {
-      sim.hostiles.push({ x: (fireKey % sim.world.width) + 8, y: Math.floor(fireKey / sim.world.width), hp: 5000, maxHp: 5000, targetX: 0, targetY: 0 });
+      sim.hostiles.push({ x: dkx + 8, y: dky, hp: 5000, maxHp: 5000, targetX: 0, targetY: 0 });
       sim.step(sim.tuning.faction.migrateCheckEvery);
     }
     expect(sim.factionsView().length).toBeGreaterThanOrEqual(before + 1); // 另起新篝火
@@ -2139,5 +2161,30 @@ describe('插件卸载（2026-08-14 用户指摘"为什么不能卸载插件"）
     // 跑 30s 不崩，且有采集发生
     for (let i = 0; i < 600; i++) sim.step(1 / 20);
     expect(sim.pawns.length).toBeGreaterThan(0);
+  });
+
+  it('拒建反馈：指令被拒时 logEvent 说明原因（撞占用/未知建筑/资源不足）', () => {
+    // 发现背景：贸易站指令撞上 fence 被静默拒绝，玩家完全看不出为什么没反应
+    //（剧本游玩时反复点建没反馈）。修复：queueBuild 各拒因分支显式写历史日志。
+    const sim = new Sim({ seed: 402, pawnCount: 2 });
+    const before = sim.buildQueue.length;
+    // 撞占用：出生点已有 campfire
+    const [fkey] = [...sim.world.buildings.entries()][0];
+    const { x: fx, y: fy } = World.keyToXY(fkey); // 新 key 编码（2026-08-14 无限地图）
+    sim.issueCommand({ type: 'build', x: fx, y: fy, buildingId: 'tradePost' });
+    expect(sim.buildQueue.length).toBe(before);
+    expect(sim.events.some((e) => e.text.includes('建造被拒'))).toBe(true);
+    // 未知建筑
+    sim.events.length = 0;
+    sim.issueCommand({ type: 'build', x: 5, y: 5, buildingId: 'noSuchBuilding' });
+    expect(sim.buildQueue.length).toBe(before);
+    expect(sim.events.some((e) => e.text.includes('建造被拒') && e.text.includes('不存在'))).toBe(true);
+    // 资源不足：先花光木料
+    sim.events.length = 0;
+    sim.stockpile.wood = 0;
+    sim.stockpile.ore = 0;
+    sim.issueCommand({ type: 'build', x: 5, y: 5, buildingId: 'campfire' });
+    expect(sim.buildQueue.length).toBe(before);
+    expect(sim.events.some((e) => e.text.includes('建造被拒') && e.text.includes('不足'))).toBe(true);
   });
 });

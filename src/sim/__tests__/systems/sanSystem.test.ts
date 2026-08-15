@@ -63,4 +63,28 @@ describe('SanSystem 独立测试（最小 ctx，无 Sim）', () => {
     for (let i = 0; i < 600; i++) sys.update(1);
     expect(ctx._needs.get(eid)!.san).toBeGreaterThan(low);
   });
+
+  it('回归：崩溃者逃到篝火旁后呆着恢复，不再乱跑走开（永久崩溃死锁）', () => {
+    // 发现背景：采集狩猎局 30 分钟 8/11 人永久崩溃，人在火边 4-13 格 san 恒 0——
+    // handleCrazy 到火旁重置 crazyTime 后继续落下去走乱跑逻辑，永远离开火堆。
+    // 修复：火旁 return（呆着等 SAN 恢复，恢复后自然解除狂乱）。
+    const sys = attach(ctx, new SanSystem(ctx));
+    const eid = ctx.spawnPawn(20, 20);
+    const st = ctx._pawnStates.get(eid)!;
+    // 找首个可放 campfire 的位置，把人放上去（fireComfortRadius 内判定火旁）
+    let fx = 0, fy = 0;
+    for (let x = 0; x < ctx.world.width && !fx; x++)
+      for (let y = 0; y < ctx.world.height; y++)
+        if (ctx.world.placeBuilding(x, y, 'campfire', 'player')) { fx = x; fy = y; break; }
+    expect(fx || fy).toBeTruthy(); // 至少有一格可放
+    const t = ctx.tuning.san;
+    ctx.setNeeds(eid, { food: 100, rest: 100, mood: 100, san: t.crazyAt - 1 });
+    ctx.setPosition(eid, { x: fx, y: fy });
+    st.crazyTime = t.crazyFleeAfter + 10; // 已过逃火阈值
+    const before = { ...ctx._pawnPositions.get(eid)! };
+    for (let i = 0; i < 10; i++) sys.update(1);
+    expect(ctx._pawnPositions.get(eid)).toEqual(before); // 不乱跑（位置不变）
+    // 火旁恢复把 san 拉回狂乱阈值之上（此前会落下去乱跑走开，san 恒 ≤ crazyAt）
+    expect(ctx._needs.get(eid)!.san).toBeGreaterThan(t.crazyAt);
+  });
 });

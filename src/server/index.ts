@@ -4,10 +4,12 @@
 // 客户端：?remote=ws://127.0.0.1:8080
 import { WebSocketServer, WebSocket } from 'ws';
 import { Sim } from '../sim/sim';
+import { World } from '../sim/core/world';
 import { ModRegistry } from '../sim/mods/registry';
 import { loadModsFromDir } from './modManager';
 import { makeDummyCardPlanner } from './dummyLlm';
 import type { Command } from '../sim/sim';
+import { K_WORN, K_WEARABLE } from '../sim/mods/contracts';
 import { makeLlmProvider } from './llm';
 import { buildDelta } from './diff';
 import { validateCommand, allowRate, type CmdGuardState } from './cmdValidate';
@@ -88,7 +90,9 @@ function buildWelcome(clientId: number): WelcomeMsg {
     buildings[id] = { id, name: d.name, size: d.size, color: d.color, emoji: d.emoji, passable: d.passable, hp: d.hp, costWood: d.costWood, costOre: d.costOre };
   }
   const items: WelcomeMsg['items'] = {};
-  for (const [id, d] of Object.entries(sim.mods.items)) items[id] = { id, name: d.name };
+  // w = 可穿标记（clothing 玩法包 2026-08-15：客户端穿衣按钮过滤；读 ItemDef.meta.wearable
+  // 走 K_WEARABLE 常量——审计 2026-08-15：此前裸串 'wearable' 与"跨层键一律引常量"纪律冲突）
+  for (const [id, d] of Object.entries(sim.mods.items)) items[id] = { id, name: d.name, w: d.meta?.[K_WEARABLE] === true };
   const t = sim.tuning;
   return {
     type: 'welcome', you: clientId, seed: SEED, tickHz: TICK_HZ, dayLength: sim.dayLength,
@@ -99,7 +103,9 @@ function buildWelcome(clientId: number): WelcomeMsg {
     },
     world: { width: w.width, height: w.height },
     tiles, buildings, items,
-    tileGrid: w.serializeTiles(),
+    // 完整地形快照（生成层+覆盖合成）而非覆盖层 diff：客户端 RemoteWorld 无生成层算法，
+    // 收 serializeChunks 的空位 '' 无法还原地形（2026-08-14 无限地图双图层形态）
+    tileGrid: w.serializeTerrainChunks(),
   };
 }
 
@@ -128,6 +134,9 @@ function buildSnapshot(): SnapshotMsg {
       slots: p.slots.filter((c) => c !== null).map((c) => ({ id: c!.id, name: c!.name })),
       desires: p.desires,
       lastDecision: p.lastDecision ? { drawn: p.lastDecision.drawn, picked: p.lastDecision.picked, time: p.lastDecision.time } : undefined,
+      // 穿着衣物（clothing 玩法包：协议 worn 字段 = PawnState.extra.worn.body，客户端染色 tint；
+      // '' 归一 = 无穿着（2026-08-15 审计：undefined 经 JSON.stringify 丢字段 → delta 无法表达"脱下"））
+      worn: (sim.pawnStates.get(eid)?.extra?.[K_WORN] as { body?: string } | undefined)?.body ?? '',
     });
   }
   const hostiles: SnapshotMsg['hostiles'] = sim.hostiles.map((h, i) => ({
@@ -135,10 +144,12 @@ function buildSnapshot(): SnapshotMsg {
   }));
   const buildings: SnapshotMsg['buildings'] = [];
   for (const [key, b] of w.buildings) {
-    const x = key % w.width;
-    const y = Math.floor(key / w.width);
+    // 新 key 编码（2026-08-14 无限地图）：必须 World.keyToXY 解码（负坐标支持）
+    const { x, y } = World.keyToXY(key);
     buildings.push({
-      defId: b.def.id, x, y, hp: Math.round(b.hp), maxHp: b.def.hp, faction: b.faction,
+      // key = World 统一编码（2026-08-15 审计修复：diff 端/客户端按同一 key 身份对齐，
+      // 此前 snapshot 无 key、diff 用魔数 1000000 重拼 → 客户端 World.keyToXY 解码错乱）
+      key, defId: b.def.id, x, y, hp: Math.round(b.hp), maxHp: b.def.hp, faction: b.faction,
       footprint: w.footprintOf(x, y).map((f) => ({ x: f.x, y: f.y })),
     });
   }

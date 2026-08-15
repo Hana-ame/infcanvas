@@ -9,6 +9,7 @@
 import type { GameSystem } from './registry';
 import type { SimContext } from './context';
 import type { EventBus } from '../core/events';
+import { World } from '../core/world';
 
 export class SocialUnitSystem implements GameSystem {
   id = 'socialUnit';
@@ -80,8 +81,7 @@ export class SocialUnitSystem implements GameSystem {
     const R2 = radius * radius;
     for (const [key, b] of w.buildings) {
       if (b.def.id !== 'campfire' && !b.def.tags?.includes('anchor')) continue;
-      const bx = key % w.width;
-      const by = Math.floor(key / w.width);
+      const { x: bx, y: by } = World.keyToXY(key);
       const d = (bx - x) ** 2 + (by - y) ** 2;
       if (d <= R2 && d < bestD) { bestD = d; best = key; }
     }
@@ -132,8 +132,7 @@ export class SocialUnitSystem implements GameSystem {
     };
     // 篝火遭袭计数（跨周期累积）：仅当记忆有 💥 且当前有威胁在场才 +1
     const nearThreat = (key: number): boolean => {
-      const bx = key % w.width;
-      const by = Math.floor(key / w.width);
+      const { x: bx, y: by } = World.keyToXY(key);
       return this.ctx.hostiles.some((h) => (h.x - bx) ** 2 + (h.y - by) ** 2 <= f.migrateHostileRadius ** 2);
     };
     // raidCount 从记忆动态计算（无实体，不存字段）：
@@ -161,7 +160,8 @@ export class SocialUnitSystem implements GameSystem {
             if (!w.inBounds(nx, ny)) continue;
             if (hostileNear(nx, ny)) continue;
             if (!w.canBuildAt(nx, ny)) continue;
-            if (Math.abs(nx - key % w.width) + Math.abs(ny - Math.floor(key / w.width)) < f.migrateMinDist) continue;
+            const { x: ox, y: oy } = World.keyToXY(key);
+            if (Math.abs(nx - ox) + Math.abs(ny - oy) < f.migrateMinDist) continue;
             if (w.placeBuilding(nx, ny, 'campfire', 'auto')) {
               const nk = w.buildKey(nx, ny);
               this.onCampfireBuilt(nk);

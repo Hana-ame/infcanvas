@@ -4,6 +4,7 @@
 import type { GameSystem } from './registry';
 import type { SimContext } from './context';
 import type { EventBus } from '../core/events';
+import { World } from '../core/world';
 
 const countBuilding = (ctx: SimContext, defId: string): number => {
   let n = 0;
@@ -110,7 +111,8 @@ export class AutonomousBuildSystem implements GameSystem {
     const w = this.ctx.world;
     for (const [key, b] of w.buildings) {
       if (b.def.upgradesTo === targetDefId) {
-        return { x: key % w.width, y: Math.floor(key / w.width) };
+        // 新 key 编码（2026-08-14 无限地图）：World.keyToXY 解码（负坐标支持）
+        return World.keyToXY(key);
       }
     }
     return null;

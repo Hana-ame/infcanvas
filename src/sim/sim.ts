@@ -5,7 +5,7 @@ import {
   createWorld, addEntity, addComponent, setComponent, query,
   type World as EcsWorld,
 } from 'bitecs';
-import { World } from './core/world';
+import { World, type ChunkData } from './core/world';
 import { TECHS } from './defs/techs';
 import { findPath } from './core/pathfinding';
 import { SimRng } from './core/rng';
@@ -28,11 +28,14 @@ import type { SimContext } from './systems/context';
 import { SystemRegistry } from './systems/registry';
 import type { ScriptedEvent } from './systems/eventSystem';
 
+import { SYSTEM_DEFS, CATEGORY_ORDER, type SystemDef } from './defs/systems';
 import { jobLabelOf } from './defs/jobs';
-import { SYSTEM_DEFS } from './defs/systems';
-import { BehaviorSystem } from './systems/cardSystem';
-import { SocialUnitSystem } from './systems/socialUnitSystem';
 import { INTERESTS } from './defs/interests';
+// 2026-08-15 内核纯引擎：不再硬引用 BehaviorSystem/SocialUnitSystem 类——
+// behavior/socialUnit 迁出为玩法包，经 provide 能力让渡。仅取执行器类型签名。
+import type { IntentExecutor, WorkExecutor } from './systems/cardSystem';
+import type { BootstrapCap } from '../mods/packs/bootstrap';
+import type { EconomyCap } from '../mods/packs/economy';
 
 // 兴趣卡静态表（id → 卡）：存档 load 按卡 id 还原用（与 TRAIT_CARDS 同策略）。
 // 背景：兴趣休闲卡（interest:xxx）是 initSlots 注入卡槽的，不属于 mods.cards/基础卡/天赋卡，
@@ -52,6 +55,12 @@ const NOOP_SOCIAL_UNITS: SimContext['socialUnits'] = {
   addMemory: () => {},
   fireHistory: () => [],
 };
+
+// behavior 能力（2026-08-15 纯引擎：决策引擎 = 玩法包提供的能力，Sim 只消费注册面）
+export interface BehaviorCap {
+  registerIntent(id: string, fn: IntentExecutor): void;
+  registerWork(type: string, fn: WorkExecutor): void;
+}
 
 // ---- ECS 组件定义 ----
 export interface PositionData { x: number; y: number }
@@ -81,6 +90,10 @@ import { observe, onSet } from 'bitecs';
 
 export interface PawnState {
   dna: Dna;
+  climb: number; // 通过能力（高差上限；spawn 时从 tuning.pawn.climb 取——单位各自能力，mod 可 overrideTuning）
+  // ⚠️ 差距登记（2026-08-15 审计）：实现 = spawn 取 tuning 后从不修改，全小人恒同值；
+  // 存档不还原也无差别（值恒等于 tuning）。若未来做个体差异（如天赋加攀爬），
+  // 需在 SaveData 增加 climb 字段并随档。enemyDef.climb 差异化不受影响（寻路读各自 def）。
   slots: ReturnType<typeof initSlots>;
   path: { x: number; y: number }[];
   pathIndex: number;
@@ -111,6 +124,9 @@ export interface PawnState {
   desires?: Record<DesireId, number>; // 七宗罪满足度（DESIGN §3）
   lastNeedRec?: number; // 需求写入篝火记忆的节流等级（needsSystem.recordNeed 用，防刷屏）
   huntTarget?: { x: number; y: number }; // 狩猎目标猫位置（采集狩猎 mod 的 huntCombat 系统推进攻击）
+  huntScanCd?: number; // 狩猎目标扫描冷却（发现背景：hunt 卡提权后无缓存无冷却 → 每帧全图扫猫+寻路，30 分钟局 20s→240s+ 超时）
+  huntElapsed?: number; // 追猫累计时长（超时放弃，防猫在水上/建筑中打不到 → 无限追+每 pathCd 重寻路死循环）
+  huntSkillCd?: number; // 狩猎技能成长节流（每帧 growSkill → EWA 学习表更新开销大，profile 实测为热点）
   inventory?: Record<string, number>; // 个人私有物品（2026-08-14 用户设计：私有物品 + 真以物易物；
   // 当前实现仅食物私有化：主动采集的食入口袋，进食优先扣个人；木材/矿石仍走全局公共仓库）
   relationships?: Map<number, number>; // 对其他小人的好感度（社交系统）
@@ -129,6 +145,9 @@ export interface PawnState {
   // 对"听说的篝火"的看法（B 方案：通过交流篝火历史判断伙伴/敌人）
   // stance: friend/enemy/unknown；basis = 判断依据（听到的历史事件描述）
   knownFires?: Record<number, { stance: 'friend' | 'enemy' | 'unknown'; basis: string; at: number }>;
+  // mod 系统自定义字段（存档扩展点 2026-08-14：伤情/囚犯/温度等由玩法包自由读写，
+  // save 原样序列化、load 原样还原——解决"mod 状态一存档就丢"；契约：值必须 JSON-safe）
+  extra?: Record<string, unknown>;
   onArriveWork?: () => void; // mod 工作的到达回执（非序列化，仅当 tick 行为态：走到点后调用）
 }
 
@@ -142,21 +161,28 @@ export interface SimOptions {
 }
 
 export interface Command {
-  type: 'move' | 'build' | 'haul' | 'mine' | 'oracle' | 'assign';
+  // 命令协议（引擎面，2026-08-15 纯插件收敛）：type = 命令名——'move' 引擎内建，
+  // 其余由玩法包 registerCommand 提供处理器；`(string & {})` = 开放扩展：玩法包新命令
+  // （wear/build/mine/oracle/assign…）无需改内核枚举（IDE 仍提示已知命令）。
+  // 命令专属参数走 args 通用位（内核不解释，玩法包自行读取——wear 命令的 itemId 先例）。
+  // 曾把 'wear' 写进联合 + itemId 顶层字段，被用户指摘"内核为什么扩展"后收敛为本协议面
+  type: 'move' | 'build' | 'haul' | 'mine' | 'oracle' | 'assign' | (string & {});
   pawnId?: number;
   x: number;
   y: number;
   buildingId?: string;
   job?: string; // assign 命令用（lumberjack/miner/farmer/crafter）
+  args?: Record<string, unknown>; // 玩法命令参数位（如 wear 的 { itemId }）
 }
 
 export interface SaveData {
   time: number;
   dayTime: number;
   stockpile: Record<string, number>;
-  tiles: string[];
-  buildings: { key: number; defId: string; hp: number; faction: string }[];
+  tiles: string[] | ChunkData[]; // 旧档 = 全量 string[]（192×192）；新档 = 覆盖层 chunk（DESIGN §375）
+  buildings: { key: number; defId: string; hp: number; faction: string; extra?: Record<string, unknown> }[];
   techs?: string[]; // 已解锁科技（旧档缺省空）
+  techFragments?: Record<string, number>; // 科技碎片进度（2026-08-14 碎片制；旧档缺省空）
   pawns: {
     eid: number; x: number; y: number;
     dna: Dna; slots: (string | { id: string; m: number; u: number } | null)[]; // 卡 id（+熟练度）——JSON-safe
@@ -169,6 +195,7 @@ export interface SaveData {
     assignedJob?: string;
     fireId?: number | null; // 关联篝火建筑 key（2026-08-14 重构：无派系单位，指向 campfire 主格）
     knownFires?: Record<number, { stance: 'friend' | 'enemy' | 'unknown'; basis: string; at: number }>;
+    extra?: Record<string, unknown>; // mod 自定义字段（存档扩展点：JSON-safe，load 原样还原）
   }[];
 }
 
@@ -185,8 +212,8 @@ export class Sim implements SimContext {
   events: { time: number; text: string }[] = [];
   env: EnvState; // 天气/气温（DESIGN §6）—— initEnv 读 tuning.env.baseTemp
   // 派系优先级（用户 Q8：AI 按环境下达工作优先指令）：卡 id → 权重倍率
+  // 2026-08-15 纯引擎：此共享状态由 economy 玩法包系统 update 写入，引擎只持有
   factionPriority: Record<string, number> = {};
-  private prioTimer = 0;
 
   pawnStates = new Map<number, PawnState>();
   pawnPositions = new Map<number, { x: number; y: number }>();
@@ -206,6 +233,8 @@ export class Sim implements SimContext {
   get tuning(): TuningConfig {
     return this.mods.tuning;
   }
+  // 初始人口（SimOptions.pawnCount）：bootstrap 玩法包 init 时据此刷人（2026-08-15 纯引擎）
+  initialPawnCount: number;
 
   // mod 可覆盖的 def 查询（SimContext）
   buildingDef(id: string): BuildingDef | undefined {
@@ -214,20 +243,32 @@ export class Sim implements SimContext {
   recipe(id: string): RecipeDef | undefined {
     return this.mods.recipes[id];
   }
-  private behavior: BehaviorSystem | null = null;
   private _started = false;
   private _eventProvider: (() => ScriptedEvent | null) | null = null;
+  // 能力让渡表（2026-08-15 内核纯引擎）：玩法包系统构造时 self-provide（behavior/socialUnits/
+  // economy/bootstrap…），Sim 借此取代"写死 this.behavior/this.socialUnits"的硬引用——
+  // 插件可装卸的核心机制；未提供时回落 null / NOOP。
+  private caps = new Map<string, unknown>();
+  provide(cap: string, impl: unknown): void { this.caps.set(cap, impl); }
+  private getCap<T>(cap: string): T | null { return (this.caps.get(cap) as T) ?? null; }
+  // behavior 能力（决策引擎，由 behavior 玩法包提供）：仅注册表回填 intents/works 用
+  private get behavior(): BehaviorCap | null { return this.getCap<BehaviorCap>('behavior'); }
   // LLM 慢决策层注入（构造后由 server 挂接；数据驱动系统装配表经此读取）
   get llmEventProvider(): (() => ScriptedEvent | null) | null { return this._eventProvider; }
   set llmEventProvider(p: (() => ScriptedEvent | null) | null) { this._eventProvider = p; }
   // 篝火单位/部落记忆/派系涌现。
-  // 2026-08-14 插件化加固：socialUnit 系统可被 mod 卸载（disableSystem），
-  // 卸载时此字段回落到 no-op 空实现（见 registerSystems），保证消费方（needsSystem/
-  // socialSystem 及 sim 自身回调）在契约不变的前提下不崩——"卸载不破坏核心"纪律。
-  socialUnits: SimContext['socialUnits'] = NOOP_SOCIAL_UNITS;
+  // 2026-08-14 插件化加固 + 2026-08-15 纯引擎：socialUnit 迁出为玩法包，此字段变 getter——
+  // 有包（self-provide 'socialUnits'）→ 真实例；无包 → 回落 NOOP_SOCIAL_UNITS 空实现
+  // （"卸载不破坏核心"纪律：needsSystem/socialSystem 及 sim 自身回调契约不变不崩）。
+  get socialUnits(): SimContext['socialUnits'] {
+    return this.getCap<SimContext['socialUnits']>('socialUnits') ?? NOOP_SOCIAL_UNITS;
+  }
 
   // 已抽到的科技（神谕抽卡解锁；tech 未解锁的建筑不可建造）
   techs = new Set<string>();
+  // 科技碎片（2026-08-14 碎片制）：每科技已集碎片数；攒满 fragments 块 → unlockTech。
+  // 抽卡端（tech-pool 玩法包）每次抽卡 → grantTechFragment；已解锁科技不重复累计。
+  techFragments: Record<string, number> = {};
   // 全局资源流账本（用户 2026-08-13 经济设计：收益/支出自动调节工作概率）
   // 伐木记收益 wood、建造记支出 wood——净支出多 → 经济系统自动拉高伐木概率、压低建造概率
   // （factionPriority 消费：priority 规则 flowAt 判定），无需神谕降"伐木令"
@@ -243,9 +284,9 @@ export class Sim implements SimContext {
     this.oracleGoal = { workType: def.workType, label: def.label, until: this.time + def.duration };
     this.logEvent(`🎯 神谕降旨：${def.label}（目标持续 ${def.duration}s）`);
   }
-  // 科技表（HUD 展示用：id → 名称/说明）
-  get techsMap(): Record<string, { name: string; desc: string }> {
-    return Object.fromEntries(Object.entries(TECHS).map(([id, t]) => [id, { name: t.name, desc: t.desc }]));
+  // 科技表（HUD 展示用：id → 名称/说明/所需碎片数）
+  get techsMap(): Record<string, { name: string; desc: string; fragments: number }> {
+    return Object.fromEntries(Object.entries(TECHS).map(([id, t]) => [id, { name: t.name, desc: t.desc, fragments: t.fragments ?? 1 }]));
   }
 
   // 抽到科技卡 → 解锁（幂等）
@@ -257,7 +298,29 @@ export class Sim implements SimContext {
     this.techs.add(techId);
     this.techUnlockedAt[techId] = this.time;
     const def = TECHS[techId];
-    this.logEvent(`🔬 科技解锁：${def?.name ?? techId}`);
+    this.logEvent(`🔬 科技完成：${def?.name ?? techId}（碎片攒齐）`);
+    return true;
+  }
+
+  // 该科技所需碎片总数（def.fragments ?? 1 = 整卡直接解锁，mod/旧数据兼容）
+  fragmentsNeeded(techId: string): number {
+    return TECHS[techId]?.fragments ?? 1;
+  }
+
+  // 拾获一块科技碎片（2026-08-14 碎片制）：攒满 → unlockTech 自动解锁整卡。
+  // 返回 true = 本次拾获有效（未解锁科技）；已解锁/未知科技返回 false（幂等防刷）。
+  // 日志：碎片拾获（带 x/N 进度）与解锁（🔬 科技完成）分离，玩家可见攒集过程。
+  grantTechFragment(techId: string): boolean {
+    if (this.techs.has(techId)) return false;
+    const needed = this.fragmentsNeeded(techId);
+    const have = (this.techFragments[techId] ?? 0) + 1;
+    this.techFragments[techId] = have;
+    const def = TECHS[techId];
+    if (have >= needed) {
+      this.logEvent(`🔩 拾获 ${def?.name ?? techId} 碎片（${have}/${needed}）——碎片攒齐！`);
+      return this.unlockTech(techId);
+    }
+    this.logEvent(`🔩 拾获 ${def?.name ?? techId} 碎片（${have}/${needed}）`);
     return true;
   }
 
@@ -273,6 +336,7 @@ export class Sim implements SimContext {
   constructor(opts: SimOptions = {}) {
     const seed = opts.seed ?? 12345;
     const pawnCount = opts.pawnCount ?? 4;
+    this.initialPawnCount = pawnCount; // bootstrap 玩法包 init 据此刷人（2026-08-15 纯引擎）
     this.tickHz = opts.tickHz ?? 20;
     // 装配初始数据（数据驱动：初始库存/初始气温/昼夜时长读 tuning）
     this.stockpile = { ...TUNING.population.startStockpile };
@@ -288,28 +352,69 @@ export class Sim implements SimContext {
     registerAutoStore(this.ecs, NeedsComp);
     registerAutoStore(this.ecs, Speed);
     registerAutoStore(this.ecs, Health);
+    // 2026-08-14 用户裁决：mod 只在初始化时装配（opts.mods 回调 + 默认包已在上面完成），
+    // 不需要运行时热插拔——因此 defs 在此快照进 World 是既定设计：Sim 构造后再注册的
+    // 建筑/地形进不了 world.buildingsDefs（placeBuilding 会拒），属预期行为，不做动态支持
     this.world = new World(seed, { tiles: this.mods.tiles, buildings: this.mods.buildings });
     this.rng = new SimRng(seed + 1);
     this.bus = new EventBus();
     // 瓦片变更 → 事件总线（server 增量推送 / mod 订阅 / 测试断言的统一入口）
-    this.world.onTileChange = (x, y, tileId) => this.bus.emit({ type: 'tile_changed', x, y, tileId });
+    this.world.onTileChange = (x, y, tileId) => {
+      this.bus.emit({ type: 'tile_changed', x, y, tileId });
+      // 地形变更（伐木/采矿/事件改地形）→ 可走性可能变化 → 寻路缓存（含失败缓存）失效
+      // 背景：失败路径加入缓存后，必须在地形变更时清掉，否则"伐木后目标变可达"仍被旧失败缓存拒
+      this.clearTrailCache();
+    };
     // 所有事件 → 结构化历史
     this.bus.onAny((ev) => this.history.record(ev, this.time, this.time / this.dayLength));
-    // 建篝火 → 初始化区域记忆 + 全员重算归属（2026-08-14 重构：无派系实体）
-    this.bus.on('building_built', (ev) => {
-      if (ev.type === 'building_built' && ev.defId === this.mods.tuning.autobuild.starterBuilding) {
-        this.socialUnits.onCampfireBuilt(this.world.buildKey(ev.x, ev.y));
+    // 2026-08-15 纯引擎：出生刷人/初始营地/建篝火归属回调移入 bootstrap 玩法包系统
+    // （本构造器不再 spawn——引擎只装配，玩法引导由包提供）。此处仅装配系统并跑系统 init。
+    this.applyMods();
+    // 引擎命令注册（2026-08-15 behavior 内核化：assign/oracle 从 behavior 玩法包迁回引擎协议面）
+    // 背景：决策引擎归内核（SYSTEM_DEFS 内联 ctor）后，其输入通道（指派职业/神谕降旨）与
+    //   'move' 同属引擎协议面——引擎内建命令不随系统装配/卸载消失（卸载 behavior 后命令仍
+    //   在，只是无人消费输入，无害）。一致性：走同一 commandHandlers 表 + registerCommand
+    //   冲突检测——玩法包重复注册同名命令即抛错，不因来源不同而行为差异。
+    this.mods.registerCommand('assign', (ctx, cmd) => {
+      // 指派职业：改小人 assignedJob（behavior 抽卡用），幂等写 pawnStates
+      const eids = cmd.pawnId ? [cmd.pawnId] : ctx.selected;
+      for (const eid of eids) {
+        const st = ctx.pawnStates.get(eid);
+        if (!st) continue;
+        st.assignedJob = cmd.job || undefined;
+        ctx.logEvent(st.assignedJob ? `📋 指派 #${eid} 为 ${jobLabelOf(cmd.job!)}` : `📋 取消 #${eid} 的指派`);
       }
     });
-
-    this.behavior = null;
-    this.applyMods();
+    this.mods.registerCommand('oracle', (ctx, cmd) => {
+      // 神谕降旨（原 Sim.oracleInfluence）：须在声明 capabilities:['oracle'] 的建筑上发布，
+      // 祝福附近高信仰小人（buff/信仰/心情）——只影响"目标层"，执行仍由小人自主
+      const b = ctx.world.getBuilding(cmd.x, cmd.y);
+      if (!b || !(b.def.capabilities?.includes?.('oracle'))) {
+        ctx.logEvent('⛪ 神谕只能在神圣祭坛降下');
+        return;
+      }
+      const f = ctx.tuning.faith;
+      const R = f.oracleRadius;
+      let affected = 0;
+      for (const eid of ctx.pawnList) {
+        const pos = ctx.pawnPositions.get(eid);
+        if (!pos) continue;
+        const d = Math.hypot(pos.x - cmd.x, pos.y - cmd.y);
+        if (d > R) continue;
+        const st = ctx.pawnStates.get(eid);
+        if (!st) continue;
+        const trust = (st.faith ?? 0) / 100;
+        if (trust < f.oracleTrustAt) continue;
+        st.oracleBuff = { until: ctx.time + f.oracleDuration, mood: f.oracleMood * trust };
+        ctx.adjustMood(eid, Math.round((f.oracleMood / 2) * trust));
+        st.faith = Math.min(100, (st.faith ?? 0) + f.oracleFaith);
+        affected++;
+      }
+      ctx.logEvent(affected > 0 ? `✨ 神谕降下，${affected} 位信众受到祝福` : '✨ 神谕降下，却无人聆听');
+    });
     this.registerSystems();
     this._started = true;
     this.registry.initAll(this.bus);
-    this.spawnPawns(pawnCount);
-    // 出生点篝火 → 首个派系单位
-    this.ensureInitialCamp();
   }
 
   private applyMods(): void {
@@ -318,35 +423,56 @@ export class Sim implements SimContext {
   }
 
   private registerSystems(): void {
-    // 数据驱动：系统装配表（defs/systems.ts）定义执行顺序，mod 声明项按 before 锚点插入。
-    // 2026-08-14 插件化演进（三阶段）：
-    //   ① 用户指摘"为什么不能卸载插件" → mod 可 disableSystem(id) 装配时跳过；
-    //   ② 用户裁决"最终模拟器 = mod/插件一个个添加玩法组装" → 玩法系统迁出内核为玩法包
-    //      （src/mods/packs/），内核 SYSTEM_DEFS 只剩 11 个基础系统，ModRegistry.default()
-    //      挂载默认玩法包（farm/craft/repair/techPool/autobuild）后仍为原 16 系统顺序；
-    //   ③ 同锚点保序：多个 mod 项声明同一 before 时按注册序排列（连续 splice 前插会逆序，
-    //      farming/crafting/repair 同锚 'raid' 时暴露——产出序必须 farm→craft→repair）。
-    const defs = [...SYSTEM_DEFS];
+    // 数据驱动：执行序 = 类别语义序(CATEGORY_ORDER) × 组内注册序推导（2026-08-15 一致性重构）。
+    // 背景：BASE_SYSTEM_ORDER 全量数组要手工维护 25 行，新增玩法包需同时动 playstyle 清单和
+    //   系统表两处。改为：类别序（7 类语义序，boot 引导类恒表尾）为唯一人工语义；组内序 =
+    //   注册序（apply 序——requires 拓扑自动拉齐，清单不承担图约束）。默认清单（stable 初始
+    //   注册序）与推导组合后与旧数组逐位一致，执行序零漂移（assembly.test 有显式期望序断言）。
+    // 一致性（用户 2026-08-15 裁决"插件/mod 不要有不一致行为"）：内核系统（SYSTEM_DEFS 内联
+    //   ctor，behavior 决策引擎）与插件系统（包回填 ctor）走完全相同的装配规则——同一类别
+    //   推导、同一卸载过滤（isSystemEnabled）、同一 before 锚点兜底；区别只有 ctor 来源。
+    const order: SystemDef[] = [];
+    for (const cat of CATEGORY_ORDER) {
+      // 内核系统（SYSTEM_DEFS 内联 ctor）排在组内最前；插件系统按注册序（apply 序）跟进
+      for (const d of Object.values(SYSTEM_DEFS)) {
+        if (d.category !== cat || !d.ctor) continue; // 只推内核系统（占位条目不推，由插件 def 顶替）
+        if (!this.mods.isSystemEnabled(d.id)) continue;
+        order.push(d);
+      }
+      for (const m of this.mods.systemDefs) {
+        // 只推"表内 id"的插件系统（表外 = 第三方/新玩法 → 留待兜底循环按 before 锚点插位，
+        // 保持旧语义"清单外系统 = 锚点插位或表尾"——2026-08-15 重构防锚点被推导循环抢先）
+        if (!SYSTEM_DEFS[m.id] || SYSTEM_DEFS[m.id]?.ctor) continue; // 表外/内核 id 跳过
+        if (m.category !== cat) continue;
+        if (!this.mods.isSystemEnabled(m.id)) continue;
+        order.push(m);
+      }
+    }
+    // 兜底：清单外（第三方/新玩法）系统——id 已在推导序 → 跳过；否则按 before 锚点插位。
+    // 卸载过滤在此同样生效（防禁用系统经兜底追加回序——2026-08-15 重构回归保护：
+    // 旧架构占位条目天然屏蔽，新推导序里被禁系统不在序中，兜底循环必须显式检查）。
     for (const m of this.mods.systemDefs) {
-      const idx = defs.findIndex((d) => d.id === m.before);
+      if (!this.mods.isSystemEnabled(m.id)) continue;
+      if (order.some((d) => d.id === m.id)) continue;
+      const idx = order.findIndex((d) => d.id === m.before);
       if (m.before && idx >= 0) {
         // 插到锚点前、但已在锚点前的同锚点组之后（保持同组注册序）
         let at = idx;
-        for (let j = idx; j < defs.length && defs[j].before === m.before; j++) at = j + 1;
-        defs.splice(at, 0, m);
-      } else defs.push(m);
+        for (let j = idx; j < order.length && order[j].before === m.before; j++) at = j + 1;
+        order.splice(at, 0, m);
+      } else order.push(m);
     }
-    const enabled = defs.filter((d) => this.mods.isSystemEnabled(d.id));
-    for (const def of enabled) {
-      const sys = def.ctor(this);
+    for (const d of order) {
+      if (!d.ctor) continue;         // 占位且无包提供 → 跳过（启用态不该发生）
+      const sys = d.ctor(this);
       this.registry.register(sys);
-      // 回填核心实例：mod 行为/单位系统替换后，intent/work 注册与 bus 回调仍指向单例
-      if (def.id === 'behavior') this.behavior = sys as BehaviorSystem;
-      else if (def.id === 'socialUnit') this.socialUnits = sys as SocialUnitSystem;
+      // 能力自报：玩法包系统构造时 self-provide（behavior/socialUnits/economy/bootstrap），
+      // Sim 经 getter 消费——内核系统 behavior 也走同一路径（systems.ts 内联 ctor 里 provide），
+      // 一致性：所有系统的能力供给/消费不区分内核还是插件
     }
     // mod 注册的意图/工作执行器交给行为系统（系统实例确定后挂接）。
-    // 2026-08-14 加固：behavior 系统可被 mod 卸载（hunter-gatherer 等玩法包不禁，
-    // 但"卸载不破坏核心"要求卸载后此处跳过而非空引用）。
+    // 卸载 behavior（disableSystem('behavior')）后 this.behavior 回落 null → 跳过挂接，
+    // 卸载不破坏核心（与其他系统同一卸载语义）。
     if (this.behavior) {
       for (const [id, fn] of this.mods.intents) this.behavior.registerIntent(id, fn);
       for (const [type, fn] of this.mods.works) this.behavior.registerWork(type, fn);
@@ -385,7 +511,8 @@ export class Sim implements SimContext {
   moveTo(eid: number, x: number, y: number): void {
     const pos = this.readPosition(eid);
     if (!pos) return;
-    const path = this.getPath(Math.round(pos.x), Math.round(pos.y), Math.round(x), Math.round(y));
+    // 寻路带单位通过能力（高差判定）：每个单位各自 climb
+    const path = this.getPath(Math.round(pos.x), Math.round(pos.y), Math.round(x), Math.round(y), this.pawnStates.get(eid)?.climb);
     const st = this.pawnStates.get(eid);
     if (st) {
       st.path = path;
@@ -416,6 +543,10 @@ export class Sim implements SimContext {
     if (Math.hypot(tx - pos.x, ty - pos.y) > maxD) return false; // 限定最大距离（不要太远）
     const st = this.pawnStates.get(eid);
     if (st && (st.pathCd ?? 0) > 0) return false; // 寻路节流
+    // 9 格邻接目标搜索带 z 判定（起点 z = 当前格 z）：石丘顶的目标（Δ2 不可攀）
+    // 直接不发起寻路 → 省一次满跑 A*（高差地图性能优化）
+    const climb = st?.climb ?? this.tuning.pawn.climb;
+    const zHere = this.world.getTileDef(Math.round(pos.x), Math.round(pos.y)).z ?? 0;
     let target: { x: number; y: number } | null = null;
     let bestD = Infinity;
     for (let dy = -1; dy <= 1; dy++) {
@@ -423,13 +554,13 @@ export class Sim implements SimContext {
         if (dx === 0 && dy === 0) continue;
         const nx = tx + dx, ny = ty + dy;
         if (!this.world.inBounds(nx, ny)) continue;
-        if (!this.world.isPassable(nx, ny)) continue;
+        if (!this.world.isPassable(nx, ny, zHere, climb)) continue;
         const d = (nx - pos.x) * (nx - pos.x) + (ny - pos.y) * (ny - pos.y);
         if (d < bestD) { bestD = d; target = { x: nx, y: ny }; }
       }
     }
     if (!target || !st) return false;
-    const path = this.getPath(Math.round(pos.x), Math.round(pos.y), target.x, target.y);
+    const path = this.getPath(Math.round(pos.x), Math.round(pos.y), target.x, target.y, climb);
     if (path.length > 0) {
       st.path = path;
       st.pathIndex = 0;
@@ -483,6 +614,7 @@ export class Sim implements SimContext {
     const intBase = Math.floor((dna.int - pw.skillIntFrom) / pw.skillIntDiv) + Math.floor((dna.edu - pw.skillEduFrom) / pw.skillEduDiv);
     this.pawnStates.set(eid, {
       dna,
+      climb: this.tuning.pawn.climb, // 通过能力：单位各自，mod 可 overrideTuning
       slots: initSlots(dna, [...this.mods.cards.values()]),
       path: [],
       pathIndex: 0,
@@ -586,56 +718,21 @@ export class Sim implements SimContext {
   }
 
   // ---- 个人经济预期（用户 2026-08-13 设计：每个人心里有本账）----
-  // 工作产出/个人花费 各自滚动平均成预期；现实 vs 预期对比 → 情绪反馈：
-  // 赚 ≥ 预期×goodMul → 满足；赚 ≤ 预期×badMul → 失望；花费同理
-  // 全局资源流：收益/支出累计（经济调节输入；item 如 'wood'/'ore'/'food'）
-  private flowAdd(item: string, key: 'earn' | 'spend', amount: number): void {
-    const f = (this.flow[item] ??= { earn: 0, spend: 0 });
-    f[key] += amount;
-  }
+  // 2026-08-15 纯引擎：记账规则迁入 economy 玩法包（经 provide('economy') 能力让渡），
+  // 引擎只保留委托入口；未挂 economy 包（纯引擎装配）→ 静默无操作，不破坏核心。
+  // 工作产出/个人花费 各自滚动平均成预期；现实 vs 预期对比 → 情绪反馈（详见 economy 包）
 
   // eid 可空：null = 公共支出（建造扣公共库存）只记全局流；否则同时记个人预期
   recordEarn(eid: number | null, item: string, amount: number, workType?: string): void {
-    this.flowAdd(item, 'earn', amount);
-    if (eid === null) return;
-    const st = this.pawnStates.get(eid);
-    if (!st) return;
-    const e = this.tuning.economy;
-    const prev = st.expectEarn ?? amount;
-    st.expectEarn = (1 - e.alpha) * prev + e.alpha * amount;
-    // 按工作类型细分预期（经济理性：哪个活赚得多，小人更愿意干）
-    if (workType) {
-      const by = (st.expectEarnBy ??= {});
-      const prevW = by[workType] ?? amount;
-      by[workType] = (1 - e.alpha) * prevW + e.alpha * amount;
-    }
-    if (amount >= prev * e.goodMul) {
-      this.adjustMood(eid, e.moodGood);
-      this.logEvent(`💰 #${eid} 这次赚得划算（预期 ${Math.round(prev)}，实际 ${amount}）`);
-    } else if (amount <= prev * e.badMul) {
-      this.adjustMood(eid, e.moodBad);
-      this.logEvent(`😞 #${eid} 对这次收获失望（预期 ${Math.round(prev)}，实际 ${amount}）`);
-    }
+    this.getCap<EconomyCap>('economy')?.recordEarn(eid, item, amount, workType);
   }
 
   recordSpend(eid: number | null, item: string, amount: number): void {
-    this.flowAdd(item, 'spend', amount);
-    if (eid === null) return;
-    const st = this.pawnStates.get(eid);
-    if (!st) return;
-    const e = this.tuning.economy;
-    const prev = st.expectSpend ?? amount;
-    st.expectSpend = (1 - e.alpha) * prev + e.alpha * amount;
-    if (amount <= prev * e.badMul) {
-      this.adjustMood(eid, e.moodGood);
-      this.logEvent(`💰 #${eid} 这次花得划算（预期 ${Math.round(prev)}，实际 ${amount}）`);
-    } else if (amount >= prev * e.goodMul) {
-      this.adjustMood(eid, e.moodBad);
-      this.logEvent(`😞 #${eid} 对这次花费失望（预期 ${Math.round(prev)}，实际 ${amount}）`);
-    }
+    this.getCap<EconomyCap>('economy')?.recordSpend(eid, item, amount);
   }
 
   // 资源净支出率（经济调节输入）：spend/earn（无收益时视为 Infinity = 纯支出）
+  // 纯查询留在引擎（flow 共享状态归引擎所有）
   flowRatio(item: string): number {
     const f = this.flow[item];
     if (!f || f.earn <= 0) return f && f.spend > 0 ? Infinity : 0;
@@ -651,64 +748,46 @@ export class Sim implements SimContext {
     return this.registry.profileStats;
   }
 
-  private getPath(sx: number, sy: number, ex: number, ey: number): { x: number; y: number }[] {
-    const key = `${sx},${sy}->${ex},${ey}`;
+  // 寻路（A* 二叉堆 + 篝火航点中转，缓存带 climb）——2026-08-15 纯引擎公开入 SimContext：
+  // mine/gather 命令处理器（gathering 玩法包）需要路径能力，引擎负责提供而非包自实现
+  getPath(sx: number, sy: number, ex: number, ey: number, climb = this.tuning.pawn.climb): { x: number; y: number }[] {
+    // ⚠️ 2026-08-14 review 修复：缓存 key 必须带 climb——寻路结果依赖单位通过能力
+    //（高差判定），若不同单位 climb 不同，低 climb 的失败路径会被高 climb 的成功路径
+    // 污染（反之亦然：失败路径缓存更致命）。此前 key 只含坐标，全部单位 climb 相同
+    // 时无症状，mod 差异化 climb（接口声称"单位各自能力"）即错乱。
+    const c = `c${climb}`;
+    const key = `${sx},${sy}->${ex},${ey}#${c}`;
     const cached = this.trailCache.get(key);
     if (cached) return cached;
     // 寻路策略表（tuning.path）：迭代上限/暗区代价/启发式 + 篝火航点中转，
     // mod 可覆盖；航点段（锚点对）路径复用同一 trailCache（建筑变更 clearTrailCache 自动失效）
+    // climb = 单位通过能力（高差判定），走单位各自能力（段缓存同理带 climb，见下）
     const path = findPath(this.world, sx, sy, ex, ey, this.tuning.path, {
-      get: (ax, ay, bx, by) => this.trailCache.get(`${ax},${ay}->${bx},${by}`),
+      get: (ax, ay, bx, by) => this.trailCache.get(`${ax},${ay}->${bx},${by}#${c}`),
       set: (ax, ay, bx, by, p) => {
-        if (this.trailCache.size > 2048) this.trailCache.clear();
-        this.trailCache.set(`${ax},${ay}->${bx},${by}`, p);
+        if (this.trailCache.size > 8192) this.trailCache.clear();
+        this.trailCache.set(`${ax},${ay}->${bx},${by}#${c}`, p);
       },
-    });
-    if (path.length > 0) {
-      if (this.trailCache.size > 2048) this.trailCache.clear();
-      this.trailCache.set(key, path);
-    }
+    }, climb);
+    // 成功/失败都缓存：失败路径（目标被石丘/水隔断等）若每帧重算 A* 会跑满 maxIter——
+    // 石丘地图实测 16x 性能退化（2026-08-14）；失败缓存在地形/建筑变更时失效
+    //（onTileChange → clearTrailCache；buildSystem 建成 → clearTrailCache）
+    if (this.trailCache.size > 8192) this.trailCache.clear();
+    this.trailCache.set(key, path);
     return path;
   }
 
-  private spawnPawns(count: number): void {
-    const cx = Math.floor(this.world.width / 2);
-    const cy = Math.floor(this.world.height / 2);
-    for (let i = 0; i < count; i++) {
-      const x = cx + (i % 3) - 1;
-      const y = cy + Math.floor(i / 3) - 1;
-      this.spawnPawn(x, y);
-    }
-  }
-
-  // 出生点首个篝火 → 第一个派系单位（Q9：有篝火 = 独立派系）
-  private ensureInitialCamp(): void {
-    const cx = Math.floor(this.world.width / 2);
-    const cy = Math.floor(this.world.height / 2);
-    const starter = this.mods.tuning.autobuild.starterBuilding; // 出生建筑（mod 可换基地建筑）
-    if (this.world.placeBuilding(cx, cy + 2, starter, 'auto')) {
-      this.socialUnits.onCampfireBuilt(this.world.buildKey(cx, cy + 2));
-      this.bus.emit({ type: 'building_built', x: cx, y: cy + 2, defId: starter });
-    }
-    // 出生小人归入最近的派系单位
-    for (const eid of this.pawns) this.socialUnits.assignPawn(eid);
-  }
-
   // 空世界（旧档全灭/坏档）重开：重建出生点小人 + 初始营地（供客户端恢复局面）
+  // 2026-08-15 纯引擎：委托 bootstrap 玩法包能力；纯引擎（无包）→ 至少清空小人兜底
   respawnPawns(count: number): void {
+    const b = this.getCap<BootstrapCap>('bootstrap');
+    if (b) { b.respawn(count); return; }
     for (const eid of [...this._pawnList]) this.killPawn(eid);
-    this.spawnPawns(count);
   }
 
   // 若出生点没有篝火则重建（空世界重开用）
   ensureCamp(): void {
-    const cx = Math.floor(this.world.width / 2);
-    const cy = Math.floor(this.world.height / 2);
-    if (!this.world.getBuilding(cx, cy + 2)) {
-      this.ensureInitialCamp();
-    } else {
-      for (const eid of this.pawns) this.socialUnits.assignPawn(eid);
-    }
+    this.getCap<BootstrapCap>('bootstrap')?.ensureCamp();
   }
 
   private seedFor(eid: number): number {
@@ -716,34 +795,19 @@ export class Sim implements SimContext {
   }
 
   // ---- 命令 ----
+  // 2026-08-15 纯引擎：issueCommand = 路由器——'move' 是引擎内建命令（实体移动），
+  // 其余命令（build/mine/oracle/assign…）由玩法包 registerCommand 提供处理器
+  // （signature 与 SimContext 对齐：`(ctx: SimContext, cmd: Command) => void`）。
+  // 路由失败仍 logEvent 反馈（原 queueBuild 拒建反馈纪律延续）。
   issueCommand(cmd: Command): void {
-    if (cmd.type === 'build') {
-      this.queueBuild(cmd.x, cmd.y, cmd.buildingId ?? this.mods.tuning.autobuild.fallbackBuilding);
+    if (cmd.type === 'move') {
+      const eids = cmd.pawnId ? [cmd.pawnId] : this.selected;
+      for (const eid of eids) this.moveTo(eid, cmd.x, cmd.y);
       return;
     }
-    if (cmd.type === 'oracle') {
-      this.oracleInfluence(cmd.x, cmd.y);
-      return;
-    }
-    if (cmd.type === 'assign') {
-      for (const eid of cmd.pawnId ? [cmd.pawnId] : this.selected) {
-        const st = this.pawnStates.get(eid);
-        if (st) {
-          st.assignedJob = cmd.job || undefined;
-          this.logEvent(st.assignedJob ? `📋 指派 #${eid} 为 ${this.jobLabel(cmd.job!)}` : `📋 取消 #${eid} 的指派`);
-        }
-      }
-      return;
-    }
-    const eids = cmd.pawnId ? [cmd.pawnId] : this.selected;
-    for (const eid of eids) {
-      if (cmd.type === 'move') this.moveTo(eid, cmd.x, cmd.y);
-      else if (cmd.type === 'mine') this.mineAt(eid, cmd.x, cmd.y);
-    }
-  }
-
-  private jobLabel(job: string): string {
-    return jobLabelOf(job);
+    const handler = this.mods.commandHandlers.get(cmd.type);
+    if (handler) handler(this, cmd);
+    else this.logEvent(`⚠ 未知命令：${cmd.type}`);
   }
 
   // 产出归集（2026-08-14 重构：派系实体删除，无单位私有库存；全部进全局仓库）
@@ -786,92 +850,6 @@ export class Sim implements SimContext {
     return target;
   }
 
-  // 神谕影响（用户 Q2/Q3）：在具备 'oracle' 能力的建筑发布，祝福附近的高信仰小人  // 玩家不直接指挥 → 只影响"目标层"（心情/信仰），执行仍由小人自主
-  private oracleInfluence(x: number, y: number): void {
-    // 必须落在声明了 oracle 能力的建筑上（数据驱动：mod 加"神圣建筑"声明 capabilities:['oracle'] 即可）
-    const b = this.world.getBuilding(x, y);
-    if (!b || !(b.def.capabilities?.includes?.('oracle'))) {
-      this.logEvent('⛪ 神谕只能在神圣祭坛降下');
-      return;
-    }
-    const f = this.mods.tuning.faith;
-    const R = f.oracleRadius;
-    let affected = 0;
-    for (const eid of this.pawnList) {
-      const pos = this.pawnPositions.get(eid);
-      if (!pos) continue;
-      const d = Math.hypot(pos.x - x, pos.y - y);
-      if (d > R) continue;
-      const st = this.pawnStates.get(eid);
-      if (!st) continue;
-      // 信任过滤：信仰越高影响越深；低信仰者几乎不受影响
-      const trust = (st.faith ?? 0) / 100;
-      if (trust < f.oracleTrustAt) continue;
-      st.oracleBuff = { until: this.time + f.oracleDuration, mood: f.oracleMood * trust };
-      this.adjustMood(eid, Math.round(f.oracleMood / 2 * trust));
-      st.faith = Math.min(100, (st.faith ?? 0) + f.oracleFaith);
-      affected++;
-    }
-    if (affected > 0) this.logEvent(`✨ 神谕降下，${affected} 位信众受到祝福`);
-    else this.logEvent('✨ 神谕降下，却无人聆听');
-  }
-
-  private queueBuild(x: number, y: number, defId: string): void {
-    const def = this.buildingDef(defId);
-    if (!def) return;
-    // 科技锁：未抽到对应科技卡的建筑不可建造（科技 = 独立抽卡池按 TECH_ORDER 解锁，
-    // 门控建造防止"未研发就渡水/架桥"的科技作弊；techs.test.ts 覆盖）
-    if (def.tech && !this.techs.has(def.tech)) return;
-    if (!this.world.canBuildFootprint(x, y, def)) return;
-    const cost = {
-      wood: def.costWood ?? def.size.x * def.size.y * this.mods.tuning.autobuild.costWoodPerCell,
-      ore: def.costOre ?? this.mods.tuning.autobuild.costOreFallback,
-    };
-    if (this.stockpile.wood < cost.wood) return;
-    if (cost.ore > 0 && this.stockpile.ore < cost.ore) return;
-    this.buildQueue.push({ x, y, defId, progress: 0, faction: 'player', cost });
-  }
-
-  private mineAt(eid: number, x: number, y: number): void {
-    const st = this.pawnStates.get(eid);
-    if (!st) return;
-    const tile = this.world.getTileDef(x, y);
-    if (!tile.mineral) return;
-    const pos = this.readPosition(eid);
-    if (!pos) return;
-    const path = this.getPath(Math.round(pos.x), Math.round(pos.y), x, y);
-    st.path = path;
-    st.pathIndex = 0;
-    st.mineTarget = { x, y };
-  }
-
-  private updateFactionPriority(dt: number): void {
-    this.prioTimer -= dt;
-    if (this.prioTimer > 0) return;
-    this.prioTimer = this.mods.tuning.faction.priorityTimer; // 每 N 秒评估一次环境 → 派系工作优先级
-    const s = this.stockpile;
-    const pri: Record<string, number> = {};
-    // 经济账本优先：资源净支出（flow.spend > earn×flowAt）→ 对应收益工作权重升高（用户经济设计）
-    // 库存阈值兜底：短缺（lowAt）仍升权（紧急情况）
-    for (const r of this.mods.tuning.card.priority) {
-      let boost = 1;
-      if (r.flowAt !== undefined && this.flowRatio(r.resource) >= r.flowAt) boost = r.boost;
-      else {
-        const low = this.priorityStock(r.resource, s);
-        if (low < r.lowAt) boost = r.boost;
-        if (r.urgentAt !== undefined && low < r.urgentAt && r.urgentBoost !== undefined) boost = r.urgentBoost;
-      }
-      pri[r.cardId] = boost;
-    }
-    this.factionPriority = pri;
-  }
-
-  // 取某资源当前量（'queue'：非空返回 -1 恒触发 boost，空返回 Infinity 恒不触发）
-  private priorityStock(resource: string, s: Record<string, number>): number {
-    if (resource === 'queue') return this.buildQueue.length > 0 ? -1 : Infinity;
-    return s[resource] ?? 0;
-  }
-
   // ---- 主循环 ----
   step(dt: number): void {
     if (this.paused) return;
@@ -881,7 +859,7 @@ export class Sim implements SimContext {
     this.time += dt;
     this.dayTime = (this.time % this.dayLength) / this.dayLength;
     tickEnv(this.env, dt, this.dayTime, this.rng, this.tuning.env);
-    this.updateFactionPriority(dt);
+    // 2026-08-15 纯引擎：派系优先级评估迁入 economy 玩法包系统 update（exec 位在 behavior 前）
     this.registry.updateAll(dt);
     // 神谕目标到期自动清除
     if (this.oracleGoal && this.time > this.oracleGoal.until) this.oracleGoal = null;
@@ -974,9 +952,10 @@ export class Sim implements SimContext {
       time: this.time,
       dayTime: this.dayTime,
       stockpile: { ...this.stockpile },
-      tiles: this.world.serializeTiles(),
+      tiles: this.world.serializeChunks(),
       buildings: this.world.serializeBuildings(),
       techs: [...this.techs],
+      techFragments: { ...this.techFragments }, // 碎片进度随档（攒一半的科技读档继续攒）
       pawns: this._pawnList.map((eid) => {
         const st = this.pawnStates.get(eid)!;
         const pos = this.readPosition(eid)!;
@@ -995,6 +974,10 @@ export class Sim implements SimContext {
           assignedJob: st.assignedJob,
           fireId: st.fireId ?? null,
           knownFires: st.knownFires,
+          extra: st.extra ?? {}, // mod 自定义字段随档（存档扩展点：伤情/囚犯/电力等玩法包状态）
+          // 瞬时工作态（path/mineTarget/chopXY/praying/healing/mining/各类冷却/job/lastDecision/urgent）
+          // **不随档**——有意轻量存档（2026-08-15 审计裁决，DATA_DRIVEN §14）：读档后小人
+          // 回闲置态重新决策；长期目标（assignedJob/oracleBuff/fireId）已在上面顶层随档。
         };
       }),
     };
@@ -1002,10 +985,17 @@ export class Sim implements SimContext {
 
   load(data: SaveData): void {
     this.techs = new Set(data.techs ?? []);
+    // 碎片进度还原（2026-08-14 碎片制；旧档无此字段 → 空表，已解锁科技不受影响）
+    this.techFragments = data.techFragments ? { ...data.techFragments } : {};
     this.time = data.time ?? 0;
     this.dayTime = data.dayTime ?? 0;
     if (data.stockpile) this.stockpile = { ...TUNING.population.startStockpile, ...data.stockpile };
-    if (data.tiles) this.world.loadTiles(data.tiles);
+    // 存档地形：旧档全量 string[]（192×192）→ loadTiles；新档覆盖层 chunk → loadChunks
+    //（无限地图双图层——DESIGN §375：覆盖层才需要持久化）
+    if (data.tiles) {
+      if (Array.isArray(data.tiles) && typeof data.tiles[0] === 'string') this.world.loadTiles(data.tiles as string[]);
+      else this.world.loadChunks(data.tiles as ChunkData[]);
+    }
     if (data.buildings) this.world.loadBuildings(data.buildings);
     // 篝火区域记忆随建筑重建（loadBuildings 已恢复建筑；旧档无 fireMemory，从空开始）
     this.world.fireMemory.clear();
@@ -1044,6 +1034,7 @@ export class Sim implements SimContext {
         st.assignedJob = p.assignedJob;
         st.fireId = p.fireId ?? null;
         st.knownFires = p.knownFires;
+        if (p.extra) st.extra = p.extra; // mod 自定义字段还原（JSON-safe，玩法定制的状态如伤情/囚犯/电力账户随档）
         if (p.needs) this.setNeeds(eid, p.needs);
         if (p.health) this.setHealth(eid, p.health);
       }

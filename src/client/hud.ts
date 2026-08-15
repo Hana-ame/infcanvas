@@ -12,6 +12,7 @@ import { weatherLabel } from '../sim/core/env';
 import { keybindings, ACTIONS } from './keybindings';
 import type { ActionId } from './keybindings';
 import { svgDataUri, HUD_SVG, BUILDING_SVG, PAWN_SVG, pawnAssetIdFor } from './svgAssets';
+import { K_WORN } from '../sim/mods/contracts';
 
 // SVG 图标（data URI，DOM <img>）；无素材的 id 回退 emoji
 function icon(id: string, size = 16): string {
@@ -51,6 +52,9 @@ function injectStyle(): void {
 .hud-corner{position:absolute;bottom:12px;left:12px;display:flex;gap:4px;pointer-events:auto;padding:6px;}
 .hud-corner button{padding:3px 9px;font:12px system-ui;}
 .hud-sel{position:absolute;top:54px;left:12px;padding:8px 12px;min-width:180px;display:none;line-height:1.6;}
+/* 选中鼠鼠 HUD 立绘（2026-08-15）：头部横排——左侧立绘 + 右侧资料列 */
+.hud-sel-head{display:flex;gap:12px;align-items:flex-start;}
+#selPortrait{width:104px;height:104px;flex:none;border-radius:10px;border:1px solid #555;background:radial-gradient(circle at 50% 35%,rgba(90,70,50,.85),rgba(20,16,10,.95));box-shadow:0 0 10px rgba(0,0,0,.6);display:none;}
 .hud-hint{position:absolute;top:54px;right:12px;padding:6px 10px;font-size:12px;text-align:right;max-width:340px;}
 .hud-feed{position:absolute;bottom:12px;right:96px;padding:6px 10px;font-size:11px;line-height:1.5;max-width:220px;text-align:right;}
 .hud-feed div{border-top:1px solid #222;}
@@ -255,15 +259,22 @@ export function createHud(
   const selPanel = document.createElement('div');
   selPanel.className = 'hud-sel hud-panel';
   selPanel.innerHTML = `
-    <div id="selTitle"></div>
-    <div id="selBody" class="hud-meta"></div>
-    <div id="selJobs" class="hud-jobrow"></div>
-    <div id="selOracle" style="display:none;"><button data-act="oracle" style="border-color:#a07ac0;background:#5a3a6a;">${icon('oracle')} 发布神谕</button></div>`;
+    <div class="hud-sel-head">
+      <img id="selPortrait" alt="">
+      <div style="flex:1;min-width:0;">
+        <div id="selTitle"></div>
+        <div id="selBody" class="hud-meta"></div>
+        <div id="selJobs" class="hud-jobrow"></div>
+        <div id="selWear" class="hud-jobrow" style="margin-top:4px;"></div>
+        <div id="selOracle" style="display:none;"><button data-act="oracle" style="border-color:#a07ac0;background:#5a3a6a;">${icon('oracle')} 发布神谕</button></div>
+      </div>
+    </div>`;
   root.appendChild(selPanel);
   const selTitle = selPanel.querySelector<HTMLElement>('#selTitle')!;
   const selBody = selPanel.querySelector<HTMLElement>('#selBody')!;
   const selJobs = selPanel.querySelector<HTMLElement>('#selJobs')!;
   const selOracle = selPanel.querySelector<HTMLElement>('#selOracle')!;
+  const selPortrait = selPanel.querySelector<HTMLImageElement>('#selPortrait')!;
   // 职业按钮（一次创建，永不再生）
   const mkJobBtn = (label: string, job: string): HTMLButtonElement => {
     const b = document.createElement('button');
@@ -275,6 +286,18 @@ export function createHud(
   };
   mkJobBtn('自由', '');
   for (const [id, j] of Object.entries(JOBS)) mkJobBtn(j.label, id);
+  // 穿衣行（clothing 玩法包 2026-08-15）：update 时按库存重建——库存里所有可穿衣物各一个
+  // 按钮 + 已穿时补「脱下」；与职业按钮共用事件委托（act = wear:<itemId>，空 itemId = 脱衣）
+  const selWear = selPanel.querySelector<HTMLElement>('#selWear')!;
+  const wearBtn = (label: string, itemId: string | undefined, current: boolean): HTMLButtonElement => {
+    const b = document.createElement('button');
+    b.className = 'hud-chip';
+    b.textContent = label;
+    b.dataset.act = `wear:${itemId ?? ''}`;
+    if (current) b.style.borderColor = '#7ac8a0'; // 当前穿着项高亮
+    selWear.appendChild(b);
+    return b;
+  };
   // 委托：点击由静态面板承接（update 不再重建 → 不丢点击）
   selPanel.addEventListener('click', (e) => {
     const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-act]');
@@ -290,6 +313,9 @@ export function createHud(
         sim.selected = [eid];
         sim.issueCommand({ type: 'assign', x: 0, y: 0, job: act.slice(4), pawnId: eid });
       }
+    } else if (act.startsWith('wear:')) {
+      // 穿衣/换衣/脱衣（itemId 空 = 脱衣）；穿戴逻辑全在 clothing 玩法包命令处理器
+      if (eid >= 0) sim.issueCommand({ type: 'wear', x: 0, y: 0, pawnId: eid, args: { itemId: act.slice(5) || undefined } });
     }
   });
 
@@ -441,6 +467,7 @@ export function createHud(
       const selKey = selectedBuildingRef.current.y * sim.world.width + selectedBuildingRef.current.x;
       const unit = sim.factionsView().find((f) => f.key === selKey);
       selPanel.dataset.eid = '-1';
+      selPortrait.style.display = 'none'; // 建筑选中：不显示鼠鼠立绘
       selJobs.style.display = 'none';
       selOracle.style.display = def.capabilities?.includes('oracle') ? '' : 'none';
       selTitle.innerHTML = `<b>${buildIcon(def ?? { id: b.defId })} ${def?.name ?? b.defId}</b> (${selectedBuildingRef.current.x},${selectedBuildingRef.current.y})`;
@@ -483,9 +510,10 @@ export function createHud(
       facPanel.innerHTML = `<b>🌍 篝火聚居（${units.length}）</b><br>` + (rows || '暂无营地');
     }
 
-    // 🔬 科技面板：已解锁 / 下一张候选 / 科技锁建筑
+    // 🔬 科技面板：已解锁 / 碎片进度（2026-08-14 碎片制：攒齐 N 块碎片组成整卡） / 科技锁建筑
     if (techPanel.style.display === 'block') {
       const techs = sim.techs;
+      const frags = sim.techFragments; // 已集碎片（单机有；远端缺省 undefined → 只显已解锁）
       const lockedBuildings = Object.values(sim.mods.buildings)
         .filter((b) => b.tech && !techs?.has(b.tech))
         .map((b) => `${b.emoji ?? '🏗'} ${b.name}（需科技）`);
@@ -494,10 +522,21 @@ export function createHud(
           const t = sim.techsMap?.[id];
           return `<div>✅ ${t?.name ?? id}${t?.desc ? ` <span style="color:#aaa">${t.desc}</span>` : ''}</div>`;
         }).join('')
-        : '<div style="color:#aaa">尚未抽到科技（神谕会不定期抽卡解锁）</div>';
+        : '<div style="color:#aaa">尚未解锁科技（碎片抽卡池会不定期发放碎片）</div>';
+      // 碎片进度行：未解锁科技 已集/所需（如 🔩 取水术 2/3）；无碎片接口（远端）跳过
+      const techMap = sim.techsMap;
+      const fragmentRows = frags && techMap
+        ? Object.keys(techMap)
+          .filter((id) => !techs?.has(id) && (frags[id] ?? 0) > 0)
+          .map((id) => {
+            const t = techMap[id];
+            return `<div>🔩 ${t.name} 碎片 ${frags[id] ?? 0}/${t.fragments ?? 1}</div>`;
+          }).join('')
+        : '';
       techPanel.innerHTML =
         `<b>🔬 科技（${techs?.size ?? 0}/${Object.keys(sim.techsMap ?? {}).length}）</b><br>` +
         unlockedRows +
+        (fragmentRows ? `<br><b>🔩 碎片收集：</b><br>${fragmentRows}` : '') +
         (lockedBuildings.length > 0 ? `<br><b>🔒 未解锁建造：</b>${lockedBuildings.join('、')}` : '');
     }
 
@@ -507,8 +546,27 @@ export function createHud(
       const p = sim.pawnProfile(eid);
       if (p) {
         selPanel.dataset.eid = String(eid);
+        // 立绘（2026-08-15）：按天赋变体放大显示，作为选中鼠鼠的头像图
+        selPortrait.src = svgDataUri(PAWN_SVG[pawnAssetIdFor(p.dna.traits).replace('pawn:', '')]);
+        selPortrait.style.display = '';
         selJobs.style.display = '';
+        selWear.style.display = '';
         selOracle.style.display = 'none';
+        // 穿衣行内容（clothing 玩法包）：库存可穿衣物按钮 + 脱下按钮（已穿时）；
+        // 远程端 worn 经 RemoteSim.wornOf（快照字段），本地端读 pawnStates 存档扩展点
+        const wearSim = sim as { wornOf?: (e: number) => string | undefined; pawnStates?: Map<number, { extra?: Record<string, unknown> }> };
+        const localWorn = wearSim.pawnStates?.get(eid)?.extra?.[K_WORN];
+        const wornNow = (localWorn as { body?: string } | undefined)?.body ?? wearSim.wornOf?.(eid);
+        selWear.innerHTML = '';
+        const wearable = Object.values(sim.mods.items ?? {}).filter((it) => it.meta?.wearable && (sim.stockpile[it.id] ?? 0) > 0);
+        if (wornNow) {
+          const wName = sim.mods.items[wornNow]?.name ?? wornNow;
+          wearBtn(`脱下${wName}`, undefined, true);
+        }
+        for (const it of wearable) wearBtn(`${it.name}${(sim.stockpile[it.id] ?? 0) > 1 ? ` ×${sim.stockpile[it.id]}` : ''}`, it.id, wornNow === it.id);
+        if (!wornNow && wearable.length === 0) {
+          selWear.innerHTML = '<span style="color:#777;font-size:11px;">🪡 衣橱空（做衣服或织布后可用）</span>';
+        }
         const nd = p.needs;
         const hk = p.health;
         const slotCards = p.slots.filter((c) => c !== null).map((c) => (c!.mastery ?? 0) > 0 ? `${c!.name}×${c!.mastery}` : c!.name).join('、') || '无';

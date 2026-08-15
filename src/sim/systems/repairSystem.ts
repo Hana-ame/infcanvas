@@ -2,6 +2,7 @@
 // 数据驱动：workTime/searchRadius/inPlaceDist 读 tuning.repair（mod 可调）
 import type { GameSystem } from './registry';
 import type { SimContext } from './context';
+import { World } from '../core/world';
 
 export class RepairSystem implements GameSystem {
   id = 'repair';
@@ -59,7 +60,8 @@ export class RepairSystem implements GameSystem {
     let bestD = Infinity;
     for (const b of w.queryBuildingsNear(Math.round(pos.x), Math.round(pos.y), radius)) {
       if (b.hp >= b.def.hp) continue;
-      if (b.dist < bestD) { bestD = b.dist; best = { x: b.key % w.width, y: Math.floor(b.key / w.width) }; }
+      // 新 key 编码（2026-08-14 无限地图）：World.keyToXY 解码（负坐标支持）
+      if (b.dist < bestD) { bestD = b.dist; best = World.keyToXY(b.key); }
     }
     return best;
   }

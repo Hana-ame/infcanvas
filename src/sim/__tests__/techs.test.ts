@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { Sim } from '../sim';
+import { World } from '../core/world';
 import { findPath } from '../core/pathfinding';
 import { TECHS, TECH_ORDER } from '../defs/techs';
 import { makeDummyCardPlanner } from '../../server/dummyLlm';
@@ -49,6 +50,56 @@ describe('科技抽卡（神谕解锁）', () => {
 
   // 科技来源机制待与文档核对（神谕不降科技——用户 2026-08-13 定案；
   // 原"神谕科技抽卡"测试已随机制移除，解锁/门控能力由下方测试覆盖）
+});
+
+describe('科技碎片制（2026-08-14：碎片攒齐组成科技，也是抽卡）', () => {
+  it('碎片攒满才解锁：fragments=3 的科技 2 块不解锁、3 块解锁、解锁后不再累计', () => {
+    const sim = new Sim({ seed: 51, pawnCount: 1 });
+    expect(sim.fragmentsNeeded('craft:toy')).toBe(3);
+    expect(sim.grantTechFragment('craft:toy')).toBe(true);
+    expect(sim.grantTechFragment('craft:toy')).toBe(true);
+    expect(sim.techs.has('craft:toy')).toBe(false); // 2/3 未解锁
+    expect(sim.techFragments['craft:toy']).toBe(2);
+    expect(sim.grantTechFragment('craft:toy')).toBe(true);
+    expect(sim.techs.has('craft:toy')).toBe(true); // 3/3 → 攒齐自动解锁
+    expect(sim.techFragments['craft:toy']).toBe(3);
+    expect(sim.grantTechFragment('craft:toy')).toBe(false); // 已解锁幂等（防刷）
+    expect(sim.techFragments['craft:toy']).toBe(3);
+  });
+
+  it('碎片进度随存档往返保留，读档后继续攒', () => {
+    const sim = new Sim({ seed: 52, pawnCount: 1 });
+    sim.grantTechFragment('water:well');
+    sim.grantTechFragment('water:well');
+    const data = JSON.parse(JSON.stringify(sim.save())) as ReturnType<Sim['save']>;
+    expect(data.techFragments).toEqual({ 'water:well': 2 });
+    const sim2 = new Sim({ seed: 53, pawnCount: 1 });
+    sim2.load(data);
+    expect(sim2.techFragments['water:well']).toBe(2);
+    expect(sim2.techs.has('water:well')).toBe(false); // 攒一半的科技读档继续攒
+    sim2.grantTechFragment('water:well');
+    expect(sim2.techs.has('water:well')).toBe(true);
+  });
+
+  it('旧档（无 techFragments 字段）兼容：从零开始攒', () => {
+    const sim = new Sim({ seed: 54, pawnCount: 1 });
+    const data = JSON.parse(JSON.stringify(sim.save())) as ReturnType<Sim['save']>;
+    delete data.techFragments; // 模拟碎片制上线前的存档
+    const sim2 = new Sim({ seed: 55, pawnCount: 1 });
+    sim2.load(data);
+    expect(sim2.techFragments).toEqual({});
+    expect(sim2.grantTechFragment('shelter:cave')).toBe(true);
+    expect(sim2.techFragments['shelter:cave']).toBe(1);
+  });
+
+  it('抽卡池发碎片：攒满才解锁、不给已解锁科技（7 科技 × 3 碎片全解锁）', () => {
+    const sim = new Sim({ seed: 56, pawnCount: 1 });
+    sim.mods.overrideTuning({ tech: { poolInterval: 1, poolChance: 1 } }); // 每 1s 必抽
+    for (let i = 0; i < 400; i++) sim.step(1); // 400 抽 ≫ 21 碎片
+    expect(sim.techs.size).toBe(TECH_ORDER.length); // 全部解锁
+    // 每科技碎片恰好 3（攒满即解锁，解锁后池子不再抽它）
+    for (const id of TECH_ORDER) expect(sim.techFragments[id]).toBe(3);
+  });
 });
 
 describe('桥 = 地形改造（water → bridge tile）', () => {
@@ -129,7 +180,7 @@ describe('竹筏捕鱼（水上建筑 + recipe）', () => {
     st.slots.push(sim.mods.cards.get('fish')!); // 行为卡实例
     const raft = [...sim.world.buildings.entries()].find(([, b]) => b.def.id === 'raft')!;
     // 直接驱动 caveWork（筏 = recipe 'fishing'）：绕开抽卡随机性，验证 recipe 产出链路
-    st.caveWork = { x: raft[0] % sim.world.width, y: Math.floor(raft[0] / sim.world.width), progress: sim.recipe('fishing')!.interval ?? 4, buildingId: 'fishing' };
+    st.caveWork = { x: World.keyToXY(raft[0]).x, y: World.keyToXY(raft[0]).y, progress: sim.recipe('fishing')!.interval ?? 4, buildingId: 'fishing' };
     const foodBefore = sim.stockpile.food ?? 0;
     for (let i = 0; i < 200 && (sim.stockpile.food ?? 0) <= foodBefore; i++) sim.step(1 / 20);
     expect(sim.stockpile.food ?? 0).toBeGreaterThan(foodBefore); // 筏上渔获进全局仓库

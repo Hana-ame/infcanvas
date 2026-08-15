@@ -5,6 +5,7 @@ import type { SimContext } from './context';
 import type { PositionData } from '../sim';
 import { TECHS } from '../defs/techs';
 import type { EventBus } from '../core/events';
+import { World } from '../core/world';
 import type { PawnState } from '../sim';
 import type { BehaviorCard, CardContext, CardView, BehaviorIntent } from '../ai/pawn';
 import { drawCards, pickBest, BASE_CARDS } from '../ai/pawn';
@@ -163,14 +164,26 @@ export class BehaviorSystem implements GameSystem {
       desireOfSeries: (series) => this.ctx.mods.seriesDesire[series] ?? null,
       // 互助探测：找近处"缺食/受伤/低落"且我对 TA 好感 ≥ 门槛的邻人
       helpTargetOf: (eid) => this.findHelpTarget(eid),
-      // 附近有可狩猎的猫（采集狩猎 mod 狩猎卡谓词）：索敌半径 ~25 格内存在 cat 敌人
+      // 附近有可狩猎的猫（采集狩猎 mod 狩猎卡谓词）：索敌半径 ~40 格内存在 cat 敌人
+      //（采集狩猎猫游荡在营地 15-40 环带；25 时营地附近伐木的人几乎永远触发不了）
       hostilesNearby: (eid) => {
         const pos = this.ctx.pawnPositions.get(eid);
         if (!pos) return false;
         return this.ctx.hostiles.some((h) => {
           if (h.enemyId !== 'cat') return false;
-          return (h.x - pos.x) ** 2 + (h.y - pos.y) ** 2 <= 25 * 25;
+          return (h.x - pos.x) ** 2 + (h.y - pos.y) ** 2 <= 40 * 40;
         });
+      },
+      // 距最近 warmth 建筑（篝火）距离；-1 = 全图无火（"夜归篝火"类谓词用）
+      campfireDist: (eid) => {
+        const pos = this.ctx.pawnPositions.get(eid);
+        if (!pos) return -1;
+        const w = this.ctx.world;
+        const near = w.queryBuildingsNear(Math.round(pos.x), Math.round(pos.y), 64);
+        let best = Infinity;
+        for (const b of near) if (b.def.tags?.includes('warmth')) best = Math.min(best, b.dist);
+        if (best === Infinity) return -1;
+        return best;
       },
     };
     const ctx: CardContext = { view, eid };
@@ -297,7 +310,7 @@ export class BehaviorSystem implements GameSystem {
     // 营地位置（首个 campfire）
     let camp: { x: number; y: number } | null = null;
     for (const [k, b] of c.world.buildings) {
-      if (b.def.id === 'campfire') { camp = { x: k % c.world.width, y: Math.floor(k / c.world.width) }; break; }
+      if (b.def.id === 'campfire') { camp = World.keyToXY(k); break; }
     }
     if (!camp) { st.job = '闲逛'; return; }
     // 环扫找落点（2→5 回退；靠营地内圈，减少外围被猫拆）
@@ -409,7 +422,7 @@ export class BehaviorSystem implements GameSystem {
         // 营地旁环扫落点（复用探索落点逻辑）
         let camp: { x: number; y: number } | null = null;
         for (const [k, b] of c.world.buildings) {
-          if (b.def.id === 'campfire') { camp = { x: k % c.world.width, y: Math.floor(k / c.world.width) }; break; }
+          if (b.def.id === 'campfire') { camp = World.keyToXY(k); break; }
         }
         if (!camp) continue;
         for (let r = 2; r <= 5; r++) {

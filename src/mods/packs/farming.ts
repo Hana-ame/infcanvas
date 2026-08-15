@@ -6,11 +6,18 @@
 import type { ModRegistry } from '../../sim/mods/registry';
 import { FarmSystem } from '../../sim/systems/farmSystem';
 import type { Sim } from '../../sim/sim';
+import type { ModPack } from '../pack';
 
-export function farmingPack(m: ModRegistry): void {
+export const farmingPack: ModPack = {
+  id: 'farming',
+// 依赖（2026-08-15 显式化）：无硬前置——passive 建筑全是内核 defs
+  requires: [],
+  apply(m: ModRegistry): void {
   m.registerSystemDef({
     id: 'farm', label: '耕种', category: 'production',
     ctor: (s: Sim) => new FarmSystem(s),
     before: 'raid',
   });
-}
+  }
+};
+

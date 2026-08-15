@@ -39,7 +39,8 @@ export interface SimContext {
   readonly bus: EventBus;
   readonly mods: ModRegistry;
   readonly tuning: TuningConfig; // 平衡参数总表（docs/DATA_DRIVEN.md §3.4）
-  // 数据驱动查询：建筑 def / 配方（mod 覆盖后生效）
+  // 数据驱动查询：建筑 def / 配方（mod 覆盖后生效）；物品表经 mods.items 直读（clothing/
+  // thermo 玩法包读 ItemDef.meta 声明语义，与 BuildingDef.meta 同模式——无需内核查询口）
   buildingDef(id: string): BuildingDef | undefined;
   recipe(id: string): RecipeDef | undefined;
   stockpile: Record<string, number>;
@@ -56,6 +57,10 @@ export interface SimContext {
   techs: Set<string>; // 已解锁科技（神谕抽卡）
   techBuildWeight(techId: string): number; // 科技建筑建造权重（0→1 渐进：解锁初期仅娱乐探索可命中）
   unlockTech(techId: string): boolean;
+  // 科技碎片（2026-08-14 碎片制：每科技 fragments 块碎片攒齐 → 自动解锁整卡）
+  techFragments: Record<string, number>; // 每科技已集碎片数（攒满 = 已解锁，不重复累计）
+  grantTechFragment(techId: string): boolean; // 拾获一块碎片；攒满 → unlockTech；已解锁科技返回 false
+  fragmentsNeeded(techId: string): number; // 该科技所需碎片总数（def.fragments ?? 1）
   oracleGoal: { workType: string; label: string; until: number } | null; // 神谕目标（影响目标层）
   // 神谕设定目标（策略卡 = 神谕目标：只调制工作系列权重 ×oracleGoalMul，不插小人卡槽、不碰选择链）
   setOracleGoal(def: { workType?: string; label: string; duration: number }): void;
@@ -83,7 +88,8 @@ export interface SimContext {
   setPosition(eid: number, p: { x: number; y: number }): void;
   // 命令/移动
   moveTo(eid: number, x: number, y: number): void;
-  moveAdjacent(eid: number, tx: number, ty: number): void;
+  // 返回是否发起了寻路（false = 超距/节流/无路——调用方可决定放弃目标或等待节流）
+  moveAdjacent(eid: number, tx: number, ty: number): boolean;
   findNearest(pos: { x: number; y: number }, cond: (x: number, y: number) => boolean, allowNonPassable?: boolean, radius?: number): { x: number; y: number } | null;
   // 实体
   spawnPawn(x: number, y: number): number;
@@ -95,11 +101,17 @@ export interface SimContext {
   rollEventSkill(eid: number, dc: number, skill: SkillId): { success: boolean; roll: number };
   adjustMood(eid: number, delta: number): void;
   issueCommand(cmd: { type: 'build'; x: number; y: number; buildingId?: string }): void;
+  // 2026-08-15 纯引擎：命令 = 引擎协议，Sim 路由到注册的命令处理器（mods.commandHandlers）
+  // 引擎内建 'move'（实体移动），其余（build/mine/oracle/assign…）由玩法包注册
   // 经济账本（用户设计：收益/支出自动调节工作概率；个人预期 + 全局资源流）
   // eid 可空：null = 公共支出（建造扣公共库存）只记全局流
+  // 2026-08-15 纯引擎：记账规则（alpha 平滑/情绪反馈/日志）迁入 economy 玩法包，
+  // 本接口签名不变，Sim 委托给 economy 能力（未挂 economy 包时静默无操作——卸载不破坏核心）
   recordEarn(eid: number | null, item: string, amount: number, workType?: string): void;
   recordSpend(eid: number | null, item: string, amount: number): void;
   flowRatio(item: string): number;
+  // 全局资源流账本（共享状态：economy 包写入，引擎持有——同 stockpile 的宿主策略）
+  flow: Record<string, { earn: number; spend: number }>;
   logEvent(text: string): void;
   clearTrailCache(): void;
   // 技能（COC）：读取 + 使用后成长
@@ -112,4 +124,15 @@ export interface SimContext {
   leanOf(eid: number, key: string): number;
   // 历史（仿真日志）：结构化查询（社交话题等素材）
   historyQuery(opts?: { type?: string; eid?: number; limit?: number }): { type: string; data?: Record<string, unknown> | undefined }[];
+  // ---- 引擎服务（2026-08-15 内核纯引擎：能力让渡 + 框架服务）----
+  // 能力让渡：玩法包系统在构造时自报实现（如 behavior 报 'behavior'、socialUnit 报
+  // 'socialUnits'、economy 报 'economy'、bootstrap 报 'bootstrap'）；Sim 以此取代
+  // "写死 this.behavior/this.socialUnits"的硬引用——插件可装卸的核心机制
+  provide(cap: string, impl: unknown): void;
+  // 寻路服务（命令处理器等玩法代码要寻路时用；moveAdjacent 已内建）
+  getPath(sx: number, sy: number, ex: number, ey: number, climb?: number): { x: number; y: number }[];
+  // 初始人口数（SimOptions.pawnCount，bootstrap 包读取用于出生刷人）
+  initialPawnCount: number;
+  // 当前选中实体（命令分发用：命令无 pawnId 时默认作用于选中集）
+  selected: number[];
 }

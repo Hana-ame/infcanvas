@@ -1,6 +1,7 @@
 // tick delta（P2 增量）纯函数测试：diff 只含变化、身份对齐、增删、null 无变化
 import { describe, it, expect } from 'vitest';
 import { buildDelta } from '../diff';
+import { World } from '../../sim/core/world';
 import type { SnapshotMsg, DeltaMsg } from '../../shared/protocol';
 
 function snap(over: Partial<SnapshotMsg> = {}): SnapshotMsg {
@@ -10,7 +11,7 @@ function snap(over: Partial<SnapshotMsg> = {}): SnapshotMsg {
     stockpile: { wood: 10 },
     pawns: [{ eid: 1, x: 5, y: 5, hp: 50, maxHp: 50, job: '伐木', faith: 0.2, attrs: { str: 10, con: 10, siz: 10, dex: 10, int: 10, pow: 10, app: 10, edu: 10 }, skills: { work: 20 }, traits: [], maxSlots: 3, slots: [{ id: 'eat', name: '进食' }], desires: { gluttony: 0 } }],
     hostiles: [{ i: 0, x: 20, y: 20, hp: 10, maxHp: 10 }],
-    buildings: [{ defId: 'campfire', x: 3, y: 3, hp: 100, maxHp: 100, faction: 'a', footprint: [{ x: 3, y: 3 }] }],
+    buildings: [{ key: 3 + 3 * 2 ** 31, defId: 'campfire', x: 3, y: 3, hp: 100, maxHp: 100, faction: 'a', footprint: [{ x: 3, y: 3 }] }],
     buildQueue: [], buildingVersion: 1,
     ...over,
   };
@@ -69,12 +70,12 @@ describe('buildDelta（P2 增量）', () => {
     cur.buildings[0]!.hp = 60;
     cur.buildingVersion = 2;
     const d = buildDelta(snap(), cur)!;
-    expect(d.buildings![0]).toMatchObject({ key: 3 + 3 * 1000000, defId: 'campfire', hp: 60 });
+    expect(d.buildings![0]).toMatchObject({ key: 3 + 3 * 2 ** 31, defId: 'campfire', hp: 60 });
     expect(d.buildingVersion).toBe(2);
     // 拆除：建筑从世界消失
     const gone = { ...snap(), buildings: [] as SnapshotMsg['buildings'] };
     const d2 = buildDelta(cur, gone)!;
-    expect(d2.buildings!.find((b) => b.key === 3 + 3 * 1000000)!.removed).toBe(true);
+    expect(d2.buildings!.find((b) => b.key === 3 + 3 * 2 ** 31)!.removed).toBe(true);
   });
 
   it('首份快照（prev=null）→ fullDelta 全量收敛', () => {
@@ -82,8 +83,24 @@ describe('buildDelta（P2 增量）', () => {
     const d = buildDelta(null, s)!;
     expect(d.pawns!.find((p) => p.eid === 1)!.attrs).toBeDefined();
     expect(d.pawnList).toEqual([1]);
-    expect(d.buildings![0]!.key).toBe(3 + 3 * 1000000);
+    expect(d.buildings![0]!.key).toBe(3 + 3 * 2 ** 31);
     expect(d.hostiles).toHaveLength(1);
+  });
+
+  it('建筑 key 往返：y≠0/负坐标 delta key 可 World.keyToXY 解回原坐标（2026-08-15 审计回归）', () => {
+    // 发现背景（2026-08-15 审计）：diff 曾用魔数 x + y*1000000 重拼 key，客户端按
+    // World.keyToXY（2^31 编码）解码 → y>0 建筑解码成 (x+1000000, 0) 错位、与 snapshot
+    // 条目身份不一致，5s 全量对账才纠正。修复 = 协议统一 World 编码。本用例守护：
+    // 任意坐标（含负 y/异号）的 key 经 diff 原样透传、客户端解码 = 原坐标。
+    const cases: [number, number][] = [[3, 3], [10, -2], [-5, 4], [-7, -1]];
+    for (const [x, y] of cases) {
+      const s = snap({ buildings: [{ key: x + y * 2 ** 31, defId: 'campfire', x, y, hp: 80, maxHp: 100, faction: 'a', footprint: [{ x, y }] }] });
+      const cur = snap({ buildings: [{ key: x + y * 2 ** 31, defId: 'campfire', x, y, hp: 40, maxHp: 100, faction: 'a', footprint: [{ x, y }] }] });
+      const d = buildDelta(s, cur)!;
+      expect(d.buildings![0]!.key).toBe(x + y * 2 ** 31);
+      const dec = World.keyToXY(d.buildings![0]!.key);
+      expect(dec).toEqual({ x, y });
+    }
   });
 
   it('hostiles 变化 → 整体覆盖（数量少，不逐条 diff）', () => {

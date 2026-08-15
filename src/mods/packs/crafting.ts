@@ -6,11 +6,18 @@
 import type { ModRegistry } from '../../sim/mods/registry';
 import { CraftSystem } from '../../sim/systems/craftSystem';
 import type { Sim } from '../../sim/sim';
+import type { ModPack } from '../pack';
 
-export function craftingPack(m: ModRegistry): void {
+export const craftingPack: ModPack = {
+  id: 'crafting',
+// 依赖（2026-08-15 显式化）：无硬前置——workbench 是内核 defs
+  requires: [],
+  apply(m: ModRegistry): void {
   m.registerSystemDef({
     id: 'craft', label: '手作', category: 'production',
     ctor: (s: Sim) => new CraftSystem(s),
     before: 'raid',
   });
-}
+  }
+};
+

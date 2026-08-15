@@ -7,10 +7,17 @@
 import type { ModRegistry } from '../../sim/mods/registry';
 import { TechPoolSystem } from '../../sim/systems/techPoolSystem';
 import type { Sim } from '../../sim/sim';
+import type { ModPack } from '../pack';
 
-export function techPoolPack(m: ModRegistry): void {
+export const techPoolPack: ModPack = {
+  id: 'techPool',
+  // 依赖（2026-08-15 显式化）：无硬前置——科技表 TECHS 是全局 defs
+  requires: [],
+  apply(m: ModRegistry): void {
   m.registerSystemDef({
-    id: 'techPool', label: '科技抽卡池', category: 'ai',
+    id: 'techPool', label: '科技抽卡池', category: 'world',
     ctor: (s: Sim) => new TechPoolSystem(s),
   });
-}
+  }
+};
+

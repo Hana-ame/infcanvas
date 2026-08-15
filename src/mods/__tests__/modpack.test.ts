@@ -9,6 +9,7 @@ import {
 } from '../loader';
 import { declaredEventToScripted } from '../../sim/defs/events';
 import { ModRegistry } from '../../sim/mods/registry';
+import { World } from '../../sim/core/world';
 
 const pkgJson = readFileSync(join(process.cwd(), 'src/mods/packages/demo-berry.mod.json'), 'utf-8');
 const pkg = parseModPackage(pkgJson);
@@ -177,8 +178,9 @@ describe('声明式事件 DLC（defs.events：when 谓词 + effects 效果表）
     expect([...sim.world.buildings.values()].some((b) => b.def.id === 'totem')).toBe(true);
     // 图腾 aura 生效（站在图腾旁心情回升）
     const totem = [...sim.world.buildings.entries()].find(([, b]) => b.def.id === 'totem')![0];
-    const tx = totem % sim.world.width;
-    const ty = Math.floor(totem / sim.world.width);
+    // 新 key 编码（2026-08-14 无限地图）：必须 World.keyToXY 解码——
+    // 旧 `key % width` 公式在此编码下得错误坐标（review 修复：断言因此失去意义）
+    const { x: tx, y: ty } = World.keyToXY(totem);
     sim.pawnPositions.set(sim.pawns[0], { x: tx + 1, y: ty });
     sim.step(1);
     expect(sim.readNeeds(sim.pawns[0])!.mood).toBeGreaterThanOrEqual(0);

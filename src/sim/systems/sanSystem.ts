@@ -5,6 +5,7 @@ import type { SimContext } from './context';
 import type { EventBus, GameEvent } from '../core/events';
 import type { PawnState, NeedsData } from '../sim';
 import type { SanTuning } from '../defs/tuning';
+import { World } from '../core/world';
 
 export class SanSystem implements GameSystem {
   id = 'san';
@@ -95,38 +96,40 @@ export class SanSystem implements GameSystem {
     // 狂乱中不工作、不进食决策
     if (st.path && st.pathIndex < st.path.length) return; // 继续走完当前路径
     st.job = '理智崩溃';
+    const pos = this.ctx.pawnPositions.get(eid);
+    // 在篝火旁：呆着等 SAN 恢复（任何时刻在火旁都不乱跑、不累计狂乱时长）
+    // 发现背景：此前的"火旁重置 crazyTime"落在乱跑逻辑前，但下一帧 crazyTime 从 0
+    // 重新累计 → 期间又落下去乱跑走开 → 永远离开火堆、SAN 永不恢复
+    //（采集狩猎局 30 分钟 8/11 人永久崩溃，人在火边 4-13 格 san 恒 0）。
+    if (pos && this.nearCampfire(pos.x, pos.y, s.fireComfortRadius)) {
+      st.crazyTime = 0;
+      return;
+    }
     st.crazyTime = (st.crazyTime ?? 0) + dt;
     // 逃向篝火模式：寻路到最近 warmth 建筑（到达后 SAN 恢复自然解除）
     if ((st.crazyTime ?? 0) > s.crazyFleeAfter) {
-      const pos = this.ctx.pawnPositions.get(eid);
-      if (pos && this.nearCampfire(pos.x, pos.y, s.fireComfortRadius)) {
-        st.crazyTime = 0; // 已回到安全区，重新计时（SAN 恢复中）
-        st.crazyFleeTarget = undefined;
-      } else {
-        if (!st.crazyFleeTarget) {
-          const w = this.ctx.world;
-          let best: { x: number; y: number } | null = null;
-          let bestD = Infinity;
-          for (const [k, b] of w.buildings) {
-            if (!b.def.tags?.includes('warmth')) continue;
-            const bx = k % w.width;
-            const by = Math.floor(k / w.width);
-            const d = (bx - (pos?.x ?? 0)) ** 2 + (by - (pos?.y ?? 0)) ** 2;
-            if (d < bestD) { bestD = d; best = { x: bx, y: by }; }
-          }
-          st.crazyFleeTarget = best ?? undefined;
+      if (!st.crazyFleeTarget) {
+        const w = this.ctx.world;
+        let best: { x: number; y: number } | null = null;
+        let bestD = Infinity;
+        for (const [k, b] of w.buildings) {
+          if (!b.def.tags?.includes('warmth')) continue;
+          // 新 key 编码（2026-08-14 无限地图）：World.keyToXY 解码（负坐标支持）
+          const { x: bx, y: by } = World.keyToXY(k);
+          const d = (bx - (pos?.x ?? 0)) ** 2 + (by - (pos?.y ?? 0)) ** 2;
+          if (d < bestD) { bestD = d; best = { x: bx, y: by }; }
         }
-        if (st.crazyFleeTarget) {
-          this.ctx.moveTo(eid, st.crazyFleeTarget.x, st.crazyFleeTarget.y);
-          return;
-        }
+        st.crazyFleeTarget = best ?? undefined;
+      }
+      if (st.crazyFleeTarget) {
+        this.ctx.moveTo(eid, st.crazyFleeTarget.x, st.crazyFleeTarget.y);
+        return;
       }
     }
     // 在乱跑冷却内发呆
     st.crazyCooldown = (st.crazyCooldown ?? 0) - dt;
     if ((st.crazyCooldown ?? 0) > 0) return;
-    // 随机乱跑：找周围可通行格
-    const pos = this.ctx.pawnPositions.get(eid);
+    // 随机乱跑：找周围可通行格（pos 取自上方的函数级声明）
     if (!pos) return;
     const w = this.ctx.world;
     for (let attempt = 0; attempt < s.crazyWanderAttempts; attempt++) {

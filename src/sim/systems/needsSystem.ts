@@ -4,6 +4,7 @@ import type { GameSystem } from './registry';
 import type { SimContext } from './context';
 import type { EventBus } from '../core/events';
 import { tickNeeds, urgentNeedAction } from '../core/needs';
+import { World } from '../core/world';
 
 export class NeedsSystem implements GameSystem {
   id = 'needs';
@@ -110,7 +111,9 @@ export class NeedsSystem implements GameSystem {
     let bestD = Infinity;
     for (const [key, b] of w.buildings) {
       if (b.def.id !== 'campfire') continue;
-      const d = (pos.x - key % w.width) ** 2 + (pos.y - Math.floor(key / w.width)) ** 2;
+      // 新 key 编码（2026-08-14 无限地图）：World.keyToXY 解码（负坐标支持）
+      const { x: bx, y: by } = World.keyToXY(key);
+      const d = (pos.x - bx) ** 2 + (pos.y - by) ** 2;
       if (d < bestD) { bestD = d; best = key; }
     }
     if (best !== null) this.ctx.socialUnits.addMemory(best, text);

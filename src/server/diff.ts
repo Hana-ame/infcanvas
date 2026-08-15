@@ -27,7 +27,7 @@ export function buildDelta(prev: SnapshotMsg | null, cur: SnapshotMsg): DeltaMsg
   const pawns: NonNullable<DeltaMsg['pawns']> = [];
   for (const p of cur.pawns) {
     const old = prevPawns.get(p.eid);
-    if (!old) { pawns.push({ eid: p.eid, x: p.x, y: p.y, attrs: p.attrs, hp: p.hp, maxHp: p.maxHp, job: p.job, needs: p.needs, faith: p.faith, skills: p.skills, traits: p.traits, maxSlots: p.maxSlots, slots: p.slots, desires: p.desires, lastDecision: p.lastDecision }); any = true; continue; }
+    if (!old) { pawns.push({ eid: p.eid, x: p.x, y: p.y, attrs: p.attrs, hp: p.hp, maxHp: p.maxHp, job: p.job, needs: p.needs, faith: p.faith, skills: p.skills, traits: p.traits, maxSlots: p.maxSlots, slots: p.slots, desires: p.desires, lastDecision: p.lastDecision, worn: p.worn ?? '' }); any = true; continue; }
     const pd: NonNullable<DeltaMsg['pawns']>[number] = { eid: p.eid };
     let ch = false;
     if (old.x !== p.x || old.y !== p.y) { pd.x = p.x; pd.y = p.y; ch = true; }
@@ -43,6 +43,9 @@ export function buildDelta(prev: SnapshotMsg | null, cur: SnapshotMsg): DeltaMsg
     if (!sameArr(old.slots, p.slots)) { pd.slots = p.slots; ch = true; }
     if (!sameObj(old.desires, p.desires)) { pd.desires = p.desires; ch = true; }
     if (!sameObj(old.lastDecision, p.lastDecision)) { pd.lastDecision = p.lastDecision; ch = true; }
+    // worn 归一 ''（2026-08-15 审计：旧值 undefined → JSON.stringify 丢字段，客户端
+    // 无法区分"没发"与"脱下"→ 脱衣 delta 无效、tint 不刷新。'' = 协议显式"无穿着"）
+    if ((old.worn ?? '') !== (p.worn ?? '')) { pd.worn = p.worn ?? ''; ch = true; } // 穿着衣物变化（clothing 玩法包）
     if (ch) { pawns.push(pd); any = true; }
   }
   for (const eid of prevPawns.keys()) {
@@ -56,9 +59,11 @@ export function buildDelta(prev: SnapshotMsg | null, cur: SnapshotMsg): DeltaMsg
   if (!sameArr(prev.hostiles, cur.hostiles)) { d.hostiles = cur.hostiles; any = true; }
 
   // ---- buildings：按 key 对齐 diff hp；增删整条 ----
-  // 建筑身份 key = x + y*1000000（世界尺寸远小于 1000000，保证唯一；与协议/客户端 key 语义一致）
-  const prevB = new Map(prev.buildings.map((b) => [b.x + b.y * 1000000, b]));
-  const curB = new Map(cur.buildings.map((b) => [b.x + b.y * 1000000, b]));
+  // 建筑身份 key = snapshot 自带（World 编码 x + y*2^31，2026-08-15 审计修复：
+  // 此前此处用魔数 x + y*1000000 重拼 → 客户端 World.keyToXY 解码错乱，delta 建筑
+  // 错位到 (x+1000000, 0) 且与 snapshot 条目身份不一致，5s 全量对账才纠正）
+  const prevB = new Map(prev.buildings.map((b) => [b.key, b]));
+  const curB = new Map(cur.buildings.map((b) => [b.key, b]));
   const bds: NonNullable<DeltaMsg['buildings']> = [];
   for (const [key, b] of curB) {
     const old = prevB.get(key);
@@ -84,7 +89,7 @@ function fullDelta(s: SnapshotMsg): DeltaMsg {
   d.pawns = s.pawns.map((p) => ({ ...p, attrs: p.attrs }));
   d.pawnList = s.pawns.map((p) => p.eid);
   d.hostiles = s.hostiles;
-  d.buildings = s.buildings.map((b) => ({ key: b.x + b.y * 1000000, defId: b.defId, hp: b.hp, maxHp: b.maxHp, faction: b.faction, footprint: b.footprint })); // key 同 buildDelta：x + y*1000000
+  d.buildings = s.buildings.map((b) => ({ key: b.key, defId: b.defId, hp: b.hp, maxHp: b.maxHp, faction: b.faction, footprint: b.footprint })); // key = snapshot 自带（World 编码）
   d.buildingVersion = s.buildingVersion;
   d.buildQueue = s.buildQueue;
   return d;

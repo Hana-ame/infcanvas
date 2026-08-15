@@ -3,6 +3,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { SocialUnitSystem } from '../../systems/socialUnitSystem';
 import { makeMinCtx } from '../helpers/minCtx';
+import { World } from '../../core/world';
 
 describe('SocialUnitSystem 独立测试（最小 ctx，无 Sim）', () => {
   let ctx = makeMinCtx(14);
@@ -47,8 +48,8 @@ describe('SocialUnitSystem 独立测试（最小 ctx，无 Sim）', () => {
     const sys = new SocialUnitSystem(ctx);
     sys.init(ctx.bus);
     const key = placeCampfire(50, 50);
-    const fx = key % ctx.world.width;
-    const fy = Math.floor(key / ctx.world.width);
+    // 新 key 编码（2026-08-14 无限地图）：必须 World.keyToXY 解码（负坐标支持）
+    const { x: fx, y: fy } = World.keyToXY(key);
     const eid = ctx.spawnPawn(fx + 1, fy);
     sys.onCampfireBuilt(key);
     // 毁掉 campfire 旁一栋建筑（bus 事件 → 记忆）。

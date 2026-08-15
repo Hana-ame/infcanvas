@@ -3,6 +3,7 @@
 import type { GameSystem } from './registry';
 import type { SimContext } from './context';
 import type { EventBus } from '../core/events';
+import { World } from '../core/world';
 
 export class BuildSystem implements GameSystem {
   id = 'build';
@@ -42,8 +43,8 @@ export class BuildSystem implements GameSystem {
         if (def.replacesTile) {
           // 地形改造（修桥）：把 footprint 格替换为目标 tile（water → bridge），不留建筑
           for (const key of this.ctx.world.footprintKeys(b.x, b.y, def)) {
-            const gx = key % this.ctx.world.width;
-            const gy = Math.floor(key / this.ctx.world.width);
+            // 新 key 编码（2026-08-14 无限地图）：必须 World.keyToXY 解码（负坐标支持）
+            const { x: gx, y: gy } = World.keyToXY(key);
             this.ctx.world.setTile(gx, gy, def.replacesTile);
           }
         } else if (isUpgrade) {

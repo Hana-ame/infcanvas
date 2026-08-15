@@ -4,6 +4,7 @@
 import type { EventProvider, ScriptedEvent } from '../sim/systems/eventSystem';
 import type { SimContext } from '../sim/systems/context';
 import { TUNING } from '../sim/defs/tuning';
+import { World } from '../sim/core/world';
 
 export interface LlmConfig {
   endpoint: string;         // OpenAI 兼容 base，如 https://api.openai.com/v1
@@ -42,7 +43,7 @@ function buildWorldPrompt(ctx: SimContext): string {
     }
   }
   const mem = [...byFire.entries()]
-    .map(([key, members]) => `营地@(${key % ctx.world.width},${Math.floor(key / ctx.world.width)}) ${members.length}人`)
+    .map(([key, members]) => `营地@(${World.keyToXY(key).x},${World.keyToXY(key).y}) ${members.length}人`)
     .join('；');
   return [
     `第 ${Math.floor(ctx.time / ctx.dayLength) + 1} 天，时间 ${Math.floor(ctx.time / 60)} 分，${ctx.isNight() ? '夜晚' : '白天'}，${ctx.env.raining ? '下雨' : '晴朗'} ${Math.round(ctx.env.temperature)}°C。`,

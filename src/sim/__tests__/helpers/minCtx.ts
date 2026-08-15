@@ -31,16 +31,21 @@ export interface MinCtx extends SimContext {
   _earn: { eid: number | null; item: string; amount: number }[];
   _spend: { eid: number | null; item: string; amount: number }[];
   _unlockedTechs: string[];
+  _fragments: string[]; // 科技碎片桩记录（2026-08-14）
   _upgrades: { x: number; y: number; defId: string }[];
   _moodAdj: Map<number, number>;
 }
 
 // 构造最小 ctx：真实世界 + 桩方法。tests 可用 override 替换/追加字段。
 export function makeMinCtx(seed = 1, override?: Partial<MinCtx>): MinCtx {
-  const world = new World(seed);
+  // 顺序：先 mods 后 world——World 构造时把 defs 存为快照（this.buildingsDefs），
+  // 后注册的建筑（玩法包 cage/heater 等）进不了快照 → placeBuilding 永远失败
+  //（发现背景：prison/thermo 测试 placeBuilding 返回 false，World 内查不到 cage def）。
+  // Sim 同姿势：mods 装配完成 → new World(seed, { tiles, buildings })（见 sim.ts 构造）。
+  const mods = ModRegistry.default();
+  const world = new World(seed, { tiles: mods.tiles, buildings: mods.buildings });
   const bus = new EventBus();
   const rng = new SimRng(seed);
-  const mods = ModRegistry.default();
   const tuning = TUNING;
 
   const _pawnList: number[] = [];
@@ -59,6 +64,7 @@ export function makeMinCtx(seed = 1, override?: Partial<MinCtx>): MinCtx {
   const _earn: MinCtx['_earn'] = [];
   const _spend: MinCtx['_spend'] = [];
   const _unlockedTechs: string[] = [];
+  const _fragments: string[] = []; // 科技碎片桩（grantTechFragment 记录，测试断言用）
   const _upgrades: { x: number; y: number; defId: string }[] = [];
   const _moodAdj = new Map<number, number>();
 
@@ -91,6 +97,12 @@ export function makeMinCtx(seed = 1, override?: Partial<MinCtx>): MinCtx {
     },
     oracleGoal: null as never,
     factionPriority: {},
+    flow: {},
+    selected: [],
+    initialPawnCount: 2,
+    // 引擎服务（2026-08-15 纯引擎）：能力让渡桩（单测里包不挂载 → 无提供者）+ 寻路桩
+    provide: () => {},
+    getPath: (sx, sy, ex, ey) => { const p: { x: number; y: number }[] = []; let x = sx, y = sy; while (x !== ex || y !== ey) { if (x !== ex) x += ex > x ? 1 : -1; else y += ey > y ? 1 : -1; p.push({ x, y }); } return p; },
 
     // ---- 数据驱动查询 ----
     buildingDef: (id) => mods.buildings[id],
@@ -99,6 +111,10 @@ export function makeMinCtx(seed = 1, override?: Partial<MinCtx>): MinCtx {
 
     // ---- 世界操作 ----
     unlockTech: (id) => { _unlockedTechs.push(id); return true; },
+    // 科技碎片桩（2026-08-14 碎片制）：记录碎片流向，minCtx 无需完整攒集逻辑
+    techFragments: {},
+    grantTechFragment: (id) => { _fragments.push(id); return true; },
+    fragmentsNeeded: (id) => 1,
     setOracleGoal: () => {},
     addProductionNear: (x, y, item, amount) => { ctx.stockpile[item] = (ctx.stockpile[item] ?? 0) + amount; },
     upgradeBuilding: (x, y, defId) => { _upgrades.push({ x, y, defId }); return true; },
@@ -113,7 +129,7 @@ export function makeMinCtx(seed = 1, override?: Partial<MinCtx>): MinCtx {
     setHealth: (eid, h) => { _health.set(eid, { ...h }); },
     setPosition: (eid, p) => { _pawnPositions.set(eid, { ...p }); },
     moveTo: (eid, x, y) => { _pawnPositions.set(eid, { x, y }); },
-    moveAdjacent: (eid, tx, ty) => { _pawnPositions.set(eid, { x: tx, y: ty }); },
+    moveAdjacent: (eid, tx, ty) => { _pawnPositions.set(eid, { x: tx, y: ty }); return true; },
     findNearest: (pos, cond, _allow, _radius) => {
       for (let r = 1; r < 40; r++) {
         for (let dy = -r; dy <= r; dy++) {
@@ -132,7 +148,7 @@ export function makeMinCtx(seed = 1, override?: Partial<MinCtx>): MinCtx {
       const eid = _pawnList.length + 9000;
       _pawnList.push(eid);
       const dna = generateDna(eid);
-      _pawnStates.set(eid, { dna, slots: initSlots(dna), path: [], pathIndex: 0, job: '闲逛' });
+      _pawnStates.set(eid, { dna, climb: 1, slots: initSlots(dna), path: [], pathIndex: 0, job: '闲逛' });
       _pawnPositions.set(eid, { x, y });
       _needs.set(eid, { food: 100, rest: 100, mood: 100, san: 100 });
       _health.set(eid, { hp: 100, maxHp: 100 });
@@ -176,6 +192,7 @@ export function makeMinCtx(seed = 1, override?: Partial<MinCtx>): MinCtx {
     _earn,
     _spend,
     _unlockedTechs,
+    _fragments,
     _upgrades,
     _moodAdj,
   };

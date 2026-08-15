@@ -38,7 +38,9 @@ async function main(): Promise<void> {
   // ---- 单机模式（P0） ----
   // 运行时 mod 加载：?mods=url1,url2
   //  - .mod.json：打包格式（manifest+defs+scripts），fetch → parse → buildModMount（校验/沙箱）
-  //  - 其他：ESM 源码 mod（默认导出回调），dev 指向源码路径（vite transform）
+  //  - 其他：ESM 源码 mod。2026-08-14 完全插件化：统一为 ModPack 格式
+  //    （default 导出 { id, requires, apply }）→ 经 registry.mount 装配（依赖图解析，
+  //    前置包可列在前面按序挂载）；旧式函数导出（(m) => void）仍兼容（deprecated，给提示）
   const modUrls = (new URLSearchParams(location.search).get('mods') ?? '').split(',').filter(Boolean);
   const modFns: ((m: ModRegistry) => void)[] = [];
   for (const u of modUrls) {
@@ -49,8 +51,17 @@ async function main(): Promise<void> {
         console.log(`[mod] 已挂载包 ${pkg.manifest.id}@${pkg.manifest.version}`);
       } else {
         const m = await import(/* @vite-ignore */ u);
-        if (typeof m.default === 'function') modFns.push(m.default);
-        else console.warn(`mod ${u}: 没有 default 导出函数`);
+        const exp = m.default ?? m;
+        if (exp && typeof exp.id === 'string' && typeof exp.apply === 'function') {
+          // ModPack（统一格式）：mount 时要求 requires 前置包已在目录——同列表内先列先挂，
+          // 依赖默认玩法包则天然满足（ModRegistry.default() 已挂载）
+          modFns.push((reg) => reg.mount(exp));
+          console.log(`[mod] 已挂载 ModPack ${exp.id}`);
+        } else if (typeof m.default === 'function') {
+          // 旧式函数 mod（完全插件化前的格式，deprecated）
+          console.warn(`[mod] ${u}: 函数式 mod 已废弃，请改为 ModPack（{ id, requires, apply }）`);
+          modFns.push(m.default);
+        } else console.warn(`mod ${u}: 没有 default 导出（需 ModPack 或函数）`);
       }
     } catch (err) {
       console.error(`[mod] ${u} 加载失败`, err);

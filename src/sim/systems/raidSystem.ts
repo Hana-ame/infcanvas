@@ -3,6 +3,7 @@
 import type { GameSystem } from './registry';
 import type { SimContext } from './context';
 import type { EventBus } from '../core/events';
+import { World } from '../core/world';
 
 export class RaidSystem implements GameSystem {
   id = 'raid';
@@ -155,7 +156,8 @@ export class RaidSystem implements GameSystem {
     let bestD = Infinity;
     // chunk 空间分区查询（原 O(r²) 全格扫描 × hostile × tick）
     for (const b of w.queryBuildingsNear(Math.round(h.x), Math.round(h.y), radius)) {
-      if (b.dist < bestD) { bestD = b.dist; best = { x: b.key % w.width, y: Math.floor(b.key / w.width) }; }
+      // 新 key 编码（2026-08-14 无限地图）：World.keyToXY 解码（负坐标支持）
+      if (b.dist < bestD) { bestD = b.dist; best = World.keyToXY(b.key); }
     }
     return best;
   }

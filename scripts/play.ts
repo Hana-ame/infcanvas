@@ -14,18 +14,31 @@
 //   techs         已解锁科技
 //   help          帮助
 import { Sim } from '../src/sim/sim';
+import { World } from '../src/sim/core/world';
 import { makeDummyCardPlanner } from '../src/server/dummyLlm';
 import { TECHS } from '../src/sim/defs/techs';
 import { JOBS, jobLabelOf } from '../src/sim/defs/jobs';
 import { createInterface } from 'readline';
+import hunterGathererPack from '../src/mods/hunter-gatherer';
 
-const sim = new Sim({ seed: 20260803, pawnCount: 4 });
+// 玩法参数（2026-08-14）：`npx tsx scripts/play.ts [hunter-gatherer]` 换 mod 配置——
+// 缺省 = 默认全玩法包（种植/手作/科技/扩张/大系统）；hunter-gatherer = 纯采集+狩猎
+// 2026-08-14 完全插件化：hg 已是 ModPack，经 registry.mount 装配（依赖图解析）
+const useHg = process.argv[2] === 'hunter-gatherer';
+
+const sim = new Sim({
+  seed: 20260803, pawnCount: 4,
+  ...(useHg ? { mods: (m) => m.mount(hunterGathererPack) } : {}),
+});
 let selected: number | null = null;
 let running = false;
 let speed = 1; // 连续跑时每帧走几秒
 
 const planner = makeDummyCardPlanner(sim as never, {
-  mode: 'feedback', interval: 90, techInterval: 120,
+  // 神谕只印策略卡（目标层）；科技是独立抽卡池（tech-pool 玩法包），神谕不降科技——
+  // 注：曾传 techInterval: 120，该选项从未在 DummyPlannerOpts 实现过（tsc 不管 scripts/，
+  // 一直静默失效）；科技抽卡现由 TechPoolSystem 碎片制驱动，此处不再传。
+  mode: 'feedback', interval: 90,
   onPrint: (def) => { sim.logEvent(`🃏 神谕降旨：${def.label}${def.reason ? `（${def.reason}）` : ''}`); },
 });
 
@@ -46,15 +59,25 @@ function showState(): void {
   console.log(`\n=== 状态 ${statusLine()} ===`);
   console.log(`篝火聚居 ${sim.factionsView().length} 处：`);
   for (const f of sim.factionsView()) {
-    console.log(`  🔥 营地@(${f.key % sim.world.width},${Math.floor(f.key / sim.world.width)}) 成员${f.members.length}：${f.members.map((e) => `#${e}`).join('、') || '暂无'}`);
+    // 营地坐标：World.keyToXY 解码（2026-08-15 玩时发现：此前用 `key % width` 网格解码——
+    // 2026-08-14 无限地图把建筑 key 改成 x + y*2^31 编码后此处漏改，营地显示
+    // (160,1096111445) 级别错位；负坐标也支持）
+    const pos = World.keyToXY(f.key);
+    console.log(`  🔥 营地@(${pos.x},${pos.y}) 成员${f.members.length}：${f.members.map((e) => `#${e}`).join('、') || '暂无'}`);
   }
   console.log(`建筑 ${sim.world.buildings.size} 座：`);
   for (const [k, b] of sim.world.buildings) {
-    console.log(`  ${b.def.name}@(${k % sim.world.width},${Math.floor(k / sim.world.width)}) ${b.faction} hp${fmt(b.hp)}`);
+    const pos = World.keyToXY(k); // 同营地：key = x + y*2^31 编码（2026-08-15）
+    console.log(`  ${b.def.name}@(${pos.x},${pos.y}) ${b.faction} hp${fmt(b.hp)}`);
   }
   if (sim.buildQueue.length > 0) {
     console.log(`建造队列：`);
-    for (const b of sim.buildQueue) console.log(`  ${b.defId}@(${b.x},${b.y}) ${fmt(b.progress)}/${b.defId === 'wall' ? 3 : 2}s`);
+    // 时长从 BuildingDef.buildTime 读（2026-08-15 玩时发现：此前硬编码 `wall?3:2` 与
+    // 真实 buildTime（farm=4/workbench=5…）不符，队列进度显示错乱）
+    for (const b of sim.buildQueue) {
+      const t = sim.mods.buildings[b.defId]?.buildTime ?? 2;
+      console.log(`  ${b.defId}@(${b.x},${b.y}) ${fmt(b.progress)}/${t}s`);
+    }
   }
   console.log(`最近事件：${sim.events.slice(-3).map((e) => `[${Math.floor(e.time)}s]${e.text}`).join(' | ')}`);
 }
@@ -118,6 +141,7 @@ function showHelp(): void {
   move <x> <y>     选中小人移动
   build <id> <x> <y> 建造（篝火/墙/农田/竹筏/桥…；科技锁自动拒绝）
   job [job]        指派职业（lumberjack/miner/farmer/crafter/fisher，空=自由）
+  wear [物品]      穿衣/换衣/脱衣（clothing 玩法包；空=脱衣）
   oracle           选教堂发布神谕（祝福）/ 印策略卡
   f                连续跑（Ctrl+C 停）
   speed <n>        连续跑速度（秒/帧）
@@ -135,10 +159,18 @@ async function main(): Promise<void> {
 
   const ask = (): void => {
     if (running) return;
-    rl.question(`[${fmt(sim.time)}s] ${selected !== null ? `#${selected} ` : ''}> `, (line) => {
-      handle(line.trim());
-      ask();
-    });
+    try {
+      rl.question(`[${fmt(sim.time)}s] ${selected !== null ? `#${selected} ` : ''}> `, (line) => {
+        handle(line.trim());
+        ask();
+      });
+    } catch (e) {
+      // 发现背景：管道喂命令 + f 连续跑时，stdin EOF → readline close，
+      // interval 残留 tick 再调 question → ERR_USE_AFTER_CLOSE 崩溃
+      //（手动终端不关闭 stdin，不会触发）。管道玩法跑完即退出。
+      if ((e as NodeJS.ErrnoException).code === 'ERR_USE_AFTER_CLOSE') process.exit(0);
+      throw e;
+    }
   };
 
   const handle = (line: string): void => {
@@ -180,9 +212,19 @@ async function main(): Promise<void> {
           sim.issueCommand({ type: 'oracle', x: church[0] % sim.world.width, y: Math.floor(church[0] / sim.world.width) });
           console.log('✨ 神谕降下，祝福信众');
         } else {
-          planner.tick(99999); // 触发一次印卡（行为+科技）
+          planner.tick(99999); // 触发一次印卡（策略卡；科技走独立碎片抽卡池）
           console.log('✨ 神谕低语（无教堂 → 直接印策略卡）');
         }
+        break;
+      }
+      case 'wear': {
+        // 穿衣/换衣（clothing 玩法包 2026-08-15）：wear <itemId>；无参数 = 脱衣。
+        // 结果以 sim 事件为准（🧵/📛 由包内 handler logEvent），这里只 echo 命令本身——
+        // 曾直接 echo "穿 xxx"（不查库存），被拒时误导（假成功），改后拒绝可见
+        if (selected === null) { console.log('先 sel <id> 选中小人'); break; }
+        sim.issueCommand({ type: 'wear', x: 0, y: 0, pawnId: selected, args: { itemId: args[0] } });
+        const worn = sim.pawnStates.get(selected)?.extra?.['worn'] as { body?: string } | undefined;
+        console.log(args[0] ? `🧵 #${selected} 请求穿 ${args[0]}（当前：${worn?.body ?? '无'}，结果见事件）` : `🧵 #${selected} 请求脱衣（当前：${worn?.body ?? '无'}）`);
         break;
       }
       case 'f': {
@@ -192,11 +234,24 @@ async function main(): Promise<void> {
           stepOnce(speed);
         }, 200);
         console.log(`连续跑（每 0.2s 走 ${speed}s），任意键暂停…`);
-        rl.once('line', () => { running = false; });
+        // 发现背景：此前 once('line') 只置 running=false 不执行该行 → 管道玩法
+        // （sleep 后 echo state）的暂停命令被吞掉。改为直接把暂停行交给 handle。
+        rl.once('line', (line) => { running = false; handle(line.trim()); });
         break;
       }
       case 'speed': speed = Number(args[0]) || 1; console.log(`速度 ${speed}s/帧`); break;
-      case 'techs': console.log(`已解锁：${[...sim.techs].map((t) => `${TECHS[t]?.name ?? t}${TECHS[t] ? `（${TECHS[t].desc}）` : ''}`).join('\n  ') || '无'}`); break;
+      case 'techs': {
+        // 碎片制（2026-08-14）：每科技显示 已集碎片/所需碎片；攒满自动解锁
+        console.log('--- 科技（碎片制：攒齐 N 块碎片组成整卡）---');
+        for (const id of Object.keys(TECHS)) {
+          const t = TECHS[id];
+          const unlocked = sim.techs.has(id);
+          const have = sim.techFragments[id] ?? 0;
+          const need = sim.fragmentsNeeded(id);
+          console.log(`  ${unlocked ? '✅' : '🔩'} ${t.name} ${unlocked ? '（已解锁）' : `碎片 ${have}/${need}`} —— ${t.desc}`);
+        }
+        break;
+      }
       case 'map': showMap(Number(args[0] ?? -1), Number(args[1] ?? -1)); break;
       case 'pause': sim.paused = !sim.paused; console.log(sim.paused ? '⏸ 暂停' : '▶ 继续'); break;
       case 'help': case 'h': showHelp(); break;

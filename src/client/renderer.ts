@@ -4,9 +4,20 @@
 import { Application, Container, Graphics, Rectangle, Text, TextStyle } from 'pixi.js';
 import type { SimView } from './remote';
 import type { TileDef } from '../sim/defs';
+import { World } from '../sim/core/world';
 import { SvgAssets } from './svgLoader';
 import { pawnAssetIdFor } from './svgAssets';
 import { jobLabelOf } from '../sim/defs/jobs';
+// 衣物染料色表（clothing 玩法包 2026-08-15：渲染染衣服的 tint 色）；渲染器属于默认玩法
+// 装配域，直接引用玩法包常量（色表是玩法语义，不进 shared/内核）
+import { K_WORN } from '../sim/mods/contracts';
+// 染料色值表（2026-08-15 一致性解耦：色值 = 表现层数据，唯一权威在此；clothing 包只持染料 id
+// 与中文色名，服务端不持有颜色值——避免两端色值来源不一致）
+const DYE_COLORS: Record<string, string> = {
+  red: '#c8605a',
+  blue: '#5a7ac8',
+  yellow: '#c8a860',
+};
 
 const TILE = 32;
 
@@ -305,18 +316,66 @@ export class Renderer {
     }
   }
 
-  // 地表色块（一次绘制，固定）
+  // 地表色块（视口缓存，DESIGN §384：客户端按视口加载/卸载渲染对象——无限地图）
+  // 2026-08-14 无限地图：不再全图一次绘制（192×192 是出生区，探索远处会黑屏/爆炸）；
+  // 改为按 chunk(64×64) 缓存 Graphics，只保留视口可见 chunk，相机移动时增量挂载/卸载
+  private terrainChunkSprites = new Map<string, Graphics>();
+  private iconChunkSprites = new Map<string, Graphics>();
+  private lastCamTile = { x0: 0, y0: 0, x1: 0, y1: 0 };
+
+  // 视口可见 tile 范围（含安全余量 1 chunk，避免边缘闪烁）
+  private viewTileRange(): { x0: number; y0: number; x1: number; y1: number } {
+    const cam = this.camera;
+    const halfW = (this.app.screen.width / 2) / (TILE * cam.zoom) + 64;
+    const halfH = (this.app.screen.height / 2) / (TILE * cam.zoom) + 64;
+    return {
+      x0: Math.floor(cam.x - halfW),
+      y0: Math.floor(cam.y - halfH),
+      x1: Math.ceil(cam.x + halfW),
+      y1: Math.ceil(cam.y + halfH),
+    };
+  }
+
+  // 相机移动到未覆盖 tile 范围 → 重建地表/地形图标（增量：只补新 chunk、卸旧 chunk）
+  private refreshViewportTerrain(): void {
+    const r = this.viewTileRange();
+    if (r.x0 === this.lastCamTile.x0 && r.y0 === this.lastCamTile.y0
+      && r.x1 === this.lastCamTile.x1 && r.y1 === this.lastCamTile.y1) return;
+    this.lastCamTile = r;
+    this.drawTileGround();
+    this.drawTerrainIcons();
+  }
+
   private drawTileGround(): void {
-    const g = new Graphics();
     const w = this.sim.world;
-    for (let y = 0; y < w.height; y++) {
-      for (let x = 0; x < w.width; x++) {
-        const def = this.tileDefOf(w.getTile(x, y));
-        g.rect(x * TILE, y * TILE, TILE, TILE);
-        g.fill(def.color);
+    const r = this.lastCamTile;
+    // 卸载视口外 chunk（超出范围即丢对象；出生区外未知区 getTile 返回 'mountain' 也能画）
+    for (const [ck, g] of [...this.terrainChunkSprites]) {
+      const c = ck.split(',');
+      const cx = Number(c[0]), cy = Number(c[1]);
+      if (cx < Math.floor(r.x0 / 64) || cx > Math.floor(r.x1 / 64) || cy < Math.floor(r.y0 / 64) || cy > Math.floor(r.y1 / 64)) {
+        this.terrainLayer.removeChild(g);
+        this.terrainChunkSprites.delete(ck);
       }
     }
-    this.terrainLayer.addChildAt(g, 0);
+    for (let cy = Math.floor(r.y0 / 64); cy <= Math.floor(r.y1 / 64); cy++) {
+      for (let cx = Math.floor(r.x0 / 64); cx <= Math.floor(r.x1 / 64); cx++) {
+        const ck = `${cx},${cy}`;
+        if (this.terrainChunkSprites.has(ck)) continue; // 已有缓存
+        const g = new Graphics();
+        const x0 = Math.max(r.x0, cx * 64), x1 = Math.min(r.x1, cx * 64 + 63);
+        const y0 = Math.max(r.y0, cy * 64), y1 = Math.min(r.y1, cy * 64 + 63);
+        for (let y = y0; y <= y1; y++) {
+          for (let x = x0; x <= x1; x++) {
+            const def = this.tileDefOf(w.getTile(x, y));
+            g.rect(x * TILE, y * TILE, TILE, TILE);
+            g.fill(def.color);
+          }
+        }
+        this.terrainLayer.addChildAt(g, 0);
+        this.terrainChunkSprites.set(ck, g);
+      }
+    }
   }
 
   // tile def 查表（mod 可覆盖/新增 tile；未知 id 给兜底色，渲染不崩）
@@ -346,25 +405,53 @@ export class Renderer {
     }
   }
 
-  // 地形图标（树/矿/水）—— SVG。树进入 entityLayer 参与 2.5D 遮挡
+  // 地形图标（树/矿/水）—— SVG。树进入 entityLayer 参与 2.5D 遮挡。
+  // 无限地图视口化（2026-08-14）：与地表同 chunk 缓存，只挂载视口内；重建时树精灵
+  // 需要重新登记 treeSprites（2.5D 排序），先清树列表再逐 chunk 补
   private drawTerrainIcons(): void {
     const w = this.sim.world;
-    for (let y = 0; y < w.height; y++) {
-      for (let x = 0; x < w.width; x++) {
-        const id = w.getTile(x, y);
-        const aid = this.tileIconId(this.tileDefOf(id));
-        if (!aid) continue;
-        const g = this.makeIcon(aid);
-        if (!g) continue;
-        this.placeEntity(g, x, y);
-        if (id === 'tree') {
-          this.treeSprites.push({ g, x, y });
-          this.entityLayer.addChild(g);
-        } else {
-          this.terrainLayer.addChild(g);
-        }
+    const r = this.lastCamTile;
+    // 卸载视口外 chunk 图标（树精灵同步从 treeSprites 移除）
+    for (const [ck, g] of [...this.iconChunkSprites]) {
+      const c = ck.split(',');
+      const cx = Number(c[0]), cy = Number(c[1]);
+      if (cx < Math.floor(r.x0 / 64) || cx > Math.floor(r.x1 / 64) || cy < Math.floor(r.y0 / 64) || cy > Math.floor(r.y1 / 64)) {
+        this.entityLayer.removeChild(g);
+        this.terrainLayer.removeChild(g);
+        this.iconChunkSprites.delete(ck);
+        this.treeSprites = this.treeSprites.filter((t) => t.g !== g);
       }
     }
+    for (let cy = Math.floor(r.y0 / 64); cy <= Math.floor(r.y1 / 64); cy++) {
+      for (let cx = Math.floor(r.x0 / 64); cx <= Math.floor(r.x1 / 64); cx++) {
+        const ck = `${cx},${cy}`;
+        if (this.iconChunkSprites.has(ck)) continue;
+        const g = new Graphics();
+        const x0 = Math.max(r.x0, cx * 64), x1 = Math.min(r.x1, cx * 64 + 63);
+        const y0 = Math.max(r.y0, cy * 64), y1 = Math.min(r.y1, cy * 64 + 63);
+        let treeInChunk = false;
+        for (let y = y0; y <= y1; y++) {
+          for (let x = x0; x <= x1; x++) {
+            const id = w.getTile(x, y);
+            const aid = this.tileIconId(this.tileDefOf(id));
+            if (!aid) continue;
+            const icon = this.makeIcon(aid);
+            if (!icon) continue;
+            this.placeEntity(icon, x, y);
+            if (id === 'tree') {
+              this.treeSprites.push({ g: icon, x, y });
+              g.addChild(icon);
+              treeInChunk = true;
+            } else {
+              this.terrainLayer.addChild(icon);
+            }
+          }
+        }
+        if (treeInChunk) this.entityLayer.addChild(g); // 树容器随 entityLayer 2.5D 排序
+        this.iconChunkSprites.set(ck, g);
+      }
+    }
+    this.sortEntities();
   }
 
   // tile 图标选型：def.sprite 显式声明优先 → growable/mineral 推断 → 内置装饰 id（水/石）
@@ -383,6 +470,8 @@ export class Renderer {
     this.worldContainer.position.set(this.app.screen.width / 2, this.app.screen.height / 2);
     this.worldContainer.scale.set(cam.zoom);
     this.worldContainer.pivot.set(cam.x * TILE, cam.y * TILE);
+    // 无限地图：相机移动到新 tile 范围 → 按视口增量加载/卸载地形（2026-08-14）
+    this.refreshViewportTerrain();
     // 建筑变化时重绘（动态建造）
     const ver = this.sim.world.buildingVersion;
     if (ver !== this.lastBuildingVersion) {
@@ -418,8 +507,11 @@ export class Renderer {
     for (const b of this.buildingSprites) this.entityLayer.removeChild(b.g);
     this.buildingSprites = [];
     for (const [key, b] of w.buildings) {
-      const x = key % w.width;
-      const y = Math.floor(key / w.width);
+      // 地道入口（另一维度，用户 2026-08-14）：不出现在地形上——不渲染
+      //（地表看不到地道；入口位置玩家通过建筑面板/存档得知）
+      if (b.def.tags?.includes('tunnel')) continue;
+      // 新 key 编码（x + y*2^31，支持负坐标，2026-08-14 无限地图）必须用 World.keyToXY 解码
+      const { x, y } = World.keyToXY(key);
       // 多格 footprint：背景色块覆盖全部格
       const dmg = b.hp / b.def.hp;
       const bg = new Graphics();
@@ -469,6 +561,15 @@ export class Renderer {
     void w;
   }
 
+  // 穿着衣物物品 id（clothing 玩法包 2026-08-15）：本地读 pawnStates.extra.worn.body
+  //（存档扩展点），远程读 RemoteSim.wornOf（快照 worn 字段，server 从同一契约填充）
+  private simWornOf(eid: number): string | undefined {
+    const sim = this.sim as { pawnStates?: Map<number, { extra?: Record<string, unknown> }>; wornOf?: (e: number) => string | undefined };
+    const local = sim.pawnStates?.get(eid)?.extra?.[K_WORN];
+    if (local) return (local as { body?: string }).body;
+    return sim.wornOf?.(eid);
+  }
+
   private renderPawns(): void {
     for (const eid of this.sim.pawns) {
       let g = this.pawnSprites.get(eid);
@@ -494,6 +595,12 @@ export class Renderer {
         if (this.viewMode === 'iso') g.zIndex = Math.round(pos.y) * 10 + 9;
         const sel = this.selected.has(eid);
         g.scale.set((sel ? 1.15 : 1));
+        // 穿着染色衣物的 tint（clothing 玩法包 2026-08-15）：衣物 id 前缀 red/blue/yellow
+        // → 布料染成对应色（素衣不改 tint）。契约：本地读 pawnStates.extra.worn.body
+        //（存档扩展点），远程读快照 worn 字段（server 从同一契约填充）
+        const worn = this.simWornOf(eid);
+        const dye = worn?.split('_')[0];
+        g.tint = worn && dye && dye in DYE_COLORS ? parseInt(DYE_COLORS[dye]!.replace('#', ''), 16) : 0xffffff;
         // 受伤（血量低）变暗
         const hk = this.sim.healthOf(eid);
         g.alpha = sel ? 1 : 0.9;

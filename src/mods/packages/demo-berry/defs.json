@@ -1,6 +1,6 @@
 {
   "items": [
-    { "id": "berry", "name": "浆果", "stackable": true, "maxStack": 99 }
+    { "id": "berry", "name": "浆果" }
   ],
   "tiles": [
     {

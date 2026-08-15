@@ -6,6 +6,7 @@ import type { BehaviorCardDef } from '../sim/ai/pawn';
 import type { SimContext } from '../sim/systems/context';
 import { STRATEGY_CARDS, evalStrategyCondition } from '../sim/defs/strategyCards';
 import type { StrategyCardDef } from '../sim/defs/strategyCards';
+import { World } from '../sim/core/world';
 
 // 印卡接口（未来 LLM 版同签名）：
 // planner 输入当前局面，输出一张策略卡 def（null = 本次不印）
@@ -116,7 +117,7 @@ function applyBlueprint(sim: SimContext, cardId: string): void {
   let camp: { x: number; y: number } | null = null;
   for (const [key, b] of cmd.world.buildings) {
     if (b.def.id === 'campfire') {
-      camp = { x: key % cmd.world.width, y: Math.floor(key / cmd.world.width) };
+      camp = World.keyToXY(key);
       break;
     }
   }

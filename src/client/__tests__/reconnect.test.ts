@@ -34,7 +34,7 @@ const WELCOME: WelcomeMsg = {
   tiles: { grass: { id: 'grass', color: '#3a7d44', passable: true, buildable: true } },
   buildings: {},
   items: {},
-  tileGrid: ['grass', 'grass', 'grass', 'grass', 'grass', 'grass', 'grass', 'grass', 'grass', 'grass', 'grass', 'grass'],
+  tileGrid: [{ x: 0, y: 0, tiles: ['grass', 'grass', 'grass', 'grass', 'grass', 'grass', 'grass', 'grass', 'grass', 'grass', 'grass', 'grass'] }],
 };
 
 describe('RemoteSim 断线重连（P1）', () => {
@@ -189,7 +189,7 @@ describe('RemoteSim 断线重连（P1）', () => {
     expect(rs.pawns).toEqual([1, 2]);
 
     // delta 3：建筑 hp 变化 + 全局 stockpile/day
-    ws0.onmessage?.({ data: JSON.stringify({ type: 'delta', t: 11.5, day: 2, stockpile: { wood: 5 }, buildings: [{ key: 2 + 2 * 4, defId: 'campfire', hp: 80, maxHp: 100, faction: 'a', footprint: [{ x: 2, y: 2 }] }] }) });
+    ws0.onmessage?.({ data: JSON.stringify({ type: 'delta', t: 11.5, day: 2, stockpile: { wood: 5 }, buildings: [{ key: 2 + 2 * 2 ** 31, defId: 'campfire', hp: 80, maxHp: 100, faction: 'a', footprint: [{ x: 2, y: 2 }] }] }) });
     expect(rs.day).toBe(2);
     expect(rs.stockpile.wood).toBe(5);
     expect(rs.buildingAt(2, 2)!.hp).toBe(80);
@@ -210,5 +210,5 @@ const RECOVER: WelcomeMsg = {
   tiles: { grass: { id: 'grass', color: '#3a7d44', passable: true, buildable: true } },
   buildings: {},
   items: {},
-  tileGrid: ['grass', 'grass', 'grass', 'grass', 'grass', 'grass', 'grass', 'grass', 'grass', 'grass', 'grass', 'grass'],
+  tileGrid: [{ x: 0, y: 0, tiles: ['grass', 'grass', 'grass', 'grass', 'grass', 'grass', 'grass', 'grass', 'grass', 'grass', 'grass', 'grass'] }],
 };

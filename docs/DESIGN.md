@@ -1011,3 +1011,14 @@ registerHook('beforeRoll', (prob, ctx) => ...);          // check 流程阶段�
 - **同锚点保序**：多个 mod 项声明同一 `before` 时按注册序排列（原 splice 连续前插会逆序——farming/crafting/repair 同锚 'raid' 暴露，产出序必须 farm→craft→repair）。
 - **验证**：`assembly.test.ts` 5 用例（内核 11 无玩法 / 默认 16 且序正确 / 玩法包独立加减 / 注册来源 mod 面 / 纯内核可运行）；卸载测试改为遍历完整装配集。全量 301 测试。
 - §18"已知差距"已消除：玩法系统已全部迁出内核，玩法包 = 最小"添加玩法"单位。
+
+### 20. 内核终态：0 系统纯演算 → 1 系统决策引擎 → 契约表（2026-08-15 追加，与 §19 演进衔接）
+
+- **§19 之后又推进了三个阶段**（详见 PROGRESS.md 2026-08-15 各轮）：
+  - Stage1：内核迁出 8 系统（needs/san/desire→needs 包、social/build/raid/population/events 各一包），内核 2 系统（behavior+socialUnit）；
+  - Stage B+C+D：behavior/socialUnit/economy/bootstrap 全部迁出，内核 = **0 系统纯演算框架**（BASE_SYSTEM_ORDER 24 系统无内联 ctor）；
+  - 一致性重构（用户「fix them」「插件/mod 不要有不一致行为」）：**behavior 归内核**——决策引擎 = 引擎服务，SYSTEM_DEFS 内联 ctor，**内核 = 1 系统**；assign/oracle 命令迁回引擎协议面。
+- **执行序 = 类别语义序 × 组内注册序推导**（CATEGORY_ORDER 7 类 needs→ai→society→production→raid→world→boot，bootstrap category='boot' 恒表尾）：唯一人工语义是类别序；新增玩法包只改 playstyle 清单一处。§19 的"同锚点保序"语义保留给表外第三方系统（before 锚点/表尾兜底）。
+- **能力让渡**（provide/getCap）：玩法包系统构造时自报能力（behavior/socialUnits/economy/bootstrap），sim.behavior 变 getter（无包回落 null/NOOP）；命令路由 issueCommand（move 引擎内建，其余 registerCommand 提供）。
+- **跨包契约校验**（contracts.ts 三类契约：meta/extra 键 + 命令参数 + 协议字段，详见 DATA_DRIVEN §12/§13）：写方/读方/客户端/服务端一律引用 K_* 常量（拼错=编译期错误），validateContracts 由 playstyleManager apply 末尾严格校验。
+- 本段为 §18/§19"已知差距/内核收窄"描述的**演进注记**：上述描述为当时快照，当前内核形态以本段 + PROGRESS.md 为准。

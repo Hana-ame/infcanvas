@@ -7,10 +7,17 @@
 import type { ModRegistry } from '../../sim/mods/registry';
 import { AutonomousBuildSystem } from '../../sim/systems/autonomousBuildSystem';
 import type { Sim } from '../../sim/sim';
+import type { ModPack } from '../pack';
 
-export function autobuildPack(m: ModRegistry): void {
+export const autobuildPack: ModPack = {
+  id: 'autobuild',
+// 依赖（2026-08-15 显式化）：build——蓝图注入 buildQueue 需 build 系统消费，否则规划永不执行
+  requires: ['build'],
+  apply(m: ModRegistry): void {
   m.registerSystemDef({
-    id: 'autobuild', label: '自主建造', category: 'ai',
+    id: 'autobuild', label: '自主建造', category: 'world',
     ctor: (s: Sim) => new AutonomousBuildSystem(s),
   });
-}
+  }
+};
+
