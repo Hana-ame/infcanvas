@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>infcanvas /test 最小核心演示</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: system-ui, sans-serif;
+      }
+      body {
+        margin: 0;
+        background: #121212;
+        color: #eee;
+      }
+      header {
+        padding: 12px 16px;
+        background: #1e1e1e;
+        border-bottom: 1px solid #333;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      header h1 {
+        font-size: 16px;
+        margin: 0;
+      }
+      button {
+        background: #333;
+        color: #eee;
+        border: 1px solid #555;
+        border-radius: 6px;
+        padding: 6px 12px;
+        cursor: pointer;
+      }
+      button:hover {
+        background: #444;
+      }
+      main {
+        display: grid;
+        grid-template-columns: 280px 1fr;
+        gap: 12px;
+        padding: 12px;
+        max-width: 1100px;
+        margin: 0 auto;
+      }
+      .panel {
+        background: #1a1a1a;
+        border: 1px solid #2c2c2c;
+        border-radius: 8px;
+        padding: 12px;
+      }
+      .stats {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+      }
+      .stat {
+        background: #242424;
+        border-radius: 6px;
+        padding: 8px;
+      }
+      .stat .label {
+        color: #aaa;
+        font-size: 12px;
+      }
+      .stat .value {
+        font-size: 20px;
+        font-weight: 700;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+      }
+      th, td {
+        text-align: left;
+        padding: 4px 6px;
+        border-bottom: 1px solid #2a2a2a;
+      }
+      #log {
+        max-height: 420px;
+        overflow-y: auto;
+        font-family: ui-monospace, monospace;
+        font-size: 12px;
+        line-height: 1.5;
+        background: #101010;
+        border-radius: 6px;
+        padding: 8px;
+      }
+      .muted { color: #888; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>🐭 infcanvas /test 最小核心演示</h1>
+      <button id="stepBtn">走 1 tick</button>
+      <button id="runBtn">自动跑</button>
+      <button id="resetBtn">重置</button>
+      <button id="oracleBtn">神谕：采集令</button>
+      <span id="state" class="muted">已停止</span>
+    </header>
+    <main>
+      <section class="panel">
+        <h2>世界状态</h2>
+        <div class="stats">
+          <div class="stat"><div class="label">tick</div><div class="value" id="tick">0</div></div>
+          <div class="stat"><div class="label">鼠鼠</div><div class="value" id="pawns">4</div></div>
+          <div class="stat"><div class="label">🍎 食物</div><div class="value" id="food">0</div></div>
+          <div class="stat"><div class="label">🪵 木材</div><div class="value" id="wood">0</div></div>
+          <div class="stat"><div class="label">🔥 篝火</div><div class="value" id="campfires">0</div></div>
+          <div class="stat"><div class="label">采集令</div><div class="value" id="oracle">否</div></div>
+        </div>
+        <h2>卡牌触发</h2>
+        <table>
+          <thead><tr><th>卡</th><th>次数</th><th>平均熟练度</th></tr></thead>
+          <tbody id="cardRows"></tbody>
+        </table>
+      </section>
+      <section class="panel">
+        <h2>行为日志</h2>
+        <div id="log"></div>
+      </section>
+    </main>
+    <script type="module" src="./browser.js"></script>
+  </body>
+</html>

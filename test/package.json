@@ -1,0 +1,12 @@
+{
+  "name": "infcanvas-reimplement-mini",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Minimal core test project for docs/REIMPLEMENT_PROMPT.md (commit 1eb44ea). Does not affect main code.",
+  "scripts": {
+    "demo": "tsx run.ts",
+    "check": "tsx check.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  }
+}
