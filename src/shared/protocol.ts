@@ -58,6 +58,10 @@ export interface SnapshotMsg {
     worn?: string; // 穿着衣物物品 id（clothing 玩法包 2026-08-15：客户端染色 tint 用；
     //   空串 "" = 无穿着——2026-08-15 审计：undefined 会被 JSON.stringify 丢弃，delta 无法表达"脱下"）
     drafted?: boolean; // RW-1 征召（drafting 包）：true = 征召中（不自主决策）。缺省 = 未征召
+    // 战场指挥 DLC（field-command 包 2026-08-16）：编制树/生效战术回显（server 从
+    // pawn.extra 序列化）。commander 缺省 undefined = 非指挥官；tactic 缺省 undefined = 无战术
+    commander?: { role: 'officer' | 'general'; subordinates: number[] };
+    tactic?: string;
   }[];
   hostiles: { i: number; enemyId?: string; x: number; y: number; hp: number; maxHp: number; faction?: string }[];
   buildings: { key: number; defId: string; x: number; y: number; hp: number; maxHp: number; faction: string; footprint: { x: number; y: number }[] }[];
@@ -96,6 +100,8 @@ export interface DeltaMsg {
     lastDecision?: { drawn: string[]; picked: string; time: number };
     worn?: string;      // 穿着衣物（同 SnapshotMsg）
     drafted?: boolean;  // RW-1 征召（同 SnapshotMsg；缺省 = 未征召）
+    commander?: { role: 'officer' | 'general'; subordinates: number[] }; // 战场指挥（同 SnapshotMsg）
+    tactic?: string;    // 战场指挥：生效战术 id（同 SnapshotMsg）
     removed?: boolean;      // pawn 消失（死亡/重生）
   }[];
   // pawn 集合整体变化（增/删）时带全量列表，client 据此重建 pawns 顺序
@@ -118,4 +124,9 @@ export interface EventMsg {
   }[];
 }
 
-export type ServerMsg = WelcomeMsg | SnapshotMsg | DeltaMsg | EventMsg;
+// 心跳（2026-08-16 审计 M1）：服务器 2s 一发，唯一职责 = 让客户端看门狗在静默期
+//（暂停/无事件/无增量）仍能区分"连接活着"与"连接断了"。不带业务字段（t = 权威时间，
+// 客户端 t 锚定顺带刷新——暂停时 t 不变，锚定无损）。
+export interface PingMsg { type: 'ping'; t: number }
+
+export type ServerMsg = WelcomeMsg | SnapshotMsg | DeltaMsg | EventMsg | PingMsg;

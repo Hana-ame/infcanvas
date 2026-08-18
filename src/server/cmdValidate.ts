@@ -7,6 +7,7 @@
 import type { Sim } from '../sim/sim';
 import { JOB_CARD } from '../sim/ai/pawn';
 import { MAX_TILE } from '../sim/core/world';
+import { TACTICS } from '../mods/packs/field-command';
 
 export interface CmdGuardState {
   lastCmdAt: number;
@@ -30,9 +31,10 @@ export function validateCommand(sim: Sim, raw: unknown, guard: CmdGuardState, no
   if (!allowRate(guard, now)) return { ok: false, reason: 'rate limited' };
   if (typeof raw !== 'object' || raw === null) return { ok: false, reason: 'not an object' };
   const c = raw as Record<string, unknown>;
-  // 命令面 = 注册表 ∪ 引擎内建 move（issueCommand 对 move 走硬编码分支，不进注册表）
+  // 命令面 = 注册表 ∪ 引擎内建（move 实体移动；pause/speed 播放控制——2026-08-16
+  // 审计 H1：远程暂停/变速不再本地直改，统一走命令面，服务器权威闭环）
   // （2026-08-15 命令协议开放后不再硬编码命令表；wear 等玩法包命令动态可用）
-  const known = (type: string): boolean => type === 'move' || sim.mods.commandHandlers.has(type);
+  const known = (type: string): boolean => type === 'move' || type === 'pause' || type === 'speed' || sim.mods.commandHandlers.has(type);
   if (typeof c.type !== 'string' || !known(c.type)) {
     return { ok: false, reason: `unknown command type` };
   }
@@ -70,6 +72,61 @@ export function validateCommand(sim: Sim, raw: unknown, guard: CmdGuardState, no
     const a = (c.args ?? {}) as Record<string, unknown>;
     const hi = a.hostileIndex;
     if (typeof hi !== 'number' || !Number.isInteger(hi) || hi < 0 || hi >= sim.hostiles.length) {
+      return fail('bad hostileIndex');
+    }
+    return { ok: true };
+  }
+  // 播放控制（引擎内建，2026-08-16 审计 H1）：pause 的 args.paused 必须布尔（缺省 true）；
+  // speed 值域 {1,2,3}（issueCommand 硬编码值域校验——服务器权威拒绝注入非法速率）
+  if (c.type === 'pause') {
+    const a = (c.args ?? {}) as Record<string, unknown>;
+    if (a.paused !== undefined && typeof a.paused !== 'boolean') return fail('paused must be boolean');
+    return { ok: true };
+  }
+  if (c.type === 'speed') {
+    const a = (c.args ?? {}) as Record<string, unknown>;
+    if (a.speed !== 1 && a.speed !== 2 && a.speed !== 3) return fail('speed must be 1|2|3');
+    return { ok: true };
+  }
+  // 战场指挥 DLC（field-command 包 2026-08-16）：commander/train/dispatch 形状校验
+  // ——pawnId 必须存在（服务端无 selected 镜像，命令只允许指挥存在的 pawn，同 move）；
+  // role/subordinates/tactic/hostileIndex 边界在此拦截，战术存在性由处理器把关（同 wear）。
+  if (c.type === 'commander') {
+    if (!isPawn(c.pawnId)) return fail('bad pawnId');
+    const a = (c.args ?? {}) as Record<string, unknown>;
+    if (a.role !== undefined && a.role !== 'officer' && a.role !== 'general' && a.role !== 'none') return fail('bad role');
+    if (a.subordinates !== undefined) {
+      if (!Array.isArray(a.subordinates) || !a.subordinates.every((v) => typeof v === 'number' && sim.pawnList.includes(v))) {
+        return fail('bad subordinates');
+      }
+    }
+    return { ok: true };
+  }
+  if (c.type === 'train') {
+    if (!isPawn(c.pawnId)) return fail('bad pawnId');
+    const a = (c.args ?? {}) as Record<string, unknown>;
+    if (typeof a.tactic !== 'string') return fail('tactic must be string');
+    if (!(a.tactic in TACTICS)) return fail('unknown tactic');
+    return { ok: true };
+  }
+  if (c.type === 'tame' || c.type === 'release') {
+    // 驯兽守卫 DLC（beast-taming 包 2026-08-16）：hostileIndex 必须在场（下标越界拒）；
+    // tame 的 pawnId 存在性校验（缺省最近活人由包处理器决定）
+    const a = (c.args ?? {}) as Record<string, unknown>;
+    const hi = a.hostileIndex;
+    if (typeof hi !== 'number' || !Number.isInteger(hi) || hi < 0 || hi >= sim.hostiles.length) {
+      return fail('bad hostileIndex');
+    }
+    if (c.type === 'tame' && c.pawnId !== undefined && !isPawn(c.pawnId)) return fail('bad pawnId');
+    return { ok: true };
+  }
+  if (c.type === 'dispatch') {
+    if (!isPawn(c.pawnId)) return fail('bad pawnId');
+    const a = (c.args ?? {}) as Record<string, unknown>;
+    if (typeof a.tactic !== 'string') return fail('tactic must be string');
+    if (a.tactic !== 'none' && !(a.tactic in TACTICS)) return fail('unknown tactic');
+    const hi = a.hostileIndex;
+    if (hi !== undefined && (typeof hi !== 'number' || !Number.isInteger(hi) || hi < 0 || hi >= sim.hostiles.length)) {
       return fail('bad hostileIndex');
     }
     return { ok: true };

@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { Sim } from '../../sim/sim';
 import { ModRegistry } from '../../sim/mods/registry';
 import { loadModsFromDir } from '../modManager';
+import { validateContracts } from '../../sim/mods/contracts';
 
 const good = readFileSync(join(process.cwd(), 'mods/demo-berry.mod.json'), 'utf-8');
 
@@ -54,5 +55,62 @@ describe('服务端 mod 管理器（loadModsFromDir）', () => {
     writeFileSync(join(dir, 'readme.txt'), 'hi');
     const r = loadModsFromDir(dir, ModRegistry.default());
     expect(r).toEqual({ ok: true, mods: [], errors: [] });
+  });
+
+  // ---- 2026-08-16 修复回归：跨文件依赖（requires.mods 拓扑挂载）+ DLC 契约校验补跑 ----
+
+  it('跨文件依赖：依赖方后于被依赖方挂载（按拓扑序，非文件名序）', () => {
+    // alpha 依赖 beta：文件名序 alpha 在前（若按文件名序挂载 → alpha 先挂会因缺 beta 失败）
+    writeFileSync(join(dir, 'alpha.mod.json'), JSON.stringify({
+      manifest: { id: 'alpha', name: '后依赖', version: '1', requires: { mods: ['beta'] } },
+      defs: { items: [{ id: 'alphaGem', name: '阿尔法宝石' }] },
+    }));
+    writeFileSync(join(dir, 'beta.mod.json'), JSON.stringify({
+      manifest: { id: 'beta', name: '被依赖', version: '1' },
+      defs: { items: [{ id: 'betaOre', name: '贝塔矿' }] },
+    }));
+    const reg = ModRegistry.default();
+    const r = loadModsFromDir(dir, reg);
+    expect(r.ok).toBe(true);
+    expect(r.mods).toEqual(['beta', 'alpha']); // 拓扑序：被依赖方在前
+    expect(reg.itemsMap.get('betaOre')).toBeDefined();
+    expect(reg.itemsMap.get('alphaGem')).toBeDefined();
+  });
+
+  it('跨文件依赖缺失：报错跳过（不半挂载）', () => {
+    writeFileSync(join(dir, 'alpha.mod.json'), JSON.stringify({
+      manifest: { id: 'alpha', name: '缺依赖', version: '1', requires: { mods: ['ghost'] } },
+      defs: { items: [{ id: 'alphaGem', name: '阿尔法宝石' }] },
+    }));
+    const reg = ModRegistry.default();
+    const r = loadModsFromDir(dir, reg);
+    expect(r.ok).toBe(false);
+    expect(r.errors[0]).toContain('ghost'); // 明确列出缺失依赖
+    expect(r.mods).toEqual([]); // alpha 未挂载（无半挂载的悬空 def）
+    expect(reg.itemsMap.get('alphaGem')).toBeUndefined();
+  });
+
+  it('requires.mods 非法（非数组/非法 id）：parse 失败报错', () => {
+    writeFileSync(join(dir, 'bad-dep.mod.json'), JSON.stringify({
+      manifest: { id: 'baddep', name: '坏依赖', version: '1', requires: { mods: 'not-array' } },
+    }));
+    const r = loadModsFromDir(dir, ModRegistry.default());
+    expect(r.ok).toBe(false);
+    expect(r.errors[0]).toContain('requires.mods');
+  });
+
+  it('DLC 契约路径：挂载 DLC 后 validateContracts 补跑能抓到违例（写方漏写契约键）', () => {
+    // DLC 声明一件"可穿但无 warmth"的衣物 → 与 in-code 包同一条防线应报 item.meta.warmth 违例
+    //（此前 validateContracts 只在 ModRegistry.default() 内部跑、先于 loadModsFromDir → DLC 漏校验）
+    writeFileSync(join(dir, 'badcloth.mod.json'), JSON.stringify({
+      manifest: { id: 'badcloth', name: '坏衣物', version: '1' },
+      defs: { items: [{ id: 'badShirt', name: '问题衣物', meta: { wearable: true } }] },
+    }));
+    const reg = ModRegistry.default();
+    const r = loadModsFromDir(dir, reg);
+    expect(r.ok).toBe(true); // 挂载本身成功
+    // server/index.ts 在 loadModsFromDir 后补跑 validateContracts（此处复现该步骤）
+    const errs = validateContracts(reg);
+    expect(errs.some((e) => e.includes('item.meta.warmth'))).toBe(true); // 违例被抓住
   });
 });

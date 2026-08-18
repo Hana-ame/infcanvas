@@ -6,7 +6,7 @@
 //   ③ 卸载写方包 → 契约空真（不误伤"卸载不破坏核心"纪律）。
 import { describe, it, expect } from 'vitest';
 import { ModRegistry } from '../registry';
-import { validateContracts, COMMAND_CONTRACTS, PROTOCOL_CONTRACTS, K_WARMTH, K_WEARABLE } from '../contracts';
+import { validateContracts, CONTRACTS, COMMAND_CONTRACTS, PROTOCOL_CONTRACTS, K_WARMTH, K_WEARABLE } from '../contracts';
 
 describe('跨包契约校验（contracts.ts）', () => {
   it('默认装配：全部契约满足（validateContracts 空）', () => {
@@ -63,5 +63,16 @@ describe('跨包契约校验（contracts.ts）', () => {
     // 协议字段编译期已有 shared/protocol.ts 类型保护，本断言防登记表被误删
     const all = [...COMMAND_CONTRACTS.map((c) => `命令 ${c.type}`), ...PROTOCOL_CONTRACTS.map((c) => c.key)];
     expect(all).toEqual(expect.arrayContaining(['protocol.pawns.worn', 'protocol.items.w', '命令 wear']));
+  });
+
+  it('字段级登记：pawn.healTarget / pawn.healing 跨包瞬时工作态字段在契约表（2026-08-16 架构优化）', () => {
+    // 背景：healTarget/healing 跨 4 处/3 包读写（cardSystem 内核 heal 卡 / medicine treat 卡 /
+    // gatherSystem 回血推进 / drafting 解除征召清理）却无契约登记——改 PawnState 字段时不知
+    // 谁在读。登记条目 = 跨包读写清单 + 值语义 + "瞬时工作态不随档"（sim.save 白名单排除，
+    // DATA_DRIVEN §14）的唯一权威文档。顶层强类型字段无需 K_* 常量（编译期受保护），
+    // check 恒真（运行时数据，与 worn 同模式）——本断言防登记条目被误删。
+    const keys = CONTRACTS.map((c) => c.key);
+    expect(keys.some((k) => k.includes('pawn.healTarget'))).toBe(true);
+    expect(keys.some((k) => k.includes('pawn.healing'))).toBe(true);
   });
 });

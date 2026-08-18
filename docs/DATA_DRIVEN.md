@@ -662,5 +662,70 @@ overrideTuning(patch: DeepPartial<TuningConfig>): this  // 覆盖平衡参数（
 | `carrySpeedMul` | `number` | 叼走后的逃跑移速倍率（缺省 1.5）。 |
 
 - 移动/捕获/得手数值在 `tuning.combat`（captureRange/captureFleeDist）,逃跑速度倍率在敌人表（同一敌人数据驱动,mod 可 overrideDef/registerEnemy 自定义捕食者）。
-- 捕猎期近身反击沿用 `meleeRange` + `pawnDmg`（鼠墙迎击语义,非捕食者攻击不做特殊加成）;得手途中被击杀 = 共用 killHostile 掉落路径（food 私有进击杀者口袋）。
+- 捕猎期近身反击沿用 `meleeRange` + `pawnDmg`（近身反击拦截语义,非捕食者攻击不做特殊加成）;得手途中被击杀 = 共用 killHostile 掉落路径（food 私有进击杀者口袋）。
 - `cat` 现为捕食者样例（hp90/speed6.5/dmg6/climb2,predator:true,carrySpeedMul:1.5,loot food 3）;`raider` 保持非捕食者（faction 'unit' 群体袭击语义不变）。
+
+## 世界层升级/摧毁钩子（2026-08-16 审查修复）
+
+| 新增 | 位置 | 语义 |
+| --- | --- | --- |
+| `World.canUpgradeAt(x, y, def)` | world.ts | 升级落点校验：新 footprint 超出旧 footprint 的格子必须可建且不被其他建筑占用（旧格豁免）。`upgradeBuilding` 前置调用 + `buildSystem` 升级分支放弃蓝图不扣资源（原:升级无条件覆盖 gridToBuilding → 相邻建筑格子归属被顶掉）。数据面 = 复用 BuildingDef.size 推导 footprint,零新字段。 |
+| `World.onBuildingDestroyed(key)` 回调 | world.ts | 建筑摧毁（damageBuilding hp≤0 分支）触发;sim 挂 clearTrailCache（原:缓存只在建成/地形变更清,被拆锚点段仍被寻路复用）。 |
+
+## DLC 跨文件依赖与契约补验（2026-08-16 审查修复）
+
+| 数据 | 位置 | 语义 |
+| --- | --- | --- |
+| `manifest.requires.mods: string[]` | mods/loader.ts ModManifest | 声明本包依赖的其他 mod id（parse 校验 id 合法性）。挂载器（server/modManager.ts）按依赖**拓扑喂序**挂载——与 in-code ModPack 的 requires/topoSort DAG 对齐;缺失依赖 = 显式报错跳过该包（不半挂载:defs 引用悬空的包比不加载更危险）。0.1.0 现有 10 个 mods/*.mod.json 均无此字段 = 不受影响。 |
+| 契约补验时机 | server/index.ts | loadModsFromDir 之后补跑 `validateContracts`（原:唯一校验在 ModRegistry.default() 内部、先于 DLC 挂载 → DLC 注册的 def/命令从不进契约表;违例 fail-stop 与 mod 加载失败同策略）。 |
+
+## 存档新增 `techUnlockedAt`（2026-08-16 审查修复）
+
+`SaveData.techUnlockedAt: Record<string, number>`（解锁时刻随档）——原:不随档 → `techBuildWeight` 读档恒 0,科技建筑自动建造权重永不爬升。旧档兼容:无此字段 → 已解锁科技按读档时刻起算（权重从 0 重新爬升,不永久冻结）。其余存档字段不变。
+
+## 当前装配态快照（2026-08-16 追加，前列"24 系统/25 系统、23 包/25 包"等均为历史演进记录请勿改动——以本快照为最新）
+
+- `SYSTEM_DEFS` = **26 系统**（内核 1 = behavior 决策引擎，内联 ctor；余 25 由玩法包 registerSystemDef 回填；drafting 为 raid 类最后加入者）；`KERNEL_SYSTEM_IDS = ['behavior']`。
+- `DEFAULT_PLAYSTYLE_PACKS` = **25 包**（needs/economy/socialUnit/social/gathering/build/farming/crafting/repair/medicine/power/thermo/trade/prison/wildmouse/cooking/raid/population/events/techPool/autobuild/bootstrap/clothing/oracle-guidance/drafting）。
+- 测试 = **451 用例 / 49 文件**（全量 `npm test` + `npx tsc --noEmit` 干净；用例数随修复递增，最新计数以 AGENTS.md「当前装配态快照」为准）。
+- **执行器实现表 = 数据登记**（2026-08-16 拆分轮）：INTENT_IMPL / WORK_IMPL 与 BUILTIN_INTENTS / BUILTIN_WORKS 构成"声明键 × 实现值"两张登记表（键 = handler 全名，与 defs 表同构的查表驱动）；mod 专用 registerIntent/registerWork 沿用同一登记通道，dens 传引用令晚注册可见。装配回归测试断言两表键集一一对应。
+- **存档迁移注册表**（2026-08-16）：`SAVE_MIGRATIONS` = 按目标版本下标的迁移函数数组（版本号 = 数组长度），load 顺序应用；v0→v1 空实现占位,后续迁移函数只增不改（老函数语义 = 历史事实,反序删改会破坏老档链路）。
+- **跨包字段级契约登记**（2026-08-16 收口）：`pawn.healTarget/healing`（顶层强类型瞬时字段,非字符串键）以字段名义登记进 CONTRACTS 跨界读写清单（写 cardSystem/medicine/sim,读 gatherSystem/medicine/drafting/cardSystem,check 谓词恒真占位）——"跨包即登记"边界 = 内核↔玩法包双向访问项,单包自洽键依旧不入表。
+- **拥挤格表（性能数据面）**（2026-08-16）：walk 拥挤/占位语义的参数仍全部来自 tuning.pawn（crowdingFloor/crowdingPenalty/crowdStopGap 等），格表只是查询结构（帧初构建 Map<`${x},${y}`,count> 全量聚合、帧内增量更新）,不含任何可调语义。近邻格聚合后查 3×3 邻域 = O(1)。
+---
+
+## 战术表与战场指挥数据面（field-command 包，2026-08-16）
+
+- **战术动作表 = 数据登记**：`TACTICS`（field-command 包导出）= id → { label, desc, move 分类, engageRadius } 的查表——命令面（train/dispatch 白名单）、HUD 按钮渲染、系统驱动（switch(move)）三处共用同一张表；新增战术 = 表加一行 + 驱动 switch 加分支。
+- **包内数值 CFG**（DATA_DRIVEN §13 玩法包自治，注释数值意图）：`engageRadius 20`（冲锋接敌半径，>drafting 自动 14 = 先敌接战语义）、`trainCooldown 15s`（训练冷却/小人）、`retreatDistance 40` + `moveInterval 0.5s`（撤退/集结移动节流的距离-节流对）、`refreshInterval 0.8s`（冲锋/集火指定刷新节流，慢于 drafting 追击 0.4s 一档）、`regroupSpread 2`（集结散布）。
+- **状态写入纪律**：战术/编制状态全走 pawn.extra（存档扩展点，随档透传零迁移）；冷却/节流/树快照是瞬态缓存（不随档）。
+- **协议字段值语义**（PROTOCOL_CONTRACTS 登记）：`pawns.commander` 缺省 undefined = 非指挥官（role ∈ officer/general；subordinates = 存活编制）；`pawns.tactic` = 生效战术 id（无战术 = undefined；active 优先于 underOrder 的回显规则在 server 序列化端）。
+
+## 暖炉燃料数据面（thermo 包，2026-08-16 审计中①）
+
+- `CFG.fuelInterval = 10`：燃料结算周期（秒）——暖炉头注承诺"每 10s 烧 1 木维持热度"由此落地；`fuelPerEval = 1`：每周期消耗木数；`fuelItem = 'wood'`：燃料物品 id（全局仓库，改 id 即换燃料）。
+- **语义**：结算只在周期阈值处发生（timer 累计，非每 2s 评估周期）；结算先于热场评估（断供当周期即失效）。**只对 def.id === 'heater'** 的暖炉烧木——campfire/church 是内核免费暖源不动（"篝火免费取暖"是既有世界观）。无木可烧 → 暖炉进离线集合（本结算周期不出热，补木下周期恢复）。
+- 烧木记 `recordSpend(null,'wood',1)`（economy 账本：供暖是营地级支出；同批修复的 prison 喂食 / hg 篝火重建遵循同一记账纪律）。
+
+## 技能成长与敌人生成数据面（2026-08-16 审计 L5/L6）
+
+- **tuning.combat.skillGrowth**（数据驱动化）：`base 10`（技能起点，未练默认）/ `cap 100`（上限）/ `gainMin 1`/`gainMax 10`（过线增幅）——COC 语义（掷 d100 > 当前值才升）不变，参数全可覆盖；`skillOf` 无记录时默认值同源读 base。
+- **敌人生成 = 表驱动快照**：`pushHostile(ctx, enemy, x, y, { targetX, targetY, hpMul })`——hostile 快照字段 = EnemyDef 全字段 spread + 命中字段（hp×hpMul / target / enemyId=d.id / dmgPerSec=d.dmg）；EnemyDef 新字段自动进所有生成路径（raid 压力波/wildmouse 竞争群/hg 猎物）。
+
+## 驯兽数值（beast-taming 包，2026-08-16）
+
+- CFG 表（玩法包自治）：`tameHpRatio 0.25`（重伤线）/ `feedPerSec 0.5`（驯化投喂速率）/ `tameTime 20s`（驯化时长）/ `guardEngage 8`（守卫扑咬半径）/ `guardDps 6`（守卫撕咬 dps，略高于野猫 5——驯养伙食好）。
+- 守卫跟随：直线移动（无寻路，hostiles 统一移动协议），速度 = 猫移速（3.5 格/s）。无战跟随驯养人到 2.5 格内停下。
+
+## 捕食者近身反击倍率（2026-08-16 战斗平衡）
+
+- `tuning.combat.predatorReactionMul = 0.25`：非征召鼠对捕食者（predator 标记）的近身反击伤害倍率（自动反击只拖不杀——90hp 捕食者被非征召反击击杀需 45s，玩家有充足窗口驯化/指挥）；征召鼠（K_DRAFTED）恒全伤（1.0）。语义 = 自动防御只拖延、玩家指挥才能高效击杀——给战场指挥（征召/冲锋）与驯兽守卫（重伤窗口）真实介入价值。
+- 适用点：仅 raidSystem 捕食者分支的近身反击（nearestPawnInRange 自动选取，非玩家操作）；carried 逃跑途中被追砍保持全伤（叼着鼠的猫本该被全力截杀）。
+
+## 当前装配态快照（2026-08-16 战斗平衡终版，前列数字为历史演进记录请勿改动——以本条为最新）
+
+- `SYSTEM_DEFS` = **28 系统**（内核 1 = behavior 决策引擎，内联 ctor；余 27 由玩法包 registerSystemDef 回填）；`KERNEL_SYSTEM_IDS = ['behavior']`；`DEFAULT_PLAYSTYLE_PACKS` = **27 包**（含 field-command / beast-taming）。
+- 测试 = **511 用例 / 56 文件**（全量 `npm test` + `npx tsc --noEmit` 干净）。
+- `tuning.combat.predatorReactionMul = 0.25`：非征召鼠对捕食者自动近身反击倍率；征召鼠（K_DRAFTED）全伤。语义见上节捕食者近身反击倍率。
+- 战斗数值（2026-08-16 终版）：`pawnDmg = 5`（鼠近战）、`meleeRange = 3`（反击圈）、`captureRange = 1.5`（捕食者叼鼠距离）。
+- 捕食者本体：`enemies.ts` 野猫 hp = **110**、speed = **8**（2026-08-16 战斗平衡第二轮延伸；PLAYING 已同步）。

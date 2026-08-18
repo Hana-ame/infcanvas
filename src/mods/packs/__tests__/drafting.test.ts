@@ -211,6 +211,116 @@ describe('drafting 玩法包（征召战斗，RW-1 M2）', () => {
     expect(v({ type: 'attack', x: 0, y: 0, pawnId: eid, args: { hostileIndex: 0 } })).toBe(true);       // 有敌人后合法
     expect(v({ type: 'attack', x: 0, y: 0, pawnId: eid, args: { hostileIndex: -1 } })).toBe(false);     // 负下标
   });
+
+  // ---- 2026-08-16 审查修复回归：追击永冻 / 下标错位（此前命令冷却在征召期间永不衰减，
+  // 追击 moveTo 又自锁冷却 → 追击只发生一次；resolveTarget 只改局部对象不写回 → 找回下标
+  // 永不落盘，splice 后追错目标）----
+
+  // 移动的敌人（speed>0 由 raidSystem 推进）：用于验证"持续追击"而非"追一次就停"
+  function addMovingCat(sim: Sim, x: number, y: number, hp = 200): void {
+    sim.hostiles.push({
+      x, y, hp, maxHp: hp, targetX: x, targetY: y,
+      name: '掠夺者', enemyId: 'raider', faction: 'unit',
+      speed: 2, dmgPerSec: 0.1, loot: { item: 'food', amount: 2 },
+    });
+  }
+
+  it('追击不永冻：征召小人持续追踪移动目标（命令冷却不再卡死追击）', () => {
+    const sim = makeSim(51, 2);
+    const e0 = sim.pawns[0];
+    const start = sim.pawnPositions.get(e0)!;
+    // 敌人在正下方 8 格，向更下方移动（速度 2 格/s）
+    const spot = findWalkable(sim, Math.round(start.x), Math.round(start.y) + 8);
+    addMovingCat(sim, spot.x, spot.y);
+    sim.issueCommand({ type: 'draft', x: 0, y: 0, pawnId: e0, args: { drafted: true } });
+    sim.issueCommand({ type: 'attack', x: 0, y: 0, pawnId: e0, args: { hostileIndex: 0 } });
+    // 追击 8 秒：敌人持续移动，征召小人应保持靠近（追击未被冷却冻住）
+    // 修复前：第一次 moveTo 后 commandCooldown=3 且永不衰减 → DraftSystem 直接 continue → 小人不动
+    let minGap = Infinity;
+    for (let i = 0; i < 8 * 20; i++) {
+      sim.step(1 / 20);
+      const h = sim.hostiles[0];
+      const p = sim.pawnPositions.get(e0)!;
+      if (h) minGap = Math.min(minGap, Math.hypot(h.x - p.x, h.y - p.y));
+    }
+    expect(minGap).toBeLessThan(6); // 追击生效：全程最近距离显著小于初始 8 格（修复前恒 ~8+）
+    // 冷却在征召期间确实衰减到 0（修复前恒 3）
+    expect(sim.pawnStates.get(e0)!.commandCooldown ?? 0).toBeLessThan(0.1);
+  });
+
+  it('追击持续刷新：敌人移动后按新位置重寻路（不再只追一次）', () => {
+    const sim = makeSim(52, 2);
+    const e0 = sim.pawns[0];
+    const start = sim.pawnPositions.get(e0)!;
+    // 无 raid 刷波干扰，手动塞一个静止敌 + 手动搬动（验证 resolveTarget 写回快照）
+    const spot = findWalkable(sim, Math.round(start.x) + 6, Math.round(start.y));
+    addCat(sim, spot.x, spot.y);
+    sim.issueCommand({ type: 'draft', x: 0, y: 0, pawnId: e0, args: { drafted: true } });
+    sim.issueCommand({ type: 'attack', x: 0, y: 0, pawnId: e0, args: { hostileIndex: 0 } });
+    // 敌人先被追杀一段，然后搬走 5 格 → 追击目标应切换到新位置（快照被刷新）
+    for (let i = 0; i < 30; i++) sim.step(1 / 20); // 1.5s：先接近
+    const h0 = sim.hostiles[0];
+    const p0 = sim.pawnPositions.get(e0)!;
+    expect(Math.hypot(h0.x - p0.x, h0.y - p0.y)).toBeLessThan(4); // 已接近
+    // 搬走敌人（模拟 splice/位移）：直接改位置（快照 1.5 秒前，若未刷新 → 丢失目标）
+    h0.x += 5; h0.y += 5;
+    const atkBefore = attackTargetOf(sim.pawnStates.get(e0))!;
+    const drifted = until(sim, () => {
+      const a = attackTargetOf(sim.pawnStates.get(e0))!;
+      return a !== null && (a.x !== atkBefore.x || a.y !== atkBefore.y);
+    }, 20);
+    expect(drifted).toBe(true); // 快照被写回刷新（修复前：attackTargetOf 永远返回攻击时刻旧快照）
+    const atkAfter = attackTargetOf(sim.pawnStates.get(e0))!;
+    expect(Math.hypot(atkAfter.x - h0.x, atkAfter.y - h0.y)).toBeLessThan(0.5); // 快照 = 敌人当前位置
+  });
+
+  it('下标错位：splice 掉前面的敌人后，追击仍指向正确目标（回写新下标）', () => {
+    const sim = makeSim(53, 2);
+    const e0 = sim.pawns[0];
+    const start = sim.pawnPositions.get(e0)!;
+    // 两个敌人：A(0) 在近处、B(1) 在远处。征召小人指定攻击 B(1)
+    const spotA = findWalkable(sim, Math.round(start.x) + 4, Math.round(start.y));
+    const spotB = findWalkable(sim, Math.round(start.x) + 12, Math.round(start.y) + 6);
+    addCat(sim, spotA.x, spotA.y);
+    addCat(sim, spotB.x, spotB.y);
+    sim.issueCommand({ type: 'draft', x: 0, y: 0, pawnId: e0, args: { drafted: true } });
+    sim.issueCommand({ type: 'attack', x: 0, y: 0, pawnId: e0, args: { hostileIndex: 1 } }); // 指定 B
+    expect(attackTargetOf(sim.pawnStates.get(e0))!.hostileIndex).toBe(1);
+    // A 被击杀移除（splice 下标错位：B 从 1 → 0）。此前 resolveTarget 只改局部对象不写回，
+    // 下标永远 1 → 之后把 hs[1]（若有）当目标追错 / raidSystem 指定者判定失效
+    sim.hostiles.splice(0, 1);
+    // 追击过程中：resolveTarget 应把下标回写为 0（B 的新位置）
+    const fixed = until(sim, () => {
+      const a = attackTargetOf(sim.pawnStates.get(e0));
+      return a !== null && a.hostileIndex === 0;
+    }, 10);
+    expect(fixed).toBe(true);
+    // 且目标 = 原 B（下标 0 处即 B，位置一致）
+    const a = attackTargetOf(sim.pawnStates.get(e0))!;
+    const b = sim.hostiles[0];
+    expect(Math.hypot(a.x - b.x, a.y - b.y)).toBeLessThan(0.5);
+  });
+
+  it('玩家 move 命令仍受尊重：冷却窗口内征召小人听手动移动，窗口后恢复追击', () => {
+    const sim = makeSim(54, 2);
+    const e0 = sim.pawns[0];
+    const start = sim.pawnPositions.get(e0)!;
+    const spot = findWalkable(sim, Math.round(start.x) + 10, Math.round(start.y));
+    addCat(sim, spot.x, spot.y);
+    sim.issueCommand({ type: 'draft', x: 0, y: 0, pawnId: e0, args: { drafted: true } });
+    sim.issueCommand({ type: 'attack', x: 0, y: 0, pawnId: e0, args: { hostileIndex: 0 } });
+    // 玩家手动移动命令（向左 6 格，远离敌人）→ 征召小人应照走（尊重指挥）
+    const manual = findWalkable(sim, Math.round(start.x) - 6, Math.round(start.y));
+    sim.issueCommand({ type: 'move', x: manual.x, y: manual.y, pawnId: e0 });
+    // 3s 冷却内（前 2s）：小人朝手动目标走（远离敌人），不被追击覆盖
+    let away = 0;
+    for (let i = 0; i < 40; i++) {
+      sim.step(1 / 20);
+      const p = sim.pawnPositions.get(e0)!;
+      if (Math.hypot(p.x - spot.x, p.y - spot.y) > 8) away++;
+    }
+    expect(away).toBeGreaterThan(10); // 手动移动生效（修复前永远卡死；修复后冷却窗口内不追击）
+  });
 });
 
 // 最小化 server buildSnapshot 的 pawns 形状（diff 需要 SnapshotMsg pawns；drafted 透传）

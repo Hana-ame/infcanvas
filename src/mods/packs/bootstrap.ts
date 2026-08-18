@@ -36,14 +36,17 @@ export class BootstrapSystem implements GameSystem {
     for (let i = 0; i < this.ctx.initialPawnCount; i++) {
       this.ctx.spawnPawn(cx + (i % 3) - 1, cy + Math.floor(i / 3) - 1);
     }
-    this.ensureInitialCamp();
-    // 建篝火 → 区域记忆 + 全员归属（原 Sim 构造 bus 回调）
+    // 建篝火 → 区域记忆 + 全员归属（原 Sim 构造 bus 回调）。订阅先于出生（审计 L4）：
+    // 原注册在 ensureInitialCamp 之后 → 出生篝火的 building_built 事件监听不到；
+    // 且出生点曾同时走手动 onCampfireBuilt + 事件监听两条路 = 双触发。统一 = 只经
+    // 事件单入口、订阅先到位——出生恰触发一次，后续每栋篝火一次。
     const starter = () => this.ctx.tuning.autobuild.starterBuilding;
     bus.on('building_built', (ev: GameEvent) => {
       if (ev.type === 'building_built' && ev.defId === starter()) {
         this.ctx.socialUnits.onCampfireBuilt(this.ctx.world.buildKey(ev.x, ev.y));
       }
     });
+    this.ensureInitialCamp();
   }
 
   update(): void {}
@@ -54,7 +57,8 @@ export class BootstrapSystem implements GameSystem {
     const cy = Math.floor(this.ctx.world.height / 2);
     const starter = this.ctx.tuning.autobuild.starterBuilding;
     if (this.ctx.world.placeBuilding(cx, cy + 2, starter, 'auto')) {
-      this.ctx.socialUnits.onCampfireBuilt(this.ctx.world.buildKey(cx, cy + 2));
+      // 只发事件（审计 L4）：此前这里手动 onCampfireBuilt + bus 监听 building_built 又调一次
+      // = 双触发（assignPawn 全员重算跑两遍；fireMemory 有守卫掩盖）。统一走事件单入口。
       this.ctx.bus.emit({ type: 'building_built', x: cx, y: cy + 2, defId: starter });
     }
     for (const eid of this.ctx.pawnList) this.ctx.socialUnits.assignPawn(eid);

@@ -3,7 +3,7 @@
 // （requires 全空，无跨包依赖、无世界观缝合；此前自造的"帝国依赖大航海/教国依赖无线电/互斥"
 // 均已删除））——走真实玩法包装配面：系统（registerSystemDef + category + before 锚点）/ 命令 /
 // 卡 / 科技 / 建筑 / 物品 / 敌人 / 配方 / 策略卡。断言面：① 单包挂载不崩；② 八包乱序合挂
-// 34 系统组合步进不崩（清单顺序不承担图约束）；③ def 冲突被显式捕获（DLC 不能悄悄覆盖核心）；
+// 36 系统组合步进不崩（清单顺序不承担图约束）；③ def 冲突被显式捕获（DLC 不能悄悄覆盖核心）；
 // ④ 契约表不登记 DLC 命令 = 不误伤（validateContracts 零违规）；⑤ 卸载（不挂）= 默认装配零
 // 回归；⑥ DLC 系统与默认系统同一卸载语义（disableSystem 单独禁用一个 DLC 系统后仍可跑）；
 // ⑦ 2077 DLC（义体/斯安威斯坦/义体医生）注册面齐活 + before:'craft' 锚点插进 production 组。
@@ -18,13 +18,13 @@ import type { ModPack } from '../pack';
 const stubSys = (id: string) => (): never => ({ id, update: () => {} }) as never;
 
 describe('DLC 框架压力测试（大航海/一战/无线电/二战/飞天魔法/帝国/教国/2077 独立占位包）', () => {
-  it('① 单 DLC 挂载：默认 26 系统 +1，装配/步进不崩，内核 behavior 不变，命令可用', () => {
+  it('① 单 DLC 挂载：默认 28 系统 +1，装配/步进不崩，内核 behavior 不变，命令可用', () => {
     const m = ModRegistry.default();
-    expect(m.systemDefs.length).toBe(25); // 注册面：25 个插件系统（behavior 内联内核表，不入 _systemDefs）
+    expect(m.systemDefs.length).toBe(27); // 注册面：27 个插件系统（behavior 内联内核表，不入 _systemDefs；2026-08-16 field-command + beast-taming = +2）
     m.mount(dlcAgeOfSail());
-    expect(m.systemDefs.length).toBe(26);
+    expect(m.systemDefs.length).toBe(28);
     const sim = new Sim({ seed: 52, pawnCount: 2, registry: m });
-    expect(sim.systemIds).toHaveLength(27); // 装配面：26 默认 + 1 DLC
+    expect(sim.systemIds).toHaveLength(29); // 装配面：28 默认 + 1 DLC
     expect(sim.systemIds).toContain('dlc:sail');
     expect(sim.systemIds).toContain('behavior'); // 内核 1 系统仍在
     for (let i = 0; i < 120; i++) sim.step(1); // 步进不崩
@@ -32,7 +32,7 @@ describe('DLC 框架压力测试（大航海/一战/无线电/二战/飞天魔�
     expect(sim.events.some((e) => e.text.includes('升帆远航'))).toBe(true);
   });
 
-  it('② 八独立 DLC 乱序同时挂：34 系统组合步进不崩（requires 全空 = 清单顺序不承担图约束）', () => {
+  it('② 八独立 DLC 乱序同时挂：36 系统组合步进不崩（requires 全空 = 清单顺序不承担图约束）', () => {
     const m = ModRegistry.default();
     // 预登记目录（消费面同 playstyleManager：先 registerPack 全清单，再 mount 聚合/单个——requires
     // 挂在全局包目录上；独立包 requires 全空，乱序挂载天然安全）
@@ -50,7 +50,7 @@ describe('DLC 框架压力测试（大航海/一战/无线电/二战/飞天魔�
     for (const id of ['dlc:sail', 'dlc:ww1', 'dlc:radio', 'dlc:ww2', 'dlc:sky', 'dlc:empire', 'dlc:church', 'dlc:cyber']) {
       expect(sim.systemIds).toContain(id);
     }
-    expect(sim.systemIds).toHaveLength(26 + 8);
+    expect(sim.systemIds).toHaveLength(28 + 8);
     for (const pid of ['dlc-ww1', 'dlc-radio', 'dlc-ww2', 'dlc-sky-magic', 'dlc-age-of-sail', 'dlc-empire', 'dlc-theocracy', 'dlc-2077']) {
       expect(m.packIds).toContain(pid);
     }
@@ -89,7 +89,7 @@ describe('DLC 框架压力测试（大航海/一战/无线电/二战/飞天魔�
   it('⑤ 卸载 = 现状不变：不挂 DLC 的默认装配与基线一致（零回归对照）', () => {
     const m = ModRegistry.default();
     const sim = new Sim({ seed: 55, pawnCount: 2, registry: m });
-    expect(sim.systemIds).toHaveLength(26);
+    expect(sim.systemIds).toHaveLength(28);
     expect(sim.systemIds[0]).toBe('needs'); // 类别序推导的稳定首系统
     expect(sim.systemIds).not.toContain('dlc:sail');
     expect(sim.mods.commandHandlers.has('set-sails')).toBe(false);
@@ -104,7 +104,7 @@ describe('DLC 框架压力测试（大航海/一战/无线电/二战/飞天魔�
     m.mount(dlcSkyMagic());
     m.disableSystem('dlc:ww1'); // 挂载后按 id 禁用（与默认系统同一过滤：isSystemEnabled）
     const sim = new Sim({ seed: 56, pawnCount: 2, registry: m });
-    expect(sim.systemIds).toHaveLength(26 + 2); // 3 挂 1 禁 → 装配只收 2 个 DLC 系统
+    expect(sim.systemIds).toHaveLength(28 + 2); // 3 挂 1 禁 → 装配只收 2 个 DLC 系统
     expect(sim.systemIds).not.toContain('dlc:ww1');
     expect(sim.systemIds).toContain('dlc:radio');
     expect(sim.systemIds).toContain('dlc:sky');
@@ -119,7 +119,7 @@ describe('DLC 框架压力测试（大航海/一战/无线电/二战/飞天魔�
     m.mount(dlcCyberpunk());
     const sim = new Sim({ seed: 57, pawnCount: 2, registry: m });
     expect(sim.systemIds).toContain('dlc:cyber');
-    expect(sim.systemIds).toHaveLength(26 + 1);
+    expect(sim.systemIds).toHaveLength(28 + 1);
     // 义体内容注册面：斯安威斯坦物品 / 义体医生诊所建筑 / 义体强化令策略卡 / 命令
     expect(m.items['dlc:sandevistan']).toBeTruthy();
     expect(m.items['dlc:sandevistan']!.name).toContain('斯安威斯坦');

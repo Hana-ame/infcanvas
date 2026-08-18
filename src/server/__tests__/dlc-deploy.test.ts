@@ -4,7 +4,7 @@
 // 覆盖）：**把 .mod.json 放进 mods/ 目录即完成部署**。本测试对真实 mods/ 目录做全量加载验证：
 // 8 个 dlc-*.mod.json 自动挂载、内容（物品/建筑/科技/策略卡/敌人/事件）注册、Sim 装配步进不崩。
 // 注：纯 defs 声明不注册系统/命令（defs 白名单只有内容表；系统/命令需 scripts 函数式扩展，
-//   见 demo-berry），因此声明式 DLC 不改系统装配——默认 26 系统保持不变。
+//   见 demo-berry），因此声明式 DLC 不改系统装配——默认 27 系统保持不变（field-command 战场指挥 2026-08-16）。
 import { describe, it, expect } from 'vitest';
 import { join } from 'node:path';
 import { ModRegistry } from '../../sim/mods/registry';
@@ -35,10 +35,10 @@ describe('DLC 自动部署（mods/ 目录扫描）', () => {
     expect(reg.strategyCards.some((c) => c.id === 'dlc:crusade')).toBe(true);
     expect(reg.strategyCards.some((c) => c.id === 'dlc:chrome-up')).toBe(true);
 
-    // 全量 mods/ 装配 = 26 默认 + demo-berry(berrySpoil) + 2077(dlc:cyber) = 28;
+    // 全量 mods/ 装配 = 28 默认 + demo-berry(berrySpoil) + 2077(dlc:cyber) = 30;
     // 其余 7 个 DLC 纯 defs 零系统——活的分界演示:内容声明不改装配,系统/命令必须 scripts
     const sim = new Sim({ seed: 8, pawnCount: 2, registry: reg });
-    expect(sim.systemIds).toHaveLength(28);
+    expect(sim.systemIds).toHaveLength(30);
     expect(sim.systemIds).toContain('dlc:cyber'); // 2077 scripts 系统(before:craft 锚点进 production 组)
     for (const absent of ['dlc:sail', 'dlc:ww1', 'dlc:radio', 'dlc:ww2', 'dlc:sky', 'dlc:empire', 'dlc:church']) {
       expect(sim.systemIds).not.toContain(absent); // 纯 defs DLC 零系统

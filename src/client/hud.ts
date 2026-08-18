@@ -110,6 +110,7 @@ export function createHud(
   onZoom?: (factor: number) => void,
   onViewMode?: (mode: 'top' | 'iso') => void,
   onJumpTo?: (x: number, y: number) => void,
+  onGetTargetHostile?: () => { idx: number } | null,
 ): HudApi {
   injectStyle();
   const root = document.createElement('div');
@@ -215,9 +216,12 @@ export function createHud(
     b.textContent = sp === 0 ? '⏸' : `${sp}x`;
     b.dataset.speed = String(sp);
     b.addEventListener('click', () => {
-      sim.paused = sp === 0;
-      sim.speed = sp === 0 ? 1 : sp;
-      refreshSpeed();
+      // 播放控制走命令面（2026-08-16 审计 H1 修复）：此前直改 sim.paused/speed ——
+      // 远程模式改的是本地壳，服务器权威不知情 → HUD 谎报暂停/时钟漂移。pause/speed
+      // 是引擎内建命令（issueCommand 硬编码分支），本地/远程同一条通道；高亮以权威
+      // 字段（远程 = snapshot 回显）为准，命令后 ~500ms diff 周期内可能轻微滞后。
+      if (sp === 0) sim.issueCommand({ type: 'pause', x: 0, y: 0, args: { paused: !sim.paused } });
+      else sim.issueCommand({ type: 'speed', x: 0, y: 0, args: { speed: sp } });
     });
     speedBar.appendChild(b);
     speedBtns.set(sp, b);
@@ -274,7 +278,9 @@ export function createHud(
         <div id="selBody" class="hud-meta"></div>
         <div id="selJobs" class="hud-jobrow"></div>
         <div id="selDraft" class="hud-jobrow" style="margin-top:4px;"></div>
+        <div id="selCmd" class="hud-jobrow" style="margin-top:4px;"></div>
         <div id="selWear" class="hud-jobrow" style="margin-top:4px;"></div>
+        <div id="selBeast" class="hud-jobrow" style="margin-top:4px;"></div>
         <div id="selOracle" style="display:none;"><button data-act="oracle" style="border-color:#a07ac0;background:#5a3a6a;">${icon('oracle')} 降策略卡</button></div>
       </div>
     </div>`;
@@ -285,6 +291,7 @@ export function createHud(
   const selOracle = selPanel.querySelector<HTMLElement>('#selOracle')!;
   const selPortrait = selPanel.querySelector<HTMLImageElement>('#selPortrait')!;
   const selDraft = selPanel.querySelector<HTMLElement>('#selDraft')!;
+  const selCmd = selPanel.querySelector<HTMLElement>('#selCmd')!;
   // 职业按钮（一次创建，永不再生）
   const mkJobBtn = (label: string, job: string): HTMLButtonElement => {
     const b = document.createElement('button');
@@ -299,6 +306,7 @@ export function createHud(
   // 穿衣行（clothing 玩法包 2026-08-15）：update 时按库存重建——库存里所有可穿衣物各一个
   // 按钮 + 已穿时补「脱下」；与职业按钮共用事件委托（act = wear:<itemId>，空 itemId = 脱衣）
   const selWear = selPanel.querySelector<HTMLElement>('#selWear')!;
+  const selBeast = selPanel.querySelector<HTMLElement>('#selBeast')!;
   const wearBtn = (label: string, itemId: string | undefined, current: boolean): HTMLButtonElement => {
     const b = document.createElement('button');
     b.className = 'hud-chip';
@@ -334,6 +342,46 @@ export function createHud(
           sim.issueCommand({ type: 'draft', x: 0, y: 0, pawnId: seid, args: { drafted: !drafted } });
         }
       }
+    } else if (act === 'fc-train') {
+      // 战场指挥 DLC（2026-08-16）：训练战术动作（选中集批量学习；冷却在包命令处理器）
+      const tactic = btn.dataset.tactic!;
+      for (const seid of sim.selectedIds) {
+        sim.issueCommand({ type: 'train', x: 0, y: 0, pawnId: seid, args: { tactic } });
+      }
+    } else if (act === 'fc-dispatch') {
+      // 战术下达（指挥官 → 级联全树；集火须先右键敌人设 targetHostileIdx，面板把目标下标
+      // 一并带给 dispatch；未选目标时集火按钮仍会触发服务端明确的"需要 hostileIndex"反馈）
+      const tactic = btn.dataset.tactic!;
+      if (eid >= 0 && sim.pawnProfile(eid)?.commander) {
+        const args: Record<string, unknown> = { tactic };
+        const th = onGetTargetHostile?.();
+        if (tactic === 'focus' && th) args.hostileIndex = th.idx;
+        sim.issueCommand({ type: 'dispatch', x: 0, y: 0, pawnId: eid, args });
+      }
+    } else if (act === 'fc-standdown') {
+      // 收兵（dispatch 'none'：全树解除征召恢复自主）
+      if (eid >= 0 && sim.pawnProfile(eid)?.commander) {
+        sim.issueCommand({ type: 'dispatch', x: 0, y: 0, pawnId: eid, args: { tactic: 'none' } });
+      }
+    } else if (act === 'fc-commander') {
+      // 册封/编队：基准小人 = 指挥官，其余选中 = 下属（role 自动推导：有队长 → 军团长）
+      if (eid >= 0) {
+        const subordinates = sim.selectedIds.filter((seid) => seid !== eid);
+        sim.issueCommand({ type: 'commander', x: 0, y: 0, pawnId: eid, args: { subordinates } });
+      }
+    } else if (act === 'fc-dismiss') {
+      // 解编（commander 'none'：清指挥官身份；树内受命小人恢复自主）
+      if (eid >= 0 && sim.pawnProfile(eid)?.commander) {
+        sim.issueCommand({ type: 'commander', x: 0, y: 0, pawnId: eid, args: { role: 'none' } });
+      }
+    } else if (act === 'bt-tame') {
+      // 驯兽守卫 DLC：驯化命令（目标敌人 hostileIndex 来自 data-hostile，选中第一人作驯养人）
+      const hi = Number(btn.dataset.hostile);
+      if (!isNaN(hi) && eid >= 0) sim.issueCommand({ type: 'tame', x: 0, y: 0, pawnId: eid, args: { hostileIndex: hi } });
+      else if (!isNaN(hi)) sim.issueCommand({ type: 'tame', x: 0, y: 0, args: { hostileIndex: hi } });
+    } else if (act === 'bt-release') {
+      const hi = Number(btn.dataset.hostile);
+      if (!isNaN(hi)) sim.issueCommand({ type: 'release', x: 0, y: 0, args: { hostileIndex: hi } });
     } else if (act.startsWith('wear:')) {
       // 穿衣/换衣/脱衣（itemId 空 = 脱衣）；穿戴逻辑全在 clothing 玩法包命令处理器
       if (eid >= 0) sim.issueCommand({ type: 'wear', x: 0, y: 0, pawnId: eid, args: { itemId: act.slice(5) || undefined } });
@@ -479,6 +527,10 @@ export function createHud(
 
     // 事件 feed（内容变化时才重绘）
     updateFeed();
+
+    // 播放速度高亮（2026-08-16 审计 H1：按钮点击已改走命令面——本地同步生效，
+    // 远程 ~500ms diff 周期回显；每帧读权威字段刷新，杜绝按钮高亮与真实状态漂移）
+    refreshSpeed();
 
     // 建造按钮高亮 + 科技锁定刷新（解锁后即时可建）
     for (const [id, btn] of buildBtns) {
@@ -696,6 +748,44 @@ export function createHud(
         const draftedNow = p.drafted === true;
         selDraft.innerHTML = `<button data-act="draft" style="${draftedNow ? 'border-color:#ffd24c;background:#5a4a16;' : ''}">${draftedNow ? '☮ 解除征召' : '⚔ 征召'}</button>` +
           (draftedNow ? '<span style="color:#ffd24c;font-size:11px;"> 征召中：不自主行事（右键敌人 = 攻击）</span>' : '');
+        // 战场指挥 DLC（2026-08-16）：指挥行——（a）选中集可册封指挥官（基准小人 + 其余选中
+        // = 编组，role 自动推导多层级别）；（b）指挥官：战术下发（冲锋/固守/集火/撤退/集结
+        // → dispatch 级联整树）+ 收兵/解编；（c）任意小人可训练战术（冷却在包命令处理器）
+        // 驯兽守卫 DLC（2026-08-16）：目标敌人行（驯化/放归）
+        const th = onGetTargetHostile?.();
+        selBeast.innerHTML = '';
+        if (th) {
+          const hh = sim.hostiles[th.idx];
+          if (hh) {
+          const canTame = hh.enemyId === 'cat' && hh.maxHp > 0 && hh.hp / hh.maxHp <= 0.25 && !hh.taming && hh.faction !== 'player';
+          const isTaming = !!hh.taming;
+          const isTamed = hh.faction === 'player';
+          selBeast.innerHTML =
+            `<span style="color:#ffa64c;font-size:11px;">🐱 目标：${hh.name ?? '野猫'} (${Math.round(hh.hp)}/${Math.round(hh.maxHp)}hp)</span>` +
+            (isTaming ? `<span style="color:#ffd24c;font-size:11px;">驯化中 ${Math.round(hh.taming!.progress / 20 * 100)}%</span> ` : '') +
+            (isTamed ? '<span style="color:#4cf;font-size:11px;">营地守卫</span> ' : '') +
+            (canTame ? `<button data-act="bt-tame" data-hostile="${th.idx}" style="font-size:11px;padding:1px 5px;border-color:#4cf;">🪤 驯化</button> ` : '') +
+            (isTaming || isTamed ? `<button data-act="bt-release" data-hostile="${th.idx}" style="font-size:11px;padding:1px 5px;border-color:#b55;">🪝 放归</button>` : '');
+          }
+        }
+        const fcCmdr = p.commander;
+        const fcTactic = p.tactic;
+        selCmd.innerHTML = '';
+        if (fcCmdr) {
+          const roleName = fcCmdr.role === 'general' ? '🏳 军团长' : '⚔ 队长';
+          selCmd.innerHTML = `<span style="color:#ffa64c;font-size:11px;">${roleName} #${eid}（编组 ${fcCmdr.subordinates.length} 人）</span><br>` +
+            ['charge', 'hold', 'focus', 'retreat', 'regroup'].map((tid) =>
+              `<button data-act="fc-dispatch" data-tactic="${tid}" style="font-size:11px;padding:1px 5px;${fcTactic === tid ? 'border-color:#ffd24c;background:#5a4a16;' : ''}">${fcTactic === tid ? '◉' : ''}${tid}</button>`).join('') +
+            `<button data-act="fc-standdown" style="font-size:11px;padding:1px 5px;border-color:#999;">☮ 收兵</button>` +
+            `<button data-act="fc-dismiss" style="font-size:11px;padding:1px 5px;border-color:#b55;">解编</button>` +
+            (fcTactic ? `<br><span style="color:#ffd24c;font-size:11px;">现行战术：${fcTactic}（受命小人征召中）</span>` : '');
+        } else {
+          selCmd.innerHTML =
+            `<button data-act="fc-commander" style="font-size:11px;padding:1px 5px;border-color:#ffa64c;">${icon('oracle')} 册封指挥官（选中集编组）</button> ` +
+            `<span style="color:#888;font-size:10px;">训练：</span>` +
+            ['charge', 'hold', 'focus', 'retreat', 'regroup'].map((tid) =>
+              `<button data-act="fc-train" data-tactic="${tid}" style="font-size:11px;padding:1px 5px;">${tid}</button>`).join('');
+        }
         const nd = p.needs;
         const hk = p.health;
         const slotCards = p.slots.filter((c) => c !== null).map((c) => (c!.mastery ?? 0) > 0 ? `${c!.name}×${c!.mastery}` : c!.name).join('、') || '无';

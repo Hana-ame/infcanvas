@@ -115,13 +115,16 @@ function attachScene(
   planner?: { tick(dt: number): void },
 ): void {
   let buildMode: string | null = null;
+  // 驯兽守卫 DLC（2026-08-16）：右键敌人设置目标敌人（供 HUD 显示驯化/放归按钮）
+  let targetHostileIdx: number | null = null;
   const hud = createHud(sim, (id) => {
     buildMode = id;
     if (!id) renderer.clearGhost();
     hud.refreshHint(buildMode);
     hud.update(buildMode);
   }, (factor) => renderer.zoomBy(factor), (mode) => renderer.setViewMode(mode),
-    (x, y) => renderer.focusOn(x, y));
+    (x, y) => renderer.focusOn(x, y),
+    () => (targetHostileIdx !== null ? { idx: targetHostileIdx } : null));
   hudApi = hud;
   hud.refreshHint(null);
 
@@ -152,10 +155,10 @@ function attachScene(
     //（移动到目标近旁交战，公式在 raidSystem 不复制）。未征召选中 → 反馈提示；无选中回退移动。
     } else if (sim.hostiles.some((h) => Math.round(h.x) === Math.round(world.x) && Math.round(h.y) === Math.round(world.y))) {
       const hst = sim.hostiles.find((h) => Math.round(h.x) === Math.round(world.x) && Math.round(h.y) === Math.round(world.y))!;
+      const idx = (hst as { i?: number }).i ?? sim.hostiles.indexOf(hst);
+      targetHostileIdx = idx; // 驯兽守卫 DLC：右键敌人即选为目标（HUD 显示驯化/放归按钮）
       const draftedSel = sim.selectedIds.filter((eid) => sim.pawnProfile(eid)?.drafted === true);
       if (draftedSel.length > 0) {
-        // hostileIndex 与协议快照对齐：远程快照自带 i，本地 Sim 数组下标用 indexOf
-        const idx = (hst as { i?: number }).i ?? sim.hostiles.indexOf(hst);
         for (const eid of draftedSel) {
           sim.issueCommand({ type: 'attack', x: 0, y: 0, pawnId: eid, args: { hostileIndex: idx } });
         }
@@ -169,6 +172,7 @@ function attachScene(
       }
     // 移动选中 pawn。带 pawnId：远程模式 server 无 selected 镜像，显式指定
     } else if (sim.selectedIds.length > 0) {
+      targetHostileIdx = null; // 右键空地 = 清目标敌人
       sim.issueCommand({ type: 'move', x: world.x, y: world.y, pawnId: sim.selectedIds[0] });
       renderer.showMoveMarker(sim.pawnPositions.get(sim.selectedIds[0]) ?? null, world);
     }
@@ -343,12 +347,16 @@ function attachScene(
     if (!act) return;
     e.preventDefault();
     switch (act) {
+      // 播放控制走命令面（2026-08-16 审计 H1 修复）：此前直改 sim.paused/speed——
+      // 远程模式下改的是本地壳，服务器权威不知情 → HUD 谎报暂停/时钟漂移。
+      // pause/speed 是引擎内建命令（issueCommand 硬编码分支，与 move 同层），
+      // 本地/远程同一条通道；显式传目标态（读当前权威值取反，不用依赖命令侧翻转）。
       case 'pause':
-        sim.paused = !sim.paused;
+        sim.issueCommand({ type: 'pause', x: 0, y: 0, args: { paused: !sim.paused } });
         break;
-      case 'speed1': sim.paused = false; sim.speed = 1; break;
-      case 'speed2': sim.paused = false; sim.speed = 2; break;
-      case 'speed3': sim.paused = false; sim.speed = 3; break;
+      case 'speed1': sim.issueCommand({ type: 'speed', x: 0, y: 0, args: { speed: 1 } }); break;
+      case 'speed2': sim.issueCommand({ type: 'speed', x: 0, y: 0, args: { speed: 2 } }); break;
+      case 'speed3': sim.issueCommand({ type: 'speed', x: 0, y: 0, args: { speed: 3 } }); break;
       case 'zoomIn': renderer.zoomBy(1.2); break;
       case 'zoomOut': renderer.zoomBy(0.8); break;
       case 'cancel':

@@ -12,7 +12,7 @@ import { SimRng } from './core/rng';
 import { initNeeds } from './core/needs';
 import { EventBus, type GameEvent } from './core/events';
 import { HistoryLog } from './core/history';
-import { generateDna, initSlots, type Dna, type SkillId, BASE_CARDS, TRAIT_CARDS } from './ai/pawn';
+import { generateDna, initSlots, type Dna, type SkillId } from './ai/pawn';
 import { initDesires, type DesireId } from './core/desires';
 import { initEnv, tickEnv, type EnvState } from './core/env';
 
@@ -30,20 +30,20 @@ import type { ScriptedEvent } from './systems/eventSystem';
 
 import { SYSTEM_DEFS, CATEGORY_ORDER, type SystemDef } from './defs/systems';
 import { jobLabelOf } from './defs/jobs';
-import { INTERESTS } from './defs/interests';
-import { K_DRAFTED } from './mods/contracts';
+import { K_DRAFTED, K_COMMANDER, K_TACTICS } from './mods/contracts';
+// 类型（2026-08-16 大文件拆分：权威定义迁至 ./types，本行 re-export 保既有 '../sim'
+// import 路径不变；types.ts 零运行时依赖，无循环）
+import type {
+  BehaviorCap, Command, HealthData, NeedsData, PawnState, PositionData, SaveData, SimOptions, SpeedData,
+} from './types';
+export type {
+  BehaviorCap, Command, HealthData, NeedsData, PawnState, PositionData, SaveData, SimOptions, SpeedData,
+} from './types';
 // 2026-08-15 内核纯引擎：不再硬引用 BehaviorSystem/SocialUnitSystem 类——
 // behavior/socialUnit 迁出为玩法包，经 provide 能力让渡。仅取执行器类型签名。
 import type { IntentExecutor, WorkExecutor } from './systems/cardSystem';
 import type { BootstrapCap } from '../mods/packs/bootstrap';
 import type { EconomyCap } from '../mods/packs/economy';
-
-// 兴趣卡静态表（id → 卡）：存档 load 按卡 id 还原用（与 TRAIT_CARDS 同策略）。
-// 背景：兴趣休闲卡（interest:xxx）是 initSlots 注入卡槽的，不属于 mods.cards/基础卡/天赋卡，
-// load 时若不查此表 → 还原成 null → 娱乐活动丢失（存档往返测试暴露）。v2026-08-13。
-const INTEREST_CARDS: Map<string, BehaviorCard> = new Map(
-  Object.values(INTERESTS).filter((i) => i.card).map((i) => [i.card!.id, cardFromDef(i.card!)]),
-);
 
 // socialUnit 系统被卸载时的 no-op 空实现（2026-08-14 插件化加固）：
 // 纪律"卸载不破坏核心"——SimContext.socialUnits 是契约字段，消费方（needsSystem 记需求、
@@ -57,18 +57,9 @@ const NOOP_SOCIAL_UNITS: SimContext['socialUnits'] = {
   fireHistory: () => [],
 };
 
-// behavior 能力（2026-08-15 纯引擎：决策引擎 = 玩法包提供的能力，Sim 只消费注册面）
-export interface BehaviorCap {
-  registerIntent(id: string, fn: IntentExecutor): void;
-  registerWork(type: string, fn: WorkExecutor): void;
-}
-
-// ---- ECS 组件定义 ----
-export interface PositionData { x: number; y: number }
-export interface NeedsData { food: number; rest: number; mood: number; san: number }
-export interface SpeedData { v: number }
-export interface HealthData { hp: number; maxHp: number }
-
+// ---- ECS 组件并行数组（2026-08-16 大文件拆分：数据接口类型 PositionData/NeedsData/…
+// 迁至 types.ts；数组常量留实现层——registerAutoStore 自动回写与只读访问
+//（readNeeds/readHealth 等）实际使用，值语义不随类型迁走）
 export const Position = { x: [] as number[], y: [] as number[] };
 export const Pawn = {} as { _flag?: number[] };
 export const NeedsComp = { food: [] as number[], rest: [] as number[], mood: [] as number[], san: [] as number[] };
@@ -88,117 +79,19 @@ function registerAutoStore(world: EcsWorld, component: Record<string, number[]>)
 }
 
 import { observe, onSet } from 'bitecs';
+import { saveSim, loadSim } from './sim-save';
+export { SAVE_VERSION, SAVE_MIGRATIONS } from './sim-save';
 
-export interface PawnState {
-  dna: Dna;
-  climb: number; // 通过能力（高差上限；spawn 时从 tuning.pawn.climb 取——单位各自能力，mod 可 overrideTuning）
-  // ⚠️ 差距登记（2026-08-15 审计）：实现 = spawn 取 tuning 后从不修改，全小人恒同值；
-  // 存档不还原也无差别（值恒等于 tuning）。若未来做个体差异（如天赋加攀爬），
-  // 需在 SaveData 增加 climb 字段并随档。enemyDef.climb 差异化不受影响（寻路读各自 def）。
-  slots: ReturnType<typeof initSlots>;
-  path: { x: number; y: number }[];
-  pathIndex: number;
-  urgent?: 'eat' | 'rest';
-  mining?: { x: number; y: number; progress: number };
-  mineTarget?: { x: number; y: number };
-  chopTarget?: { x: number; y: number };
-  caveTarget?: { x: number; y: number }; // 矿洞工作目标
-  caveWork?: { x: number; y: number; progress: number; duration?: number; buildingId?: string }; // 建筑内持续工作（矿洞/竹筏，buildingId=recipe）
-  chopXY?: { x: number; y: number };
-  chopProgress?: number;
-  prayTarget?: { x: number; y: number }; // 祈祷点（篝火）
-  praying?: { x: number; y: number; progress: number };
-  healTarget?: { x: number; y: number }; // 疗伤点
-  healing?: { progress: number };
-  commandCooldown?: number; // 玩家命令后的一段时间不自动决策
-  faith?: number; // 信仰度（祈祷积累，影响违抗与心情）
-  defyCd?: number; // 违抗后的冷却时间（秒）
-  crazyCooldown?: number; // 狂乱乱跑冷却
-  farScanCd?: number;     // 远距回扫冷却（miss 后不重复大半径扫描）
-  pathCd?: number;        // 寻路节流冷却（两次寻路最小间隔，防每帧重寻路风暴）
-  expectEarn?: number;    // 个人经济预期：工作赚多少（滚动平均）
-  expectSpend?: number;   // 个人经济预期：花费花多少（滚动平均）
-  expectEarnBy?: Record<string, number>; // 按工作类型的收益预期（决策调制：赚得多的活更愿意干）
-  crazyTime?: number;     // SAN 狂乱累计时长（超过阈值 → 逃向篝火）
-  crazyFleeTarget?: { x: number; y: number }; // 崩溃逃向的篝火目标
-  skills?: Partial<Record<SkillId, number>>; // COC 技能（百分制，越用越强）
-  desires?: Record<DesireId, number>; // 七宗罪满足度（DESIGN §3）
-  lastNeedRec?: number; // 需求写入篝火记忆的节流等级（needsSystem.recordNeed 用，防刷屏）
-  huntTarget?: { x: number; y: number }; // 狩猎目标猫位置（采集狩猎 mod 的 huntCombat 系统推进攻击）
-  huntScanCd?: number; // 狩猎目标扫描冷却（发现背景：hunt 卡提权后无缓存无冷却 → 每帧全图扫猫+寻路，30 分钟局 20s→240s+ 超时）
-  huntElapsed?: number; // 追猫累计时长（超时放弃，防猫在水上/建筑中打不到 → 无限追+每 pathCd 重寻路死循环）
-  huntSkillCd?: number; // 狩猎技能成长节流（每帧 growSkill → EWA 学习表更新开销大，profile 实测为热点）
-  inventory?: Record<string, number>; // 个人私有物品（2026-08-14 用户设计：私有物品 + 真以物易物；
-  // 当前实现仅食物私有化：主动采集的食入口袋，进食优先扣个人；木材/矿石仍走全局公共仓库）
-  relationships?: Map<number, number>; // 对其他小人的好感度（社交系统）
-  socialCd?: number; // 社交冷却
-  job?: string;
-  // 最近决策记录（设计文档：小人闪过哪3个念头、选了哪个）
-  lastDecision?: { drawn: string[]; picked: string; time: number };
-  lastSeries?: string; // 上一轮执行的卡系列（马尔可夫偏置，DESIGN §6）
-  oracleBuff?: { until: number; mood: number }; // 神谕祝福（到期时间戳，心情加成）
-  assignedJob?: string; // 指派职业（Q10 生产线：lumberjack/miner/farmer/crafter）
-  lean?: Record<LeanKey, number>; // 行为倾向（勒沙特列反馈：按 profit 自平衡）
-  gossip?: { text: string; heardAt: number }; // 听到的八卦（社交网络传播，TTL 内可转述）
-  // 关联篝火（用户 2026-08-13 B 方案：每个人保存一个篝火，在篝火周围生存；
-  // 不舒适可另起篝火）。null = 游牧（暂无营地归属）
-  fireId?: number | null; // 关联篝火建筑 key（2026-08-14 重构：无派系单位，指向 campfire 主格）
-  // 对"听说的篝火"的看法（B 方案：通过交流篝火历史判断伙伴/敌人）
-  // stance: friend/enemy/unknown；basis = 判断依据（听到的历史事件描述）
-  knownFires?: Record<number, { stance: 'friend' | 'enemy' | 'unknown'; basis: string; at: number }>;
-  // mod 系统自定义字段（存档扩展点 2026-08-14：伤情/囚犯/温度等由玩法包自由读写，
-  // save 原样序列化、load 原样还原——解决"mod 状态一存档就丢"；契约：值必须 JSON-safe）
-  extra?: Record<string, unknown>;
-  onArriveWork?: () => void; // mod 工作的到达回执（非序列化，仅当 tick 行为态：走到点后调用）
-}
+// ---- 存档版本化（2026-08-16 架构优化）----
+// SAVE_VERSION = 当前写入版本（save() 写；load 拒载更高版本 = 防新格式被旧版读损坏）。
+// SAVE_MIGRATIONS[i] = "版本 i → i+1" 的重写迁移（load 按旧档版本依次执行，无缺位：
+// 每个版本间迁移都有挂载位，可为显式 no-op——见下位注释）。v0 → v1 无重写项声明：
+// v0 兼容全部靠字段可选（techs/techFragments/needs/health/…）与惰性迁移
+//（medicine woundsOf 字符串数组迁移、tiles string[]/chunk 双格式加载分支、slots 字符串/
+// 对象双形态、techUnlockedAt 缺省 = 读档时刻起算、spawnPawn 就近安置）——这些是"读取时
+// 按缺省语义处理"而非"数据必须重写"，不涉及写回；未来任何必须重写旧数据的格式变更在此
+// 挂载迁移函数（增条目 + 试跑迁移测试）。
 
-export interface SimOptions {
-  seed?: number;
-  pawnCount?: number;
-  tickHz?: number;
-  mods?: (m: ModRegistry) => void; // mod 挂载：构造时注册系统/卡/意图（DESIGN §7）
-  registry?: ModRegistry;          // 预建注册表（服务端 mod 管理器：先挂载所有包再构造 Sim）；缺省 ModRegistry.default()
-  eventProvider?: () => ScriptedEvent | null; // LLM 慢决策层（P1）：替换确定性随机脚本（DESIGN §6）
-}
-
-export interface Command {
-  // 命令协议（引擎面，2026-08-15 纯插件收敛）：type = 命令名——'move' 引擎内建，
-  // 其余由玩法包 registerCommand 提供处理器；`(string & {})` = 开放扩展：玩法包新命令
-  // （wear/build/mine/oracle/assign…）无需改内核枚举（IDE 仍提示已知命令）。
-  // 命令专属参数走 args 通用位（内核不解释，玩法包自行读取——wear 命令的 itemId 先例）。
-  // 曾把 'wear' 写进联合 + itemId 顶层字段，被用户指摘"内核为什么扩展"后收敛为本协议面
-  type: 'move' | 'build' | 'haul' | 'mine' | 'oracle' | 'assign' | (string & {});
-  pawnId?: number;
-  x: number;
-  y: number;
-  buildingId?: string;
-  job?: string; // assign 命令用（lumberjack/miner/farmer/crafter）
-  args?: Record<string, unknown>; // 玩法命令参数位（如 wear 的 { itemId }）
-}
-
-export interface SaveData {
-  time: number;
-  dayTime: number;
-  stockpile: Record<string, number>;
-  tiles: string[] | ChunkData[]; // 旧档 = 全量 string[]（192×192）；新档 = 覆盖层 chunk（DESIGN §375）
-  buildings: { key: number; defId: string; hp: number; faction: string; extra?: Record<string, unknown> }[];
-  techs?: string[]; // 已解锁科技（旧档缺省空）
-  techFragments?: Record<string, number>; // 科技碎片进度（2026-08-14 碎片制；旧档缺省空）
-  pawns: {
-    eid: number; x: number; y: number;
-    dna: Dna; slots: (string | { id: string; m: number; u: number } | null)[]; // 卡 id（+熟练度）——JSON-safe
-    needs: NeedsData | null; health: HealthData | null;
-    faith?: number;
-    skills?: Partial<Record<SkillId, number>>;
-    desires?: Record<DesireId, number>;
-    inventory?: Record<string, number>;
-    oracleBuff?: { until: number; mood: number };
-    assignedJob?: string;
-    fireId?: number | null; // 关联篝火建筑 key（2026-08-14 重构：无派系单位，指向 campfire 主格）
-    knownFires?: Record<number, { stance: 'friend' | 'enemy' | 'unknown'; basis: string; at: number }>;
-    extra?: Record<string, unknown>; // mod 自定义字段（存档扩展点：JSON-safe，load 原样还原）
-  }[];
-}
 
 export class Sim implements SimContext {
   ecs: EcsWorld;
@@ -219,7 +112,7 @@ export class Sim implements SimContext {
   pawnStates = new Map<number, PawnState>();
   pawnPositions = new Map<number, { x: number; y: number }>();
   selected: number[] = [];
-  hostiles: { x: number; y: number; hp: number; maxHp: number; targetX: number; targetY: number; name?: string; faction?: string; enemyId?: string; speed?: number; dmgPerSec?: number; loot?: { item: string; amount: number } }[] = [];
+  hostiles: { x: number; y: number; hp: number; maxHp: number; targetX: number; targetY: number; name?: string; faction?: string; enemyId?: string; speed?: number; dmgPerSec?: number; loot?: { item: string; amount: number }; taming?: { progress: number; tamer: number }; owner?: number }[] = [];
   buildQueue: { x: number; y: number; defId: string; progress: number; faction: string; cost?: { wood: number; ore: number } }[] = [];
   stockpile: Record<string, number>; // 初始库存 = tuning.population.startStockpile（构造函数里装配）
 
@@ -366,6 +259,9 @@ export class Sim implements SimContext {
       // 背景：失败路径加入缓存后，必须在地形变更时清掉，否则"伐木后目标变可达"仍被旧失败缓存拒
       this.clearTrailCache();
     };
+    // 建筑摧毁 → 清航点段缓存（2026-08-16 审查修复：此前仅"建成"清缓存，摧毁路径
+    //（raids 拆家/怒砸/清剿）不触发 → 被拆篝火/教堂锚点的段缓存仍被复用，小人借道已消失锚点）
+    this.world.onBuildingDestroyed = () => this.clearTrailCache();
     // 所有事件 → 结构化历史
     this.bus.onAny((ev) => this.history.record(ev, this.time, this.time / this.dayLength));
     // 2026-08-15 纯引擎：出生刷人/初始营地/建篝火归属回调移入 bootstrap 玩法包系统
@@ -509,7 +405,7 @@ export class Sim implements SimContext {
     return this.dayTime > this.tuning.env.nightStart || this.dayTime < this.tuning.env.nightEnd;
   }
 
-  moveTo(eid: number, x: number, y: number): void {
+  moveTo(eid: number, x: number, y: number, opts?: { markCommand?: boolean }): void {
     const pos = this.readPosition(eid);
     if (!pos) return;
     // 寻路带单位通过能力（高差判定）：每个单位各自 climb
@@ -527,8 +423,10 @@ export class Sim implements SimContext {
       st.praying = undefined;
       st.healTarget = undefined;
       st.healing = undefined;
-      // 玩家命令优先：短暂时间内不自动决策
-      st.commandCooldown = this.tuning.card.commandCooldown;
+      // 玩家命令优先：短暂时间内不自动决策。仅玩家命令（默认）标记；系统行为移动
+      //（征召追击/理智乱跑，markCommand=false）不标记——否则自锁：cooldown 永 3s，
+      // 征召门/崩溃门挡住衰减点 → 追击只发生一次（2026-08-16 审查确认的永冻缺陷）。
+      if (opts?.markCommand !== false) st.commandCooldown = this.tuning.card.commandCooldown;
     }
   }
 
@@ -577,6 +475,10 @@ export class Sim implements SimContext {
     let best: { x: number; y: number } | null = null;
     let bestDist = Infinity;
     for (let r = 1; r <= R; r++) {
+      // 环剪枝（2026-08-16 热路径优化：原实现扫完半径内全部环才返回，即使已命中近目标
+      // ——空闲决策每帧每小人 706 格全扫，profiler 采样 findNearest 为 top 热点之一；
+      // 已找到最近点后,更外圈的环距离必然更远,直接剪掉。语义不变（仍返回最近命中））
+      if (r * r > bestDist) break;
       for (let dy = -r; dy <= r; dy++) {
         for (let dx = -r; dx <= r; dx++) {
           if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue;
@@ -672,7 +574,10 @@ export class Sim implements SimContext {
 
   // COC 技能：读取（无则用下限 10）
   skillOf(eid: number, skill: SkillId): number {
-    return this.pawnStates.get(eid)?.skills?.[skill] ?? 10;
+    // 默认值读 tuning.combat.skillGrowth.base（2026-08-16 审计 L5 同源化：此前硬编码 10，
+    // 与 growSkill 读的 base 各自为政——覆盖 base 后查询/成长起点不一致；旧档无技能记录
+    // 时此默认生效）
+    return this.pawnStates.get(eid)?.skills?.[skill] ?? this.mods.tuning.combat.skillGrowth.base;
   }
 
   // 行为结果学习（EWA 吸引模型）：执行某行为后按实际結果量调整吸引力 → 权重
@@ -695,16 +600,19 @@ export class Sim implements SimContext {
     return this.mods.leans[key];
   }
 
-  // 技能成长（COC 规则）：掷 d100 > 当前值 → +1d10，越用越强、边际递减
+  // 技能成长（COC 规则）：掷 d100 > 当前值 → 增幅，越用越强、边际递减。
+  // 数值全部读 tuning.combat.skillGrowth（2026-08-16 审计 L5：原硬编码 base 10/cap 100/
+  // gain 1-10，mod 无法覆盖——数据驱动化，改 cap/增幅即可调养成节奏）
   growSkill(eid: number, skill: SkillId): void {
     const st = this.pawnStates.get(eid);
     if (!st) return;
-    const cur = st.skills?.[skill] ?? 10;
-    if (cur >= 100) return;
+    const g = this.mods.tuning.combat.skillGrowth;
+    const cur = st.skills?.[skill] ?? g.base;
+    if (cur >= g.cap) return;
     const roll = this.rng.int(1, 100);
     if (roll > cur) {
-      const gain = this.rng.int(1, 10);
-      st.skills = { ...st.skills, [skill]: Math.min(100, cur + gain) };
+      const gain = this.rng.int(g.gainMin, g.gainMax);
+      st.skills = { ...st.skills, [skill]: Math.min(g.cap, cur + gain) };
       if (gain >= 8) this.logEvent('📈 技能精进');
     }
   }
@@ -804,6 +712,16 @@ export class Sim implements SimContext {
     if (cmd.type === 'move') {
       const eids = cmd.pawnId ? [cmd.pawnId] : this.selected;
       for (const eid of eids) this.moveTo(eid, cmd.x, cmd.y);
+      return;
+    }
+    // 播放控制（引擎内建，2026-08-16 审计 H1 修复）：暂停/变速收口到命令面——
+    // 此前 main.ts/hud.ts 直改 sim.paused/speed 字段，远程模式下改的是本地壳
+    //（服务器权威不知情 → HUD 谎报暂停、时钟漂移）。本地/远程/服务器同一条
+    // 命令通道：args.paused 缺省 true（暂停）；speed 值域 {1,2,3}（自动解除暂停）。
+    if (cmd.type === 'pause') { this.paused = (cmd.args?.paused ?? true) === true; return; }
+    if (cmd.type === 'speed') {
+      const sp = (cmd.args ?? {}) as Record<string, unknown>;
+      if (sp.speed === 1 || sp.speed === 2 || sp.speed === 3) { this.paused = false; this.speed = sp.speed; }
       return;
     }
     const handler = this.mods.commandHandlers.get(cmd.type);
@@ -927,10 +845,17 @@ export class Sim implements SimContext {
     // RW-1（2026-08-15）：征召（extra 存档扩展点）——与 RemoteSim.pawnProfile 同契约，
     // HUD 用同一读取面渲染征召按钮，无需区分本地/远程。
     drafted?: boolean;
+    // 战场指挥 DLC（field-command 包 2026-08-16）：编制树/生效战术回显（与 RemoteSim
+    // pawnProfile 同契约——HUD 指挥面板本地/远程同一读取面）。commander 缺省 undefined =
+    // 非指挥官；tactic = 生效战术 id（临战命令优先于编排位）。
+    commander?: { role: 'officer' | 'general'; subordinates: number[] };
+    tactic?: string;
     lastDecision?: { drawn: string[]; picked: string; time: number };
   } | null {
     const st = this.pawnStates.get(eid);
     if (!st) return null;
+    const c = st.extra?.[K_COMMANDER] as { role?: string; subordinates?: unknown } | undefined;
+    const t = st.extra?.[K_TACTICS] as { active?: unknown; underOrder?: { tactic?: unknown } } | undefined;
     return {
       dna: st.dna, slots: st.slots, job: st.job ?? '',
       needs: this.readNeeds(eid), health: this.readHealth(eid),
@@ -941,6 +866,11 @@ export class Sim implements SimContext {
       oracleBuff: st.oracleBuff,
       assignedJob: st.assignedJob,
       drafted: st.extra?.[K_DRAFTED] === true,
+      commander: c && (c.role === 'officer' || c.role === 'general')
+        ? { role: c.role, subordinates: Array.isArray(c.subordinates) ? c.subordinates.filter((v): v is number => typeof v === 'number') : [] }
+        : undefined,
+      tactic: typeof t?.underOrder?.tactic === 'string' ? t.underOrder.tactic
+        : typeof t?.active === 'string' ? t.active : undefined,
       lastDecision: st.lastDecision,
     };
   }
@@ -953,102 +883,14 @@ export class Sim implements SimContext {
 
   // ---- 存档 ----
   save(): SaveData {
-    return {
-      time: this.time,
-      dayTime: this.dayTime,
-      stockpile: { ...this.stockpile },
-      tiles: this.world.serializeChunks(),
-      buildings: this.world.serializeBuildings(),
-      techs: [...this.techs],
-      techFragments: { ...this.techFragments }, // 碎片进度随档（攒一半的科技读档继续攒）
-      pawns: this._pawnList.map((eid) => {
-        const st = this.pawnStates.get(eid)!;
-        const pos = this.readPosition(eid)!;
-        return {
-          eid,
-          x: pos.x, y: pos.y,
-          dna: st.dna,
-          slots: st.slots.map((c) => (c ? { id: c.id, m: c.mastery ?? 0, u: c.lastUsed ?? 0 } : null)),
-          needs: this.readNeeds(eid),
-          health: this.readHealth(eid),
-          faith: st.faith ?? 0,
-          skills: st.skills ?? {},
-          desires: st.desires ?? initDesires(this.rng, this.tuning.desire),
-          inventory: st.inventory ?? {},
-          oracleBuff: st.oracleBuff,
-          assignedJob: st.assignedJob,
-          fireId: st.fireId ?? null,
-          knownFires: st.knownFires,
-          extra: st.extra ?? {}, // mod 自定义字段随档（存档扩展点：伤情/囚犯/电力等玩法包状态）
-          // 瞬时工作态（path/mineTarget/chopXY/praying/healing/mining/各类冷却/job/lastDecision/urgent）
-          // **不随档**——有意轻量存档（2026-08-15 审计裁决，DATA_DRIVEN §14）：读档后小人
-          // 回闲置态重新决策；长期目标（assignedJob/oracleBuff/fireId）已在上面顶层随档。
-        };
-      }),
-    };
+    return saveSim(this);
   }
 
   load(data: SaveData): void {
-    this.techs = new Set(data.techs ?? []);
-    // 碎片进度还原（2026-08-14 碎片制；旧档无此字段 → 空表，已解锁科技不受影响）
-    this.techFragments = data.techFragments ? { ...data.techFragments } : {};
-    this.time = data.time ?? 0;
-    this.dayTime = data.dayTime ?? 0;
-    if (data.stockpile) this.stockpile = { ...TUNING.population.startStockpile, ...data.stockpile };
-    // 存档地形：旧档全量 string[]（192×192）→ loadTiles；新档覆盖层 chunk → loadChunks
-    //（无限地图双图层——DESIGN §375：覆盖层才需要持久化）
-    if (data.tiles) {
-      if (Array.isArray(data.tiles) && typeof data.tiles[0] === 'string') this.world.loadTiles(data.tiles as string[]);
-      else this.world.loadChunks(data.tiles as ChunkData[]);
-    }
-    if (data.buildings) this.world.loadBuildings(data.buildings);
-    // 篝火区域记忆随建筑重建（loadBuildings 已恢复建筑；旧档无 fireMemory，从空开始）
-    this.world.fireMemory.clear();
-    for (const [key, b] of this.world.buildings) {
-      if (b.def.id === 'campfire' || b.def.tags?.includes('anchor')) {
-        this.world.fireMemory.set(key, [{ time: this.time, text: '🏕 营地重建' }]);
-      }
-    }
-    // 重建小人（拷贝列表遍历，否则 killPawn 的 splice 会跳过隔一个）
-    for (const eid of [...this._pawnList]) this.killPawn(eid);
-    if (data.pawns) {
-      for (const p of data.pawns) {
-        const eid = this.spawnPawn(Math.round(p.x), Math.round(p.y));
-        if (eid === -1) continue;
-        const st = this.pawnStates.get(eid)!;
-        st.dna = p.dna;
-        // 卡槽存 id（JSON-safe）：还原时按 id 从 mod 卡 → 基础卡 → 天赋卡 重取；查不到降级 null（抽卡跳过）
-        st.slots = (p.slots ?? []).map((slot) => {
-          if (!slot) return null;
-          // 旧档：纯 id 字符串（无熟练度）；新档：{ id, m, u }
-          const id = typeof slot === 'string' ? slot : slot.id;
-          const found = this.mods.cards.get(id) ?? BASE_CARDS.find((b) => b.id === id) ?? Object.values(TRAIT_CARDS).find((c) => c.id === id) ?? INTEREST_CARDS.get(id) ?? null;
-          if (!found) return null;
-          const card = { ...found }; // 克隆（防共享单例 mastery 串）
-          if (typeof slot === 'object') {
-            card.mastery = slot.m;
-            card.lastUsed = slot.u;
-          }
-          return card;
-        });
-        st.faith = p.faith ?? 0;
-        st.skills = p.skills ?? {};
-        st.desires = p.desires ?? initDesires(this.rng, this.tuning.desire);
-        st.inventory = p.inventory ?? {};
-        st.oracleBuff = p.oracleBuff;
-        st.assignedJob = p.assignedJob;
-        if (p.extra) st.extra = p.extra;
-        st.fireId = p.fireId ?? null;
-        st.knownFires = p.knownFires;
-        if (p.needs) this.setNeeds(eid, p.needs);
-        if (p.health) this.setHealth(eid, p.health);
-      }
-    }
-    // 重建后把小人重新归入最近的派系单位（否则 members 恒空）
-    for (const eid of this._pawnList) this.socialUnits.assignPawn(eid);
+    loadSim(this, data);
   }
 
-  // 瓦片变更监听：server 推增量 / 测试断言（P1 网络层）。订阅返回退订函数
+
   addTileListener(fn: (x: number, y: number, tileId: string) => void): () => void {
     const on = (ev: GameEvent) => {
       if (ev.type === 'tile_changed') fn(ev.x, ev.y, ev.tileId);

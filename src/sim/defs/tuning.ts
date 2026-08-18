@@ -101,6 +101,16 @@ export interface CombatTuning {
   captureRange: number;     // 捕食者叼鼠判定距离（格）（2026-08-16 用户设计"叼起鼠鼠就跑"）
   captureFleeDist: number;  // 叼走后跑离营地中心该距离 = 得手消失（鼠损失不回场）
   pawnDmg: number;           // 小人近战每秒伤害
+  predatorReactionMul: number; // 捕食者近身反击倍率（2026-08-16 战斗平衡：自动近身反击
+                               //   = pawnDmg × 该倍率，玩家征召鼠全伤——给指挥/驯化留介入
+                               //   窗口；试玩反馈 0.5 仍让猫 60s 内被秒，最终调为 0.25）
+  skillGrowth: {             // 技能成长参数（2026-08-16 审计 L5：原 hardcode 在 growSkill，
+                             //   mod 无法覆盖——数据驱动化；COC 语义 = 掷 d100 > 当前值才升）
+    base: number;            //   技能起点（未练默认）
+    cap: number;             //   技能上限
+    gainMin: number;         //   升级增幅下限（d100 过线后 +gainMin..gainMax）
+    gainMax: number;
+  }
   initialRaidDelay: number;  // 开局首波前等待
   baseInterval: number;      // 基线袭击间隔
   pressureCap: number;       // 叙事压力上限
@@ -546,19 +556,21 @@ export const TUNING: TuningConfig = {
     raidEnemy: 'cat',  // 天敌=野猫（2026-08-14 世界观修正）
     unitRaidEnemy: 'raider',
     // 捕食者规则（2026-08-16 用户设计"叼起鼠鼠就跑"）：接触捕获距离 + 得手消失距离（跑离营地中心）
-    captureRange: 1.2,
+    captureRange: 1.5, // 2026-08-16 战斗平衡：1.2→1.5（猫更易叼到鼠——突围威胁更强）
     captureFleeDist: 32,
     catSpeed: 3.5,
     catLootItem: 'ore',
     catLootAmount: 2,
-    pawnDmg: 8,
+    pawnDmg: 5, // 2026-08-16 战斗平衡：8→5（鼠近战伤害下调——试玩反馈"鼠太强"）
+    predatorReactionMul: 0.25, // 捕食者自动近身反击 ×0.25（玩家征召全伤——给指挥/驯化充足窗口；试玩反馈：0.5 仍让猫 60s 内被秒，驯化重伤窗口只剩 ~6s）
+    skillGrowth: { base: 10, cap: 100, gainMin: 1, gainMax: 10 }, // COC 规则（原 growSkill 硬编码值）
     initialRaidDelay: 90, //（试玩后调整，待定稿：开局喘息）
     baseInterval: 75,
     pressureCap: 2,
     pressureScale: 3,
     raidCountBase: 2,
     raidCountPerPawn: 0.35,
-    meleeRange: 5,
+    meleeRange: 3, // 2026-08-16 战斗平衡：5→3（近身反击范围缩小——猫更容易突围逃出反击圈）
     buildingDmg: 3,   // 建筑抗拆（试玩后调整，待定稿）：80HP ≈ 27s 拆——重玩发现 well 被 5 狼 3 秒拆 → 反复重建循环
     buildingRadius: 6,
     minDodge: 0.05,

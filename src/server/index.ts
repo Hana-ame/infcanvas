@@ -9,10 +9,12 @@ import { ModRegistry } from '../sim/mods/registry';
 import { loadModsFromDir } from './modManager';
 import { makeDummyCardPlanner } from './dummyLlm';
 import type { Command } from '../sim/sim';
-import { K_WORN, K_WEARABLE, K_DRAFTED } from '../sim/mods/contracts';
+import { K_WORN, K_WEARABLE, K_DRAFTED, K_COMMANDER, K_TACTICS } from '../sim/mods/contracts';
+import { validateContracts } from '../sim/mods/contracts';
 import { makeLlmProvider } from './llm';
 import { buildDelta } from './diff';
 import { validateCommand, allowRate, type CmdGuardState } from './cmdValidate';
+import { wsTokenOk } from './auth';
 import type { ClientMsg, ServerMsg, SnapshotMsg, WelcomeMsg, EventMsg } from '../shared/protocol';
 
 const PORT = Number(process.argv[2] ?? 8080);
@@ -22,6 +24,7 @@ const TICK_HZ = 20;
 const MODS_DIR = process.env.MODS_DIR ?? 'mods'; // 根目录 mods/*.mod.json 包自动挂载
 const DELTA_MS = 500;        // 增量轮询
 const RECONCILE_MS = 5000;   // 全量对账间隔
+const HEARTBEAT_MS = 2000;   // 显式心跳间隔（2026-08-16 审计 M1：静默期保活，见下方广播循环）
 
 // 神谕慢决策层：完全可由随机抽卡替代（默认即启用，零成本零 API）
 //  - 默认：feedback 随机抽卡（策略卡 + 科技卡），LLM 组件的完整替代
@@ -44,6 +47,15 @@ if (!modRes.ok) {
   console.error(`[server] mod 加载失败：\n${modRes.errors.join('\n')}`);
   process.exit(1);
 }
+// DLC 契约校验补跑（2026-08-16 修复：validateContracts 唯一入口在 playstyleManager.apply
+// —— ModRegistry.default() 内部，先于 loadModsFromDir 执行 → DLC 注册的 def/命令从未过
+// 契约表（meta.warmth 漏写/衣物无 wearable/处理器缺失等静默放行）。此处补跑 = DLC 与
+// in-code 包同一条校验防线，违例 fail-stop（与 mod 加载失败同策略）
+const contractViolations = validateContracts(registry);
+if (contractViolations.length > 0) {
+  console.error(`[server] 契约校验失败（含 DLC）：\n${contractViolations.join('\n')}`);
+  process.exit(1);
+}
 sim = new Sim({
   seed: SEED, pawnCount: PAWNS, tickHz: TICK_HZ,
   registry,
@@ -53,6 +65,10 @@ sim = new Sim({
 const dummyPlanner = makeDummyCardPlanner(sim, { mode: dummyMode });
 console.log(`[server] seed=${SEED} pawns=${PAWNS} ws://0.0.0.0:${PORT} 神谕抽卡=${dummyMode}${llmCfg ? ` llm=${llmCfg.endpoint}（可选增强）` : '（LLM 已由随机抽卡替代）'}${modRes.mods.length ? ` mods=[${modRes.mods.join(', ')}]` : '（无 mod）'}`);
 
+// 可选鉴权（2026-08-16 审计低项 L1）：SERVER_TOKEN 未设 = 完全开放（dev 默认，向后兼容）；
+// 设置后 connection 回调校验 req.url 的 ?token=，不符立即 close 1008（应用层拒绝，不拉黑）。
+const SERVER_TOKEN = process.env.SERVER_TOKEN;
+console.log(`[server] 鉴权=${SERVER_TOKEN ? 'on（客户端 remote URL 需带 ?token=…）' : 'off（未设 SERVER_TOKEN，开放连接）'}`);
 const wss = new WebSocketServer({ port: PORT });
 
 let nextClient = 1;
@@ -141,6 +157,21 @@ function buildSnapshot(): SnapshotMsg {
       // 读取；缺省 undefined = 未征召（旧客户端/旧档安全——协议字段全可选）。工作优先级
       // M1 已撤回，无 workPriorities 字段。
       drafted: sim.pawnStates.get(eid)?.extra?.[K_DRAFTED] === true || undefined,
+      // 战场指挥 DLC（field-command 包 2026-08-16）：编制树/生效战术回显——从 extra 序列化
+      //（缺省 undefined = 非指挥官/无战术；协议字段全可选，旧客户端安全）。tactic 有效值 =
+      // 临战命令（underOrder，覆盖编排位）优先，其次玩家编排的 active。
+      commander: (() => {
+        const c = sim.pawnStates.get(eid)?.extra?.[K_COMMANDER] as { role?: string; subordinates?: unknown } | undefined;
+        if (!c || (c.role !== 'officer' && c.role !== 'general')) return undefined;
+        const subs = Array.isArray(c.subordinates) ? c.subordinates.filter((v): v is number => typeof v === 'number') : [];
+        return { role: c.role, subordinates: subs };
+      })(),
+      tactic: (() => {
+        const t = sim.pawnStates.get(eid)?.extra?.[K_TACTICS] as { active?: unknown; underOrder?: { tactic?: unknown } } | undefined;
+        if (!t) return undefined;
+        const u = t.underOrder?.tactic;
+        return typeof u === 'string' ? u : typeof t.active === 'string' ? t.active : undefined;
+      })(),
     });
   }
   const hostiles: SnapshotMsg['hostiles'] = sim.hostiles.map((h, i) => ({
@@ -169,6 +200,12 @@ function buildSnapshot(): SnapshotMsg {
 }
 
 wss.on('connection', (ws, req) => {
+  // 鉴权门（L1）：token 不匹配 → 立即关（close code 1008 = policy violation），
+  // 不进客户端表、不占 clientId。wsTokenOk 纯函数已在 auth.test 守护。
+  if (!wsTokenOk(req.url ?? '', SERVER_TOKEN)) {
+    ws.close(1008, 'unauthorized');
+    return;
+  }
   const clientId = nextClient++;
   clients.set(clientId, ws);
   // 命令频率守卫（每 client 独立令牌桶）
@@ -210,6 +247,7 @@ let lastFeedCount = 0;
 let lastSnap: SnapshotMsg | null = null;
 let lastDeltaAt = Date.now();
 let lastReconcile = Date.now();
+let lastPing = Date.now();
 setInterval(() => {
   const now = Date.now();
   const dt = Math.min(100, now - last);
@@ -240,6 +278,13 @@ setInterval(() => {
   if (now - lastReconcile >= RECONCILE_MS) {
     lastReconcile = now;
     broadcastSnapshot();
+  }
+  // 显式心跳（2026-08-16 审计 M1）：暂停/无事件时增量停发、对账 5s 才来一次——
+  // 客户端看门狗（原 5s）在静默窗内无法区分"活着没消息"与"断了"，网络抖动即误断
+  // 重连。心跳 2s 一发恒定流量（即使 paused 也发），t = 权威时间（暂停时不变，无损）。
+  if (now - lastPing >= HEARTBEAT_MS) {
+    lastPing = now;
+    broadcast({ type: 'ping', t: sim.time });
   }
 }, 10);
 

@@ -66,7 +66,8 @@ export const powerPack: ModPack = {
   m.registerSystemDef({
     id: 'power', label: '电力', category: 'production',
     ctor: (sim) => new PowerSystem(sim),
-    before: 'raid',
+    // 表内系统不设 before：执行序 = 类别序 × 组内注册序推导（SYSTEM_DEFS 表位置定序；
+    // before 锚点仅第三方表外系统专用——2026-08-16 审计 L7 清理死锚点）
   });
   },
 };
@@ -75,6 +76,9 @@ export const powerPack: ModPack = {
 // 电荷持久在 battery.extra.charge（随存档），电网组是运行时概念（每帧从建筑布局重建）
 export class PowerSystem {
   id = 'power';
+  // forge 生产冷却表（2026-08-16 审查修复）：forge 建筑 key → 剩余冷却秒。
+  // 此前 CFG.interval 是死参数（每帧量产）；冷却跨帧持久，每台 forge 独立节奏
+  private forgeCooldowns = new Map<number, number>();
   constructor(private ctx: SimContext) {}
 
   init(): void {}
@@ -144,25 +148,45 @@ export class PowerSystem {
     }
 
     // ③ 耗电生产：forge 按 interval 节奏抽电（电荷不足 → 停产不扣料）
+    // 2026-08-16 审查修复：此前 CFG.interval 是死参数——电荷够就每帧量产；且组内多 forge
+    // 每帧只产一次（第二台 forge 同组永无产出）。修复：①每台 forge 独立冷却节奏（forgeCooldowns）；
+    // ②组电荷记账递减——多 forge 本帧并行生产时，靠帧首快照判断会"超抽电/重复扣木"
+    //（第二台 forge 看到的 charge 还是第一台抽走前的旧值），必须逐台扣减记账
     for (const g of groups.values()) {
       if (g.forgeKeys.length === 0) continue;
+      // 冷却统一走（与电荷无关；到期清除条目，Map 不膨胀）
+      for (const fk of g.forgeKeys) {
+        const cd = (this.forgeCooldowns.get(fk) ?? 0) - dt;
+        if (cd <= 0) this.forgeCooldowns.delete(fk);
+        else this.forgeCooldowns.set(fk, cd);
+      }
       // 组电荷 = Σ 电池 charge（无电池组 = 0 → forge 一直停产，提示玩家造电池）
       let charge = 0;
       for (const bk of g.batteryKeys) charge += (powerBuildings.get(bk)!.extra?.charge as number | undefined) ?? 0;
       if (charge < CFG.forgeCharge) continue;
-      const produced = this.forgeBatch(g, powerBuildings, charge);
-      if (produced) this.ctx.logEvent('⚒️ 电锻炉产出了工具');
+      let producedCount = 0;
+      for (const fk of g.forgeKeys) {
+        if (this.forgeCooldowns.has(fk)) continue; // 冷却中：轮到本台但未就绪
+        // 电/木任一不足 → 停（先查后抽，不出现"电抽了料扣了却没产出"）
+        if (charge < CFG.forgeCharge || (this.ctx.stockpile.wood ?? 0) < CFG.woodPerTool) break;
+        this.powerForge(fk, g, powerBuildings);
+        charge -= CFG.forgeCharge; // 记账：下一台 forge 的可用电量（防超抽）
+        this.forgeCooldowns.set(fk, CFG.interval);
+        producedCount++;
+      }
+      if (producedCount > 0) {
+        this.ctx.logEvent(producedCount === 1 ? '⚒️ 电锻炉产出了工具' : `⚒️ 电锻炉产出了 ${producedCount} 件工具`);
+      }
     }
   }
 
-  // 单批生产：抽电（按电池电荷比例扣减）+ 扣木产工具
-  private forgeBatch(
+  // 单台 forge 生产：抽电（按电池电荷比例扣减）+ 扣木产工具。
+  // 电量可用性由调用方记账保证（③ 的 charge 递减）——本方法只负责实际扣减
+  private powerForge(
+    _fk: number,
     g: { batteryKeys: number[] },
     powerBuildings: Map<number, BuildingData>,
-    charge: number,
-  ): boolean {
-    if ((this.ctx.stockpile.wood ?? 0) < CFG.woodPerTool) return false;
-    if (charge < CFG.forgeCharge) return false;
+  ): void {
     let taken = 0;
     for (const bk of g.batteryKeys) {
       const b = powerBuildings.get(bk)!;
@@ -178,6 +202,5 @@ export class PowerSystem {
     this.ctx.stockpile.wood -= CFG.woodPerTool;
     this.ctx.stockpile.tools = (this.ctx.stockpile.tools ?? 0) + 1;
     this.ctx.recordSpend(null, 'wood', CFG.woodPerTool);
-    return true;
   }
 }

@@ -156,7 +156,9 @@ export const clothingPack: ModPack = {
       if (!itemId) {
         if (old) {
           ctx.stockpile[old] = (ctx.stockpile[old] ?? 0) + 1;
-          st.extra = { ...st.extra, worn: {} };
+          // 写侧与读侧同一常量（2026-08-16 审查修复：此处曾是裸串 'worn'——契约纪律
+          // 要求跨包键一律引用 K_*，裸串拼错 = 编译期无提示的静默失效）
+          st.extra = { ...st.extra, [K_WORN]: {} };
           ctx.logEvent(`🧵 #${eid} 脱下 ${itemName(ctx, old)}`);
         }
         return;
@@ -168,7 +170,8 @@ export const clothingPack: ModPack = {
       if ((ctx.stockpile[itemId!] ?? 0) < 1) { ctx.logEvent(`📛 没有 ${item.name} 可穿（库存 0）`); return; }
       ctx.stockpile[itemId!] -= 1;
       if (old) ctx.stockpile[old] = (ctx.stockpile[old] ?? 0) + 1; // 换装：旧衣回库存
-      st.extra = { ...st.extra, worn: { body: itemId } };
+      // 写侧与读侧同一常量（2026-08-16 审查修复：此处曾是裸串 'worn'，同上）
+      st.extra = { ...st.extra, [K_WORN]: { body: itemId } };
       // 染色款心情加成（悦目——染色的价值）；日志区分 🧵（素衣）/🎨（染色）
       const dyed = Boolean(item.meta[K_DYE]);
       ctx.adjustMood(eid, CFG.wearMood + (dyed ? CFG.dyeMood : 0));

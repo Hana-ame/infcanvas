@@ -4,9 +4,12 @@
 // 和平期偶遇 → 三岔路口（30% 加入部落 / 35% 竞争冲突 / 35% 路过观望）。
 // 与袭击的差异：不是地图边缘刷波直冲营地，而是在营地近旁随机起舞——
 // 群落规模小（1-2 只）、无叙事压力放大、触发由事件池权重决定（cooldown 控制频率）。
-// 依赖：内核 events（事件池）/ raid（hostile 战斗结算）/ population（spawnPawn）。
-// 装配：默认挂载（registry.default）。
+// 依赖（2026-08-16 审计 L8 注释如实化）：requires = [] 无硬前置——剧本事件走内核事件池
+// 自注册；敌人生成走共享 pushHostile（src/sim/systems/hostiles.ts 纯函数，不依赖 raid 包
+// 装配——早年注释写"依赖 raid 战斗结算"是误述：敌方实体由 raidSystem 或 hg huntCombat
+// 结算，那属于世界装配面而非本包依赖）。装配：默认挂载（registry.default）。
 import type { ModPack } from '../pack';
+import { pushHostile } from '../../sim/systems/hostiles';
 
 export const wildmousePack: ModPack = {
   id: 'wildmouse',
@@ -46,14 +49,9 @@ export const wildmousePack: ModPack = {
             else if (edgeSide === 1) y = w.height - 1 - ctx.rng.int(0, 3);
             else if (edgeSide === 2) x = ctx.rng.int(0, 3);
             else x = w.width - 1 - ctx.rng.int(0, 3);
-            // 竞争分支：手工快照 EnemyDef 字段（与 raidSystem 生成路径重复——审计 2026-08-15
-            // 登记：EnemyDef 增字段不会自动透传，两处敌人行为可能漂移；将来抽共享 spawnHostile helper）
-            ctx.hostiles.push({
-              x, y, hp: enemy.hp, maxHp: enemy.hp,
-              targetX: cx, targetY: cy,
-              name: enemy.name, enemyId: enemy.id, faction: enemy.faction,
-              speed: enemy.speed, dmgPerSec: enemy.dmg, loot: enemy.loot,
-            });
+            // 竞争分支（2026-08-16 审计 L6 落地）：共享 pushHostile——与 raid/hg 同一生成
+            // 入口，EnemyDef 增字段（predator/climb/carrySpeedMul…）一处透传不再漂移
+            pushHostile(ctx, enemy, x, y, { targetX: cx, targetY: cy });
           }
           ctx.logEvent(`🐭 几只野生鼠鼠红着眼扑上来抢吃的！（${n} 只）`);
         } else {

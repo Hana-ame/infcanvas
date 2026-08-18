@@ -1042,3 +1042,57 @@ registerHook('beforeRoll', (prob, ctx) => ...);          // check 流程阶段�
 2. **指挥命令通道（直接指挥，硬约束、独立文档层）**：move/mine/assign/draft/attack 等命令（引擎内建 + 玩法包注册）——**逐小人即时指令**，不写任何优先级/约束状态。M2 征召 = 本通道的紧急例外（暂停自治，不是优先级系统）。
 
 **实现形态（oracle-guidance 玩法包）**：零新增 pawn 状态键、零协议字段、零新系统（SYSTEM_DEFS 保持 26）；唯一内核扩展 = `SimContext.printCard`（Sim 早已实现的 LLM 印卡通道，纯插件不可达小人槽位）；冷却为 `WeakMap<SimContext, number>` 瞬态（不随档，与 commandCooldown 同设计）。新增策略卡 2 张：伐木令（oracle:chop）/ 采矿令（oracle:mine），条件读 tuning 路径（2026-08-13 定案"伐木令退位为可选神谕目标"落库），随机神谕同样会采样——引导而非经济平衡。噪声面：随机神谕不变（dummyLlm 冻结禁改，包自带 spot 扫描 + 队列去重的蓝图落点）。
+
+## 命令接口与实现同宽 / 升级落点校验 / 摧毁回调（2026-08-16 审查修复追加）
+
+- **`SimContext.issueCommand(cmd: Command)`**：系统侧接口从窄联合（`{type:'build'...}`）放宽为与 `Sim.issueCommand` 相同的开放 `Command`（`type` 含 `(string & {})` + `args` 通用位）——玩法包注册的新命令（wear/draft/attack/strategy…）在系统侧直接可发,不再被迫 cast。协议面（shared/protocol.ts + cmdValidate 白名单 = mods.commandHandlers）不变。
+- **升级 = 扩展 footprint 的落点校验**（World.canUpgradeAt）:升级路径此前跳过 footprint 校验（buildSystem 只对新建做 canBuildFootprint）,`upgradeBuilding` 无条件覆盖 gridToBuilding——两座相邻篝火各自升 2×2 教堂时,后升级者的格子归属顶掉前者。现在升级同样走"新格必须可建且不被占"校验（旧 footprint 格豁免）,fail = 放弃蓝图不扣资源。
+- **建筑摧毁回调**（World.onBuildingDestroyed → sim.clearTrailCache）:摧毁路径（raids 拆家/怒砸/清剿）此前不触发缓存失效,被拆篝火/教堂的锚点段仍被寻路复用。与既有"建成/地形变更"两个失效点补齐为三。
+- **执行器装配 = 声明表 × 实现表双表**（2026-08-16 拆分轮）：内置意图/工作执行器迁出 `src/sim/systems/executors.ts`——`defs/executors.ts` 只声明（BUILTIN_INTENTS/BUILTIN_WORKS 的 handler 字段 = 全名字符串 `execWalkAndWork`/`workChop`…），`systems/executors.ts` 只实现（INTENT_IMPL/WORK_IMPL 键 = handler 全名，纯函数 `(c, eid, st, intent, deps)`）。BehaviorSystem 构造经 `intentImplOf(handler)`/`workImplOf(handler)` 装表，**不再反射类方法名**（类方法名可被混淆/重命名而字符串 handler 不失控）；mod 运行期 `registerWork` 的新 handler 在执行时经 `deps.workExecutors` 引用实时解析（构造快照会漏掉晚注册的工作）。装配回归锁定：声明表 × 实现表一一对应、无孤儿键（assembly.test）。两表同文件对读即"数据驱动"的意图/工作维。
+- **引擎类型权威迁出 `src/sim/types.ts`**（2026-08-16 拆分轮）：BehaviorCap/PositionData/NeedsData/SpeedData/HealthData/PawnState/SimOptions/Command/SaveData 自 sim.ts 迁出为零运行时依赖类型模块（仅 type-only import，杜绝循环引用），sim.ts import + re-export 保 `'../sim'` 既有路径不动。registry.ts 有意不拆：30+ 注册/覆盖/查询方法高度内聚的单一职责注册中心，拆出 = 薄层转发负收益。
+- **存档版本化**（2026-08-16）：SaveData.saveVersion 顶层字段（缺省 0 = 旧档）；`SAVE_VERSION` 常量 + `SAVE_MIGRATIONS` 迁移注册表（下标 = 目标版本，load 顺序执行 < saveVersion 的全部迁移）；v0→v1 = 显式 no-op——既有兼容点全为缺省语义（旧档 tiles 双格式识别、slots 双形态、缺省字段回归默认值、惰性迁移），未来破坏性格式变更 = 追加迁移函数 + 升版本号，load 拒载 `saveVersion > SAVE_VERSION` 防新档被旧版读坏。
+- **颈部热路径收敛（profile 第二轮，2026-08-16）**：① history.record 容量裁剪改批量（原每超限 splice 整表 = 事件持续流入时每 tick 复制 5000 条；改超限裁到 cap×3/4 留缓冲，cap 语义变软上限）；② findNearest 环剪枝（`r² > bestDist` 断环，命中后不再扫外圈）；③ World.nearestBuildingWithTag 专用查询（决策谓词免数组分配 + tag 过滤 + keyToXY 内联解码）；④ walk 拥挤/占位检查 = 取整格聚合表（帧初 O(n) 构建，帧内增量更新维持顺序可见性）。总 step 耗时 -42%（3465→1995ms，40 人 1500 tick）。
+---
+
+## 战场指挥体系（field-command 玩法包，2026-08-16）
+
+**需求**：训练编排战术动作 → 控制指挥官 → 小队作战 → 多层指挥（军团长→队长→兵）→ 大兵团作战。
+
+**层次**：本包是"指挥官层"，建立在征召包（drafting）之上（requires ['drafting']）——战术命令的执行体 = 征召小人（K_DRAFTED 门），集火/冲锋的接敌拖动 = 指定攻击（K_ATTACK）通道。零新引擎挂钩；战术不动伤害数值（raidSystem 不碰），只动移动与接敌选择。
+
+**数据**（PawnState.extra，随档透传，契约登记 K_COMMANDER/K_TACTICS）：
+- `extra[K_COMMANDER] = { role: 'officer'|'general', subordinates: number[] }`——指挥官身份与编制树；role 自动推导（辖下有队长 = general），玩家只描述"谁归谁管"。
+- `extra[K_TACTICS] = { learned, active, underOrder: {tactic, from, target?} }`——训练掌握/编排位/临战下达；生效战术 = underOrder ?? active（指挥官指令 > 玩家预设）。
+
+**命令面**：commander（册封/编队/解编）、train（学习 + 冷却）、dispatch（级联整树下发 / 'none' 收兵；focus 须带 hostileIndex）。均登记 COMMAND_CONTRACTS + cmdValidate 形状校验。
+
+**执行序**：'field-command' 注册在 drafting 之后（raid 组注册序），drafting 追击对 hold/retreat/regroup 跳过（战术优先级 > 自动索敌），charge/focus 交给 drafting 追击拖动——"先到者驱动后到者清"的帧序一致性。
+
+**死亡语义**：killPawn 同步删除 pawnStates（extra 编制表随之消失）→ 死后无树可读；FieldCommandSystem 每帧维护指挥官树快照（仅瞬态缓存），死亡检测以快照为准级联解除整树。玩家解除征召 = 战术失效（玩家优先，不拉回）；被动衰减不豁免。
+
+**协议**：Snapshot/Delta 增 `pawns.commander`（对象）与 `pawns.tactic`（生效战术 id 字符串），diff 用 JSON 比较（低频字段），server 从 extra 序列化；PROTOCOL_CONTRACTS 登记值语义。
+
+## 播放控制命令面与心跳保活（2026-08-16 审计 H1/M1）
+
+**播放控制 = 引擎内建命令面**（H1）：pause/speed 与 move 同层（issueCommand 硬编码分支，不随玩法包装卸）。唯一写入口 = `issueCommand({type:'pause', args:{paused}})` / `{type:'speed', args:{speed}}`——本地/远程/服务器同一条通道。**动机**：此前 main.ts/hud.ts 直改 sim.paused/speed 字段，远程模式下改的是本地壳（服务器权威不知情 → HUD 谎报暂停、时钟漂移）。命令契约登记（COMMAND_CONTRACTS）+ cmdValidate 形状校验（非法值服务器拒收）；客户端显式传目标态（读权威值取反，命令侧不翻转）；HUD 高亮每帧读权威字段。
+
+**心跳 = 显式 PingMsg**（M1）：服务器每 2s 广播 `{type:'ping', t}`（即使模拟暂停也发）；客户端任何消息都刷新看门狗心跳戳（此前只在连接时更新——静默期"有消息也断线"）。超时窗 15s（原 5s 与服务器全量对账间隔等长 = 零抖动余量，网络一抖即误断重连）。PingMsg 不进快照/增量管线，仅 t 锚定顺带刷新（暂停时 t 不变，无损）。
+
+**增量合入原则**（M2）：客户端权威快照 this.snap 只接受"全量形状"的局部合入——delta 是增量形状（pawns 逐条目部分字段、建筑无 x/y），整对象 spread 会把它变成半残快照（其余 pawn 蒸发、字段缺失误读）。合入规则：pawn 逐 eid 字段合并（与 pawnCache 同源）、removed 过滤、pawnList 权威重排、建筑 key 解码补 x/y、顶层字段单点赋值；全量对账（applySnapshot）始终是最终收敛点。
+
+## 低项一致性收口（2026-08-16 审计 L1-L8）
+
+- **可选鉴权（L1）**：`SERVER_TOKEN` 环境变量 → 连接层校验 `req.url` 的 ?token=（纯函数 `wsTokenOk` 可单测）；未设 = 开放（dev 默认）。query token 是弱鉴权（挡随口连接），公网部署应前置 TLS + 更强认证（注释留档）。
+- **敌人生成单入口（L6）**：`src/sim/systems/hostiles.ts pushHostile(ctx, enemy, x, y, {targetX,targetY,hpMul})`——整体 spread EnemyDef（新字段自动透传）+ 命中字段换算覆盖；raid（含压力 hpMul）/wildmouse/hg 三处收口。EnemyDef 增字段只改这一处。
+- **技能成长数据化（L5）**：COC 规则数值进 `tuning.combat.skillGrowth`（base/cap/gainMin/gainMax，mod 可覆盖），`growSkill` 与 `skillOf` 默认值同源读 base。
+- **执行序锚点语义钉死（L7）**：before 锚点只对 SYSTEM_DEFS 表外第三方系统生效（sim.registerSystems 兜底循环）；表内系统 8 处冗余 `before:'raid'` 清理——执行序注释从"靠锚点"修正为"类别序 × 组内注册序推导"。
+
+## 驯兽守卫体系（beast-taming 玩法包，2026-08-16）
+
+**需求**：用户「继续开发」，自主设计战斗主线延续战场指挥——把重伤的捕食者猫驯化成营地守卫（"以鼠之矛守鼠之城"）。
+
+**机制**：tame 命令（hostileIndex 定位，同 attack/focus 模式）→ 重伤过滤（hp/maxHp ≤ 0.25）→ 臣服态（taming 标记，raidSystem 跳过：移动/结算均 continue，趴伏假死免疫）→ 投喂推进（消耗 food，缺粮停滞，tamer 死亡中止）→ 转正（faction='player' + owner=tamer）→ 守卫行为（本系统驱动：扑咬敌对 cat / 跟随驯养人）→ release 复原（清除 taming/owner 与 faction）。
+
+**恶意状态处理**：HUD 读 targetHostileIdx（右键敌人设）从 sim.hostiles 取实时 taming 对象。系统为表外第三方，before:'raid' 锚点插在 raid 前（结算先于袭击战斗）。契约登记 tame/release 2 条（COMMAND_CONTRACTS）。
+
+**Hostile 扩展**：新增 `taming?`（驯化中）、`owner?`（守卫驯养人 eid）两可选字段——hostiles 经 diff 整体覆盖/taming 自动透传。SimViewHostile 同扩展。

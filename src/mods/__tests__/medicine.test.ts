@@ -123,4 +123,33 @@ describe('medicine 玩法包（RimWorld 式）', () => {
     expect(w[0]).toMatchObject({ kind: 'cut', bleeding: true });
     expect(w[1]).toMatchObject({ kind: 'bruise', bleeding: false });
   });
+
+  // ---- 2026-08-16 审查修复回归 ----
+  it('疗伤中篝火被毁 → 清理 healTarget/healing 并退出疗伤态（不无限等待不存在的火）', () => {
+    // 发现背景：raids 拆家/怒砸摧毁篝火后，treat 小人 healTarget 仍指向已毁坐标 →
+    // 距离判定恒 > 2.2 → 治疗推进分支永久 continue，卡死在"疗伤养伤"。
+    const { ctx, sys, eid } = makeSys();
+    const st = ctx._pawnStates.get(eid)!;
+    // 找可建 campfire 位置（篝火带 heal tag）
+    let fx = -1, fy = -1;
+    for (let x = 1; x < ctx.world.width && fx < 0; x++) for (let y = 1; y < ctx.world.height; y++) {
+      if (ctx.world.canBuildFootprint(x, y, ctx.buildingDef('campfire')!)) { fx = x; fy = y; break; }
+    }
+    expect(fx).toBeGreaterThanOrEqual(0);
+    ctx.world.placeBuilding(fx, fy, 'campfire', 'player');
+    st.extra = { wounds: [{ kind: 'cut', part: 'limb', severity: 0.1, bleeding: false, infection: 0 }] };
+    st.job = '疗伤养伤';
+    st.healTarget = { x: fx, y: fy };
+    // 篝火健在：update 正常留在疗伤态（不误清理）
+    sys.update(1);
+    expect(st.job).toBe('疗伤养伤');
+    expect(st.healTarget).toBeDefined();
+    // 篝火被毁（走正常摧毁路径）→ 下次 update 清理目标 + 退出疗伤态交回决策层
+    ctx.world.damageBuilding(fx, fy, 99999);
+    expect(ctx.world.getBuilding(fx, fy)).toBeNull(); // 预置：篝火确已移除
+    sys.update(1);
+    expect(st.healTarget).toBeUndefined();
+    expect(st.healing).toBeUndefined();
+    expect(st.job).toBe('闲逛');
+  });
 });

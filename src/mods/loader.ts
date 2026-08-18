@@ -28,7 +28,13 @@ export interface ModManifest {
   version: string;
   description?: string;
   author?: string;
-  requires?: { coreVersion?: string };
+  requires?: {
+    coreVersion?: string;
+    // 跨文件依赖（2026-08-16 修复：此前仅 coreVersion，DLC 之间无依赖位——服务端按
+    // 文件名序独立挂载，与 in-code ModPack 的 requires/topoSort DAG 不等价；DLC A 依赖
+    // DLC B 的 def 时可能先挂 A 报"def 缺失"。挂载器按此列表拓扑喂序，缺失依赖 = 报错跳过）
+    mods?: string[];
+  };
 }
 
 export interface ModDefsJson {
@@ -83,6 +89,14 @@ export function parseModPackage(json: string): ModPackage {
   const coreVer = m.requires?.coreVersion;
   if (coreVer !== undefined && coreVer !== CORE_VERSION) {
     throw new Error(`mod "${m.id}" 要求 coreVersion ${coreVer}，当前 ${CORE_VERSION}（版本不兼容）`);
+  }
+
+  const depMods = m.requires?.mods;
+  if (depMods !== undefined) {
+    if (!Array.isArray(depMods)) throw new Error(`mod "${m.id}" requires.mods 必须是 mod id 数组`);
+    for (const d of depMods) {
+      if (typeof d !== 'string' || !ID_RE.test(d)) throw new Error(`mod "${m.id}" requires.mods 含非法 mod id: ${String(d)}`);
+    }
   }
 
   const defsRaw = obj.defs;

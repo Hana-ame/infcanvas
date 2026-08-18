@@ -91,5 +91,7 @@ describe('prison 玩法包', () => {
     expect(b.extra?.captive).toBeDefined(); // 仍在笼
     expect(ctx.stockpile.food).toBe(4);
     expect((b.extra?.captive as { lastFed: number }).lastFed).toBe(1500);
+    // 记账（审计中③）：喂食是营地支出——recordSpend 入 economy 流（此前直扣不记账）
+    expect(ctx._spend).toContainEqual({ eid: null, item: 'food', amount: 1 });
   });
 });

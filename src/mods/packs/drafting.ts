@@ -16,7 +16,7 @@ import type { GameSystem } from '../../sim/systems/registry';
 import type { SimContext } from '../../sim/systems/context';
 import type { PawnState } from '../../sim/sim';
 import type { ModPack } from '../pack';
-import { K_DRAFTED, K_ATTACK } from '../../sim/mods/contracts';
+import { K_DRAFTED, K_ATTACK, K_TACTICS } from '../../sim/mods/contracts';
 
 // 本包数值（玩法包自治，注释数值意图；DATA_DRIVEN §13 包内 CFG）
 const CFG = {
@@ -28,6 +28,9 @@ const CFG = {
   //   留 0.2 格余量防"够不着"抖动（路末端误差）。
   targetLostRadius: 8,  // 目标消失（被击杀 splice 下标错位）后，按快照位置就近找回的半径（格）。
   //   超过此半径 = 目标真没了/换了一拨，放弃追击（原地待命）。
+  sameTargetDrift: 1.5, // "下标处仍是原目标"的位置容差（格）。敌人移速 ~2 格/s，一 tick(0.05s)
+  //   位移 <0.2 格；splice 顶替的敌人若与快照距离 > 此值 → 判定下标被顶替，走找回逻辑。
+  //   取 1.5 格兼顾大 dt（0.1s/帧时位移 ~0.4 格）与顶替区分（顶替者通常站在别处）。
 };
 
 // ---- 状态读写 helper（命令/系统/raidSystem/HUD 共用同一语义；K_* 键走常量）----
@@ -77,6 +80,13 @@ export class DraftSystem implements GameSystem {
     for (const eid of this.ctx.pawnList) {
       const st = this.ctx.pawnStates.get(eid);
       if (!st || !draftedOf(st)) continue;
+      // 战场指挥 DLC（2026-08-16 field-command 包）：受命小人的'固守/撤退/集结'战术
+      // 优先级高于自动接敌——追击会顶掉战术移动（固守被拉走/撤退被拉回），由战术系统
+      // 驱动移动；冲锋/集火经 attackTarget 走本条追击逻辑（指定目标优先于自动接敌）。
+      // 跨包读 K_TACTICS（契约登记 reader drafting，见 contracts.ts）。
+      const cmdTactic = st.extra?.[K_TACTICS] as { underOrder?: { tactic: string } } | undefined;
+      const ut = cmdTactic?.underOrder?.tactic;
+      if (ut === 'hold' || ut === 'retreat' || ut === 'regroup') continue;
       const pos = this.ctx.pawnPositions.get(eid);
       if (!pos) continue;
       // 玩家刚发过手动命令（moveTo 设置 commandCooldown）→ 本 tick 不抢（尊重玩家指挥，
@@ -90,7 +100,10 @@ export class DraftSystem implements GameSystem {
       const last = this.lastRepath.get(eid) ?? 0;
       if (this.ctx.time - last < CFG.repathInterval) continue;
       this.lastRepath.set(eid, this.ctx.time);
-      this.ctx.moveTo(eid, Math.round(target.x), Math.round(target.y));
+      // markCommand:false = 系统行为移动，不标记玩家命令（2026-08-16 修复：此前 moveTo
+      // 无条件设 commandCooldown=3，追击一次后自锁 3s；配合 cardSystem 征召门内递减，
+      // 现在玩家手动命令仍受尊重，系统追击不再自锁）
+      this.ctx.moveTo(eid, Math.round(target.x), Math.round(target.y), { markCommand: false });
     }
   }
 
@@ -98,7 +111,7 @@ export class DraftSystem implements GameSystem {
   private pickTarget(st: PawnState, pos: { x: number; y: number }): { x: number; y: number } | null {
     const atk = attackTargetOf(st);
     if (atk) {
-      const resolved = this.resolveTarget(atk);
+      const resolved = this.resolveTarget(st, atk);
       if (resolved) return resolved;
     }
     // 自动接敌：无指定目标（或指定目标已消失）→ 半径内最近的敌人（任务 M2）
@@ -112,39 +125,42 @@ export class DraftSystem implements GameSystem {
   }
 
   // 刷新指定目标：敌人每 tick 在动，且击杀会 splice 数组（下标错位）。
-  // 1) 原下标存活 → 直接取当前坐标（顺带刷新快照）；
-  // 2) 原下标无效 → 按快照位置在 targetLostRadius 内就近找回（视为同一目标追丢），
+  // 修复 2026-08-16 审查问题 ①：此前 attackTargetOf 每 tick 从 extra 新建快照对象，
+  // resolveTarget 只改局部对象、从不写回 → 找回的新下标永不落盘；且 splice 后
+  // hs[staleIndex] 指向"别的敌人"时无条件返回其坐标 → 追错目标。
+  // 现在：命中即 setAttackTarget 写回（快照刷新 + 下标修正），并用位置距离校验
+  // "下标处是否仍是原目标"——敌人一 tick 位移很小，距离骤变 = 下标已被顶替 → 走找回。
+  // 1) 原下标存活且位置合理 → 视为同一目标，写回最新坐标（顺带刷新快照）；
+  // 2) 原下标无效/被顶替 → 按快照位置在 targetLostRadius 内就近找回（视为同一目标追丢），
   //    并回写新下标（raidSystem 指定者判定依赖正确下标）；
   // 3) 找不到 → 目标已死/换批 → 清指定（攻击完成，回到自动接敌或待命）。
-  private resolveTarget(atk: { hostileIndex: number; x: number; y: number }): { x: number; y: number } | null {
+  private resolveTarget(st: PawnState, atk: { hostileIndex: number; x: number; y: number }): { x: number; y: number } | null {
     const hs = this.ctx.hostiles;
-    if (hs[atk.hostileIndex]) {
-      atk.x = hs[atk.hostileIndex].x;
-      atk.y = hs[atk.hostileIndex].y;
-      return { x: atk.x, y: atk.y };
+    const h = hs[atk.hostileIndex];
+    if (h) {
+      // 位置校验：敌人移速 ~2 格/s，一 tick(0.05s) 位移 <0.2 格；快照与现位置距离若
+      // 超过 CFG.sameTargetDrift 格，说明该下标已被 splice 顶替为别的敌人（原目标死了
+      // 或被挤走）→ 不能直接当原目标，走找回逻辑
+      const drift = Math.hypot(h.x - atk.x, h.y - atk.y);
+      if (drift <= CFG.sameTargetDrift) {
+        // 同一目标：写回最新坐标（快照刷新——此前只改局部对象，快照永不更新）
+        setAttackTarget(st, atk.hostileIndex, h.x, h.y);
+        return { x: h.x, y: h.y };
+      }
     }
     const r2 = CFG.targetLostRadius * CFG.targetLostRadius;
     for (let j = 0; j < hs.length; j++) {
       const d = (hs[j].x - atk.x) ** 2 + (hs[j].y - atk.y) ** 2;
       if (d < r2) {
-        atk.hostileIndex = j;
-        atk.x = hs[j].x;
-        atk.y = hs[j].y;
-        return { x: atk.x, y: atk.y };
+        // 找回成功：回写新下标 + 位置（此前只改局部对象，下标修正永不落盘）
+        setAttackTarget(st, j, hs[j].x, hs[j].y);
+        return { x: hs[j].x, y: hs[j].y };
       }
     }
-    // 目标确认消失：清指定（回调 pawnStates 写回；attackTargetOf 下次返回 null → 自动接敌）
-    this.clearTargetFromState(atk);
+    // 目标确认消失：清指定（只清当前小人的指定——按下标全清会误伤其他征召小人
+    // 指向的不同目标；每个征召小人各自 resolveTarget 各自清理）
+    clearAttackTarget(st);
     return null;
-  }
-
-  private clearTargetFromState(atk: { hostileIndex: number }): void {
-    for (const eid of this.ctx.pawnList) {
-      const st = this.ctx.pawnStates.get(eid);
-      if (!st) continue;
-      const a = attackTargetOf(st);
-      if (a && a.hostileIndex === atk.hostileIndex) clearAttackTarget(st);
-    }
   }
 }
 

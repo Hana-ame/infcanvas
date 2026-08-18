@@ -136,6 +136,24 @@ describe('RemoteSim 断线重连（P1）', () => {
     expect(ws2.closed).toBe(false);
   });
 
+  it('看门狗：静默期仅 ping 保活不误断；心跳停发才断（M1 根修：消息即心跳刷新）', async () => {
+    const rs = await connectSim();
+    rs.watchdogMs = 3000;
+    const ws = FakeWs.instances[0]!;
+    // 模拟暂停/无事件静默期：唯一消息 = 服务器 2s 显式心跳（这里 1s 一条,间隔 < 窗口）。
+    // 旧代码 lastMessageAt 只在连接/看门狗启动时更新 → 有消息也照样断线（误断重连）；
+    // 修复后任何消息（含 ping）都刷新心跳。
+    for (let i = 0; i < 6; i++) {
+      vi.advanceTimersByTime(1000);
+      ws.onmessage?.({ data: JSON.stringify({ type: 'ping', t: i }) });
+    }
+    expect(ws.closed).toBe(false);
+    expect(rs.status).toBe('connected');
+    // 心跳停发（服务器假死）→ 超窗主动断开触发重连兜底
+    vi.advanceTimersByTime(4000);
+    expect(ws.closed).toBe(true);
+  });
+
   it('首次连接失败 → connect reject（不进入重连）', async () => {
     const rs = new RemoteSim('ws://fake');
     const p = rs.connect();

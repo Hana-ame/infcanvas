@@ -19,8 +19,9 @@ export const ENEMIES: Record<string, EnemyDef> = {
   // 天敌=野猫（2026-08-14 修正世界观：小人是鼠鼠，天敌是猫不是狼——狼是早期幻觉设定）
   // 猫 climb 2 > 鼠人 1：能爬上石头/矮坡追猎（各自通过能力差异化）
   // 2026-08-16 设计（用户）：哈基米 = 独行捕食者——力量速度远高于鼠鼠（基准 hp40/speed4 →
-  // 猫 hp90/speed6.5），接触鼠直接叼走跑路，不纠缠不拆家。击杀掉落=肉（私有进口袋）
-  cat: { id: 'cat', name: '野猫', hp: 90, speed: 6.5, climb: 2, dmg: 6, predator: true, carrySpeedMul: 1.5, loot: { item: 'food', amount: 3 } },
+  // 猫 hp110/speed8），接触鼠直接叼走跑路，不纠缠不拆家。击杀掉落=肉（私有进口袋）
+  // 2026-08-16 战斗平衡：hp 90→110（更扛揍）、speed 6.5→8（突围快，玩家更难拦）。
+  cat: { id: 'cat', name: '野猫', hp: 110, speed: 8, climb: 2, dmg: 6, predator: true, carrySpeedMul: 1.5, loot: { item: 'food', amount: 3 } },
   // 派系掠夺者（派系 vs 派系袭击的兵种；faction 'unit' → 征服/UI 身份识别）
   raider: { id: 'raider', name: '掠夺者', hp: 90, speed: 3.5, climb: 1, dmg: 7, faction: 'unit', loot: { item: 'ore', amount: 4 } },
 };

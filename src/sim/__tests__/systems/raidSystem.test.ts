@@ -4,6 +4,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { RaidSystem } from '../../systems/raidSystem';
 import { makeMinCtx } from '../helpers/minCtx';
+import { K_DRAFTED } from '../../mods/contracts';
 
 describe('RaidSystem 独立测试（最小 ctx，无 Sim）', () => {
   let ctx = makeMinCtx(10);
@@ -95,15 +96,32 @@ describe('RaidSystem 独立测试（最小 ctx，无 Sim）', () => {
     expect([...ctx.world.buildings.keys()].length).toBe(wallBefore); // 没拆墙
   });
 
-  it('近身反击:捕食者冲向鼠时被鼠墙砍死（不叼人）', () => {
+  it('近身反击:捕食者冲向鼠时被自动近身反击砍死（不叼人）', () => {
     const sys = new RaidSystem(ctx);
     // 猫放鼠 meleeRange(5) 内、captureRange(1.2) 外:鼠恰好能砍,猫还叼不到
     const eid = ctx.spawnPawn(96, 96);
     const t = ctx.tuning.combat;
     const cat = ctx.mods.enemies['cat'];
     ctx.hostiles.push({ x: 96 + t.captureRange + 1, y: 96, hp: 5, maxHp: cat.hp, targetX: 96, targetY: 96, enemyId: 'cat', name: cat.name, speed: cat.speed, dmgPerSec: cat.dmg, loot: cat.loot });
-    for (let i = 0; i < 3; i++) sys.update(1);
+    // 非征召自动反击 = pawnDmg(5) × predatorReactionMul(0.25) = 1.25/帧 → 5hp 需 5 帧
+    for (let i = 0; i < 6; i++) sys.update(1);
     expect(ctx.hostiles.length).toBe(0);           // 猫被砍死
     expect(ctx._killed.includes(eid)).toBe(false); // 鼠没被叼（反击在先,猫先死）
+  });
+
+  it('捕食者近身反击：自动减半、征召全伤（2026-08-16 战斗平衡——指挥有真实价值）', () => {
+    const sys = new RaidSystem(ctx);
+    const eid = ctx.spawnPawn(96, 96);
+    const t = ctx.tuning.combat;
+    const cat = ctx.mods.enemies['cat'];
+    ctx.hostiles.push({ x: 96 + t.captureRange + 1, y: 96, hp: 100, maxHp: cat.hp, targetX: 96, targetY: 96, enemyId: 'cat', name: cat.name, speed: cat.speed, dmgPerSec: cat.dmg, loot: cat.loot });
+    // 非征召鼠：自动近身反击 = pawnDmg × predatorReactionMul(0.25) = 2/帧
+    sys.update(1);
+    expect(ctx.hostiles[0]!.hp).toBeCloseTo(100 - t.pawnDmg * t.predatorReactionMul, 5);
+    // 征召鼠（K_DRAFTED）：全伤 = pawnDmg = 8/帧
+    const st = ctx.pawnStates.get(eid)!;
+    st.extra = { ...(st.extra ?? {}), [K_DRAFTED]: true };
+    sys.update(1);
+    expect(ctx.hostiles[0]!.hp).toBeCloseTo(100 - t.pawnDmg * t.predatorReactionMul - t.pawnDmg, 5);
   });
 });

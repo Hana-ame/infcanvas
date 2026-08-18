@@ -92,6 +92,37 @@ describe('科技碎片制（2026-08-14：碎片攒齐组成科技，也是抽卡
     expect(sim2.techFragments['shelter:cave']).toBe(1);
   });
 
+  // ---- 2026-08-16 审查修复回归：解锁时间随档（渐进权重读档不丢）----
+  it('techUnlockedAt 随档往返：读档恢复精确解锁时刻，权重继续爬升', () => {
+    const sim = new Sim({ seed: 57, pawnCount: 1 });
+    sim.unlockTech('transport:raft'); // 时刻 0 解锁
+    sim.time = 100; // 推进 100s（解锁后渐重爬升）
+    const data = JSON.parse(JSON.stringify(sim.save())) as ReturnType<Sim['save']>;
+    expect(data.techUnlockedAt).toEqual({ 'transport:raft': 0 }); // 解锁时刻随档
+    const sim2 = new Sim({ seed: 58, pawnCount: 1 });
+    sim2.load(data);
+    expect(sim2.techUnlockedAt['transport:raft']).toBe(0);
+    const ramp = sim2.mods.tuning.tech.weightRamp;
+    // 权重按解锁时刻恢复爬升（此前不随档 → 读档恒 0，科技建筑自动建造权重永不爬升）
+    expect(sim2.techBuildWeight('transport:raft')).toBe(Math.min(1, 100 / ramp));
+    expect(sim2.techBuildWeight('transport:raft')).toBeGreaterThan(0);
+  });
+
+  it('旧档（无 techUnlockedAt）兼容：已解锁科技按读档时刻起算（权重重爬，不永久冻结）', () => {
+    const sim = new Sim({ seed: 59, pawnCount: 1 });
+    sim.unlockTech('water:well');
+    sim.time = 50;
+    const data = JSON.parse(JSON.stringify(sim.save())) as ReturnType<Sim['save']>;
+    delete data.techUnlockedAt; // 模拟 2026-08-16 修复前的存档
+    const sim2 = new Sim({ seed: 60, pawnCount: 1 });
+    sim2.load(data);
+    // 读档时刻（data.time=50）起算 → 权重从 0 开始爬（不恒 0）
+    expect(sim2.techUnlockedAt['water:well']).toBe(50);
+    expect(sim2.techBuildWeight('water:well')).toBe(0);
+    sim2.time = 50 + sim2.mods.tuning.tech.weightRamp; // 爬满
+    expect(sim2.techBuildWeight('water:well')).toBe(1);
+  });
+
   it('抽卡池发碎片：攒满才解锁、不给已解锁科技（7 科技 × 3 碎片全解锁）', () => {
     const sim = new Sim({ seed: 56, pawnCount: 1 });
     sim.mods.overrideTuning({ tech: { poolInterval: 1, poolChance: 1 } }); // 每 1s 必抽

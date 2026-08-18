@@ -37,9 +37,11 @@ export class HistoryLog {
       time: Math.round(now),
       day: Math.floor(day),
       type: ev.type,
-      // 日常状态流判 minor：吃饭/休息/心情变化属生理节律,高频低信息,不给 recent 概览占位
-      ...(MINOR_TYPES.has(ev.type) ? { level: 'minor' as const } : {}),
     };
+    // 日常状态流判 minor：吃饭/休息/心情变化属生理节律,高频低信息,不给 recent 概览占位
+    //（2026-08-16 热路径优化：原用 spread 条件展开 level 字段 = 每次记录多一个临时对象，
+    // record 是采样最大单点（6%+）；直接赋值无分配差异、语义相同）
+    if (MINOR_TYPES.has(ev.type)) base.level = 'minor';
     switch (ev.type) {
       case 'pawn_spawned':
       case 'pawn_died':
@@ -90,7 +92,13 @@ export class HistoryLog {
         break;
     }
     this.entries.push(base);
-    if (this.entries.length > this.cap) this.entries.splice(0, this.entries.length - this.cap);
+    // 容量裁剪（2026-08-16 热路径优化：原每次超限即 splice 头部 = 事件持续流入时
+    // 每 tick 整表复制（5000 条引用），profiler 采样 record 为单点最大热点；
+    // 改批量裁剪：超限一次裁到 cap 的 3/4 留缓冲，裁剪频率降约 4 倍——cap 语义 =
+    // 软上限（entries 在 3/4cap ~ cap 间振荡），query/recent/toJSON 只读不受影响）
+    if (this.entries.length > this.cap) {
+      this.entries.splice(0, this.entries.length - Math.floor(this.cap * 0.75));
+    }
   }
 
   // 查询：按类型 / 实体过滤，从新到旧

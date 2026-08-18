@@ -68,10 +68,59 @@ describe('thermo 玩法包（温度场）', () => {
     const { ctx, sys } = coldDay(23, -8);
     const eid = ctx.spawnPawn(5, 5);
     const h = place(ctx, 'heater');
+    // 审计中①（2026-08-16）暖炉开始烧木后：预置燃料保证本用例测的是"有燃料的暖炉"
+    ctx.addProductionNear(h.x, h.y, 'wood', 5);
     // 半径 6 内（d=5 → boost = 8×(1-5/6) ≈ 1.33）
     const inRange = evalAt(ctx, sys, eid, h.x + 5, h.y)!;
     const outRange = evalAt(ctx, sys, eid, h.x + 20, h.y)!;
     expect(outRange).toBeLessThan(inRange);
+  });
+
+  it('暖炉烧木（审计中① 承诺落地）：每 10s 烧 1 木 + 记账；无木断电后暖炉不出热', () => {
+    const ctx = makeMinCtx(25);
+    ctx.env = { raining: false, temperature: -8 };
+    const sys = new ThermoSystem(ctx);
+    sys.init();
+    const eid = ctx.spawnPawn(5, 5);
+    const h = place(ctx, 'heater');
+    ctx.addProductionNear(h.x, h.y, 'wood', 1); // 只有 1 木：第一轮烧掉，之后断供
+    const near = { x: h.x + 3, y: h.y }; // 暖炉半径 6 内（d=3, boost = 8×(1-3/6) = 4）
+
+    // 第一轮燃料结算（首次 update 即结算：fuelTimer 初值 0）：烧 1 木 + 记账
+    ctx.setPosition(eid, near);
+    ctx._moodAdj.clear();
+    sys.update(2);
+    expect(ctx.stockpile.wood).toBe(0);
+    expect(ctx._spend).toContainEqual({ eid: null, item: 'wood', amount: 1 });
+    const moodFuelled = ctx._moodAdj.get(eid)!; // 有燃料供暖：eff = -8+4 → 轻流失
+
+    // 推满 10s → 第二次燃料结算：无木 → 暖炉断电（offline）→ 同位置同 pawn 完全无加热
+    for (let i = 0; i < 4; i++) { ctx._moodAdj.clear(); sys.update(2); }
+    expect(ctx._spend.filter((s) => s.item === 'wood')).toHaveLength(1); // 只烧过 1 木
+    ctx._moodAdj.clear();
+    sys.update(2); // 第 5 个 2s = 结算点（10s），断电生效
+    const moodOut = ctx._moodAdj.get(eid)!;
+
+    // 拉远同一 pawn 到野外（无任何热源）：断电后的暖炉旁 == 野外（完全无加热）
+    ctx.setPosition(eid, { x: h.x + 30, y: h.y });
+    ctx._moodAdj.clear();
+    sys.update(2);
+    const moodWild = ctx._moodAdj.get(eid)!;
+    expect(moodOut).toBe(moodWild);        // 断电 = 热源不存在
+    expect(moodFuelled).toBeGreaterThan(moodOut); // 有燃料时流失显著更轻（回温真实）
+
+    // 篝火/教堂是免费基础暖源：wood=0 也照常供热（内核免费取暖语义不动——烧木只对暖炉）
+    const eid2 = ctx.spawnPawn(5, 6);
+    const fire = place(ctx, 'campfire');
+    ctx.setPosition(eid2, { x: fire.x, y: fire.y });
+    ctx._moodAdj.clear();
+    sys.update(2);
+    const atFire = ctx._moodAdj.get(eid2)!;
+    ctx.setPosition(eid2, { x: fire.x + 30, y: fire.y });
+    ctx._moodAdj.clear();
+    sys.update(2);
+    const wildAgain = ctx._moodAdj.get(eid2)!;
+    expect(atFire).toBeGreaterThan(wildAgain); // 无木也供热：火堆中心流失显著轻于野外
   });
 
   it('夜晚温度保持：夜里火堆覆盖区温度不沉（维持 nightWarmFloor），野外照常冻', () => {

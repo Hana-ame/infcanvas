@@ -1,11 +1,10 @@
 // 行为系统：消费卡的意图(intent) → 执行（走位/工作/进食/祈祷）
 // 意图执行器可注册：mod 加新意图 = 注册一个执行器
+//（2026-08-16 大文件拆分：执行器实现迁至 systems/executors.ts 纯函数实现表——
+// 本类只留决策循环/移动/到达回执，装配走"声明表 × 实现表"双表数据驱动）
 import type { GameSystem } from './registry';
 import type { SimContext } from './context';
-import type { PositionData } from '../sim';
-import { TECHS } from '../defs/techs';
 import type { EventBus } from '../core/events';
-import { World } from '../core/world';
 import type { PawnState } from '../sim';
 import type { BehaviorCard, CardContext, CardView, BehaviorIntent } from '../ai/pawn';
 import { drawCards, pickBest, BASE_CARDS } from '../ai/pawn';
@@ -14,12 +13,32 @@ import { BUILTIN_INTENTS, BUILTIN_WORKS } from '../defs/executors';
 import { fulfill } from '../core/desires';
 // RW-1 征召（M2）：K_DRAFTED 门在 update 里让征召小人跳过自决（跨包键走常量）
 import { K_DRAFTED } from '../mods/contracts';
+// 执行器实现表 + 迁出后仍需借用的内部 helper（findHelpTarget/consumeFood 原为类
+// 方法，现由 decide 的 helpTargetOf 与紧急处理直接调用）
+import {
+  intentImplOf,
+  workImplOf,
+  findHelpTarget,
+  consumeFood,
+  type ExecutorDeps,
+  type IntentExecutor,
+  type WorkExecutor,
+} from './executors';
 
-// 意图执行器：mod 可注册新意图
-export type IntentExecutor = (ctx: SimContext, eid: number, st: PawnState, intent: BehaviorIntent) => void;
+// 类型 re-export：意图/工作执行器类型的权威定义在 executors.ts（实现表同源）；
+// sim.ts/registry.ts 等既有 import 路径（'../systems/cardSystem'）保持不变
+export type { IntentExecutor, WorkExecutor } from './executors';
 
-// 工作执行器：mod 可注册新工作类型（walkAndWork 按 workType 分派到执行器）
-export type WorkExecutor = (ctx: SimContext, eid: number, st: PawnState, intent: BehaviorIntent) => void;
+// 拥挤统计格表（2026-08-16 热路径优化，配合 walk）：pawnPositions 按取整格聚合人数。
+// 字符串键 `${x},${y}`（x/y 取整整数化，字符串拼接免 Map 数组/双层 Map 的分配开销）
+const buildCrowdGrid = (c: SimContext): Map<string, number> => {
+  const g = new Map<string, number>();
+  for (const [, p] of c.pawnPositions) {
+    const k = `${Math.round(p.x)},${Math.round(p.y)}`;
+    g.set(k, (g.get(k) ?? 0) + 1);
+  }
+  return g;
+};
 
 export class BehaviorSystem implements GameSystem {
   id = 'behavior';
@@ -27,14 +46,20 @@ export class BehaviorSystem implements GameSystem {
   private workExecutors = new Map<string, WorkExecutor>();
 
   constructor(private ctx: SimContext) {
-    // 数据驱动：内置意图/工作执行器从表（defs/executors.ts）装配，handler 指向类方法
+    // 数据驱动装配（2026-08-16 拆分后）：声明表 defs/executors.ts 的 handler 键 ×
+    // 实现表 executors.ts（INTENT_IMPL/WORK_IMPL 纯函数）——不再反射类方法名
+    //（迁出前 handler = 类方法名字符串）。deps.workExecutors 传引用：mod 运行期
+    // registerWork 注册的新工作要在执行时查到（不能装配时快照）
+    const deps: ExecutorDeps = { workExecutors: this.workExecutors };
     for (const d of BUILTIN_INTENTS) {
-      const fn = (this as unknown as Record<string, unknown>)[d.handler] as IntentExecutor;
-      this.intentExecutors.set(d.id, fn.bind(this));
+      const fn = intentImplOf(d.handler, deps);
+      if (!fn) throw new Error(`内置意图 ${d.id} 缺实现：${d.handler}`);
+      this.intentExecutors.set(d.id, fn);
     }
     for (const d of BUILTIN_WORKS) {
-      const fn = (this as unknown as Record<string, unknown>)[d.handler] as WorkExecutor;
-      this.workExecutors.set(d.type, fn.bind(this));
+      const fn = workImplOf(d.handler);
+      if (!fn) throw new Error(`内置工作 ${d.type} 缺实现：${d.handler}`);
+      this.workExecutors.set(d.type, (c, eid, st, intent) => fn(c, eid, st));
     }
   }
 
@@ -52,7 +77,58 @@ export class BehaviorSystem implements GameSystem {
 
   init(_bus: EventBus): void {}
 
+  // 热路径优化（2026-08-16 第三轮）：CardView 每 tick 只构造一次——所有函数以 eid 为参数
+  // 或独立于 pawn，故可复用；per-pawn 字段（lastSeries/assignedJob）在循环内刷新。
+  private makeView(): CardView {
+    return {
+      needsOf: (e) => this.ctx.readNeeds(e),
+      healthOf: (e) => this.ctx.readHealth(e),
+      isNight: () => this.ctx.isNight(),
+      hasCampfire: () => this.ctx.world.hasBuildingWithTag('warmth'),
+      hasCave: () => this.ctx.world.hasBuildingWithTag('mine'),
+      hasRaft: () => this.ctx.world.hasBuildingWithTag('raft'),
+      hasBuildingWithTag: (tag: string) => this.ctx.world.hasBuildingWithTag(tag),
+      desiresOf: (e) => this.ctx.pawnStates.get(e)?.desires ?? null,
+      env: this.ctx.env,
+      lastSeries: undefined as string | undefined,
+      factionPriority: this.ctx.factionPriority,
+      oracleGoal: this.ctx.oracleGoal,
+      techs: this.ctx.techs,
+      assignedJob: undefined as string | undefined,
+      leanOf: (e, k) => this.ctx.leanOf(e, k),
+      expectEarnOf: (e, workType) => this.ctx.pawnStates.get(e)?.expectEarnBy?.[workType] ?? 0,
+      buildQueueCount: this.ctx.buildQueue.length,
+      stockpile: this.ctx.stockpile,
+      tuning: this.ctx.tuning,
+      markovBias: this.ctx.mods.markovBias,
+      jobCards: this.ctx.mods.jobCards,
+      desireOfSeries: (series) => this.ctx.mods.seriesDesire[series] ?? null,
+      helpTargetOf: (eid) => findHelpTarget(this.ctx, eid),
+      hostilesNearby: (eid) => {
+        const pos = this.ctx.pawnPositions.get(eid);
+        if (!pos) return false;
+        return this.ctx.hostiles.some((h) => {
+          if (h.enemyId !== 'cat') return false;
+          return (h.x - pos.x) ** 2 + (h.y - pos.y) ** 2 <= 40 * 40;
+        });
+      },
+      campfireDist: (eid) => {
+        const pos = this.ctx.pawnPositions.get(eid);
+        if (!pos) return -1;
+        const near = this.ctx.world.nearestBuildingWithTag(Math.round(pos.x), Math.round(pos.y), 64, 'warmth');
+        return near === null ? -1 : near.dist;
+      },
+    };
+  }
+
   update(dt: number): void {
+    // 拥挤统计格表（2026-08-16 热路径优化）：walk 的拥挤惩罚/占位检查原为每小人每帧
+    // 全表遍历 pawnPositions（40 人 = 每帧 ~1600 次距离检查，profiler 定位为行为系统
+    // 占 step 耗时 50% 的主因之一）。每帧先按取整格聚合一次（O(n) 哈希），walk 内
+    // 查 3×3 邻域/目标格即得 O(1)——语义近似注释见 walk。
+    const crowdGrid = buildCrowdGrid(this.ctx);
+    // 热路径优化（2026-08-16 第三轮）：CardView 只需每 tick 构造一次，复用。
+    const view = this.makeView();
     for (const eid of this.ctx.pawnList) {
       const st = this.ctx.pawnStates.get(eid);
       if (!st) continue;
@@ -68,7 +144,11 @@ export class BehaviorSystem implements GameSystem {
       //（但精神崩溃的危险依然存在，解除征召后立即恢复）。
       if (st.extra?.[K_DRAFTED] === true) {
         st.job = '待命';
-        if (st.path && st.pathIndex < st.path.length) this.walk(eid, st, pos, dt); // 玩家命令的路径照走
+        // 玩家命令冷却继续衰减（修复 2026-08-16 审查：此处 continue 跳过了下方唯一衰减点
+        // → 玩家 move 命令设的 commandCooldown 在征召期间永不归零 → DraftSystem 追击永冻。
+        // 征召只挡"自主决策"，不挡冷却流逝；3s 窗口走完即恢复征召追击。）
+        if ((st.commandCooldown ?? 0) > 0) st.commandCooldown = (st.commandCooldown ?? 0) - dt;
+        if (st.path && st.pathIndex < st.path.length) this.walk(eid, st, pos, dt, crowdGrid); // 玩家命令的路径照走
         continue;
       }
 
@@ -77,7 +157,7 @@ export class BehaviorSystem implements GameSystem {
       const n = this.ctx.readNeeds(eid);
       if (n && n.san < this.ctx.tuning.san.crazyAt) {
         st.job = '理智崩溃';
-        if (st.path && st.pathIndex < st.path.length) this.walk(eid, st, pos, dt);
+        if (st.path && st.pathIndex < st.path.length) this.walk(eid, st, pos, dt, crowdGrid);
         continue;
       }
 
@@ -99,7 +179,7 @@ export class BehaviorSystem implements GameSystem {
 
       // 走路
       if (st.path && st.pathIndex < st.path.length) {
-        this.walk(eid, st, pos, dt);
+        this.walk(eid, st, pos, dt, crowdGrid);
         continue;
       }
 
@@ -110,7 +190,10 @@ export class BehaviorSystem implements GameSystem {
       }
 
       // 空闲：抽3选1 → 执行意图
-      const intent = this.decide(eid, st);
+      // 每 pawn 刷新 view 的 per-pawn 字段（CardView 复用，减分配）
+      view.lastSeries = st.lastSeries;
+      view.assignedJob = st.assignedJob;
+      const intent = this.decide(eid, st, view);
       if (intent) {
         st.job = intent.label;
         const exec = this.intentExecutors.get(intent.action);
@@ -121,86 +204,8 @@ export class BehaviorSystem implements GameSystem {
     }
   }
 
-  // 互助目标探测（2026-08-14 互助卡）：相邻距离内的邻人，满足"弱势（缺食/受伤/低落）"且
-  // 我对 TA 好感 ≥ helpFriendAt（亲密才帮）。返回最优目标 eid 或 null。
-  private findHelpTarget(eid: number): number | null {
-    const s = this.ctx.tuning.social;
-    const me = this.ctx.pawnPositions.get(eid);
-    if (!me) return null;
-    const myRel = this.ctx.pawnStates.get(eid)?.relationships;
-    let best: number | null = null;
-    let bestNeed = 0;
-    for (const other of this.ctx.pawnList) {
-      if (other === eid) continue;
-      const pos = this.ctx.pawnPositions.get(other);
-      if (!pos) continue;
-      if (Math.hypot(pos.x - me.x, pos.y - me.y) > s.meetDist) continue; // 必须相邻
-      // 好感门槛：亲密才帮（帮助不是义务，是情分）
-      const rel = myRel?.get(other) ?? 0;
-      if (rel < s.helpFriendAt) continue;
-      const stO = this.ctx.pawnStates.get(other);
-      const need = this.ctx.readNeeds(other);
-      const hp = this.ctx.readHealth(other);
-      let score = 0;
-      if (need && need.food < s.helpFoodNeedAt) score += 40 - need.food; // 缺食（送食）
-      if (hp && hp.hp < s.helpHpNeedAt) score += 60 - hp.hp;             // 受伤（疗伤）
-      if (need && need.mood < s.helpMoodNeedAt) score += 30 - need.mood; // 低落（陪伴）
-      if (score > bestNeed) { bestNeed = score; best = other; }
-    }
-    return best;
-  }
-
   // 抽卡决策 → 返回意图（并记录决策日志）
-  private decide(eid: number, st: PawnState): BehaviorIntent | null {
-    const view: CardView = {
-      needsOf: (e) => this.ctx.readNeeds(e),
-      healthOf: (e) => this.ctx.readHealth(e),
-      isNight: () => this.ctx.isNight(),
-      hasCampfire: () => this.ctx.world.hasBuildingWithTag('warmth'),
-      hasCave: () => this.ctx.world.hasBuildingWithTag('mine'),
-      hasRaft: () => this.ctx.world.hasBuildingWithTag('raft'),
-      hasBuildingWithTag: (tag: string) => this.ctx.world.hasBuildingWithTag(tag),
-      desiresOf: (e) => this.ctx.pawnStates.get(e)?.desires ?? null,
-      env: this.ctx.env,
-      lastSeries: st.lastSeries,
-      factionPriority: this.ctx.factionPriority,
-      // 神谕目标注入 view（策略卡 = 神谕目标，DESIGN §3 三层分离）：
-      // 目标工作系列权重 ×oracleGoalMul 偏向该工作，不插小人卡槽、不碰选择链
-      oracleGoal: this.ctx.oracleGoal,
-      techs: this.ctx.techs,
-      assignedJob: st.assignedJob,
-      leanOf: (e, k) => this.ctx.leanOf(e, k),
-      expectEarnOf: (e, workType) => this.ctx.pawnStates.get(e)?.expectEarnBy?.[workType] ?? 0,
-      buildQueueCount: this.ctx.buildQueue.length,
-      stockpile: this.ctx.stockpile,
-      tuning: this.ctx.tuning,
-      markovBias: this.ctx.mods.markovBias,
-      jobCards: this.ctx.mods.jobCards,
-      desireOfSeries: (series) => this.ctx.mods.seriesDesire[series] ?? null,
-      // 互助探测：找近处"缺食/受伤/低落"且我对 TA 好感 ≥ 门槛的邻人
-      helpTargetOf: (eid) => this.findHelpTarget(eid),
-      // 附近有可狩猎的猫（采集狩猎 mod 狩猎卡谓词）：索敌半径 ~40 格内存在 cat 敌人
-      //（采集狩猎猫游荡在营地 15-40 环带；25 时营地附近伐木的人几乎永远触发不了）
-      hostilesNearby: (eid) => {
-        const pos = this.ctx.pawnPositions.get(eid);
-        if (!pos) return false;
-        return this.ctx.hostiles.some((h) => {
-          if (h.enemyId !== 'cat') return false;
-          return (h.x - pos.x) ** 2 + (h.y - pos.y) ** 2 <= 40 * 40;
-        });
-      },
-      // 距最近 warmth 建筑（篝火）距离；-1 = 全图无火（"夜归篝火"类谓词用）
-      campfireDist: (eid) => {
-        const pos = this.ctx.pawnPositions.get(eid);
-        if (!pos) return -1;
-        const w = this.ctx.world;
-        const near = w.queryBuildingsNear(Math.round(pos.x), Math.round(pos.y), 64);
-        let best = Infinity;
-        for (const b of near) if (b.def.tags?.includes('warmth')) best = Math.min(best, b.dist);
-        if (best === Infinity) return -1;
-        return best;
-      },
-    };
+  private decide(eid: number, st: PawnState, view: CardView): BehaviorIntent | null {
     const ctx: CardContext = { view, eid };
     const pawnLike = { dna: st.dna, slots: st.slots };
     // Q10：指派职业时确保对应工作卡在池中（否则可能因卡池缺失而闲逛）
@@ -257,297 +262,6 @@ export class BehaviorSystem implements GameSystem {
     return chosen.decide(ctx);
   }
 
-  // ---- 意图执行 ----
-  private execIdle(_c: SimContext, _eid: number, st: PawnState, _intent: BehaviorIntent): void {
-    st.job = '闲逛';
-  }
-
-  // 探索（用户设计：科技建筑只有娱乐卡能"想到"建）：娱乐时灵光一现 → 规划蓝图入队
-  // 蓝图落点：营地（首个 campfire）旁环扫可建格；目标建筑从卡 id 解析（explore:well → well）
-  // 互助执行（2026-08-14 用户设计：小人对小人好感高 → 帮忙 = 满足对方食物/娱乐需求）。
-  // 对象 = findHelpTarget 判定的"值得帮的弱势邻人"（缺食/受伤/低落 + 我好感高）。
-  // 送食从自己口袋转给对方（私有食物）；疗伤直接回血；陪伴加心情。受助方好感提升（互惠）。
-  private execHelp(c: SimContext, eid: number, st: PawnState, _intent: BehaviorIntent): void {
-    const target = this.findHelpTarget(eid);
-    if (target === null) { st.job = '闲逛'; return; }
-    const s = c.tuning.social;
-    const stT = c.pawnStates.get(target);
-    if (!stT) return;
-    const need = c.readNeeds(target);
-    const hp = c.readHealth(target);
-    // 送食（对方缺食且我有私粮）
-    if (need && need.food < s.helpFoodNeedAt && (st.inventory?.food ?? 0) >= s.helpFoodAmount) {
-      st.inventory = { ...st.inventory, food: (st.inventory?.food ?? 0) - s.helpFoodAmount };
-      stT.inventory = { ...stT.inventory, food: (stT.inventory?.food ?? 0) + s.helpFoodAmount };
-      c.recordSpend(eid, 'food', s.helpFoodAmount);
-      need.food = Math.min(100, need.food + 15); // 收到食物 → 饱腹
-      c.setNeeds(target, need);
-      this.logHelp(c, eid, target, `🤝 #${eid} 把食物分给了饥饿的 #${target}`);
-    } else if (hp && hp.hp < s.helpHpNeedAt) {
-      // 疗伤（对方受伤）
-      hp.hp = Math.min(hp.maxHp, hp.hp + s.helpHealPerSec);
-      c.setHealth(target, hp);
-      this.logHelp(c, eid, target, `🩹 #${eid} 为受伤的 #${target} 包扎伤口`);
-    } else if (need && need.mood < s.helpMoodNeedAt) {
-      // 陪伴（对方低落）
-      need.mood = Math.min(100, need.mood + s.helpMoodGain);
-      c.setNeeds(target, need);
-      this.logHelp(c, eid, target, `💗 #${eid} 陪伴情绪低落的 #${target} 说说话`);
-    }
-    // 互惠：受助方对施助方好感提升
-    const relT = stT.relationships ?? new Map<number, number>();
-    relT.set(eid, Math.max(s.relFloor, Math.min(s.relCap, (relT.get(eid) ?? 0) + s.helpGiveRel)));
-    stT.relationships = relT;
-    st.job = '互助';
-  }
-
-  // 互助日志 + 好感（施助方对受助方也微增，巩固友谊）
-  private logHelp(c: SimContext, eid: number, target: number, text: string): void {
-    c.logEvent(text);
-    const st = c.pawnStates.get(eid);
-    if (st) {
-      const rel = st.relationships ?? new Map<number, number>();
-      const s = c.tuning.social;
-      rel.set(target, Math.max(s.relFloor, Math.min(s.relCap, (rel.get(target) ?? 0) + 1)));
-      st.relationships = rel;
-    }
-  }
-
-  private execExplore(c: SimContext, eid: number, st: PawnState, intent: BehaviorIntent): void {
-    st.job = intent.label;
-    const buildingId = intent.label.split(':')[1] ?? '';
-    const def = c.buildingDef(buildingId);
-    if (!def) { st.job = '闲逛'; return; }
-    // 已有该建筑（被别人建了）→ 不再探索
-    if (c.world.hasBuildingWithTag(buildingId)) { st.job = '闲逛'; return; }
-    // 蓝图已在队列（重复探索）→ 跳过（防蓝图堆积：垦田令同款去重）
-    if (c.buildQueue.some((b) => b.defId === buildingId)) { st.job = '闲逛'; return; }
-    // 营地位置（首个 campfire）
-    let camp: { x: number; y: number } | null = null;
-    for (const [k, b] of c.world.buildings) {
-      if (b.def.id === 'campfire') { camp = World.keyToXY(k); break; }
-    }
-    if (!camp) { st.job = '闲逛'; return; }
-    // 环扫找落点（2→5 回退；靠营地内圈，减少外围被猫拆）
-    for (let r = 3; r <= 6; r++) {
-      for (let dy = -r; dy <= r; dy++) {
-        for (let dx = -r; dx <= r; dx++) {
-          if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
-          const x = camp.x + dx;
-          const y = camp.y + dy;
-          if (c.world.canBuildFootprint(x, y, def)) {
-            c.issueCommand({ type: 'build', x, y, buildingId });
-            c.logEvent(`🎈 #${eid} 玩耍时灵光一现：在这里建${def.name}！`);
-            return;
-          }
-        }
-      }
-    }
-    st.job = '闲逛';
-  }
-
-  private execWalkAndWork(c: SimContext, eid: number, st: PawnState, intent: BehaviorIntent): void {
-    const exec = intent.workType ? this.workExecutors.get(intent.workType) : undefined;
-    if (exec) exec(c, eid, st, intent);
-    else st.job = '闲逛';
-  }
-
-  private workChop(c: SimContext, eid: number, st: PawnState): void {
-    const pos = c.readPosition(eid);
-    if (!pos) return;
-    // 数据驱动目标查找：可收获（growable）且带 harvest 定义的 tile（mod 新采集物自动可采）
-    const want = (x: number, y: number): boolean => {
-      const t = c.world.getTileDef(x, y);
-      return !!t.growable && !!t.harvest;
-    };
-    // 近距快扫 miss → 远距回扫（营地周边资源采空后仍能远行采伐，防停产）
-    const tree = this.findNearFar(c, eid, st, pos, want);
-    if (tree) { st.chopTarget = tree; c.moveAdjacent(eid, tree.x, tree.y); }
-    else st.job = '闲逛';
-  }
-
-  private workMine(c: SimContext, eid: number, st: PawnState): void {
-    const pos = c.readPosition(eid);
-    if (!pos) return;
-    // 数据驱动目标查找：mineral 且带 harvest 定义的 tile
-    const ore = this.findNearFar(c, eid, st, pos, (x, y) => {
-      const t = c.world.getTileDef(x, y);
-      return !!t.mineral && !!t.harvest;
-    });
-    if (ore) { st.mineTarget = ore; c.moveAdjacent(eid, ore.x, ore.y); }
-    else st.job = '闲逛';
-  }
-
-  private workCaveMine(c: SimContext, eid: number, st: PawnState): void {
-    const pos = c.readPosition(eid);
-    if (!pos) return;
-    const cave = this.findNearFar(c, eid, st, pos, (x, y) => c.world.getBuilding(x, y)?.def.tags?.includes('mine') ?? false);
-    if (cave) { st.caveTarget = cave; c.moveAdjacent(eid, cave.x, cave.y); }
-    else st.job = '闲逛';
-  }
-
-  // 捕鱼：找竹筏（站上筏 → 钓水格；产出走筏的 recipe 'fishing'）
-  private workFish(c: SimContext, eid: number, st: PawnState): void {
-    const pos = c.readPosition(eid);
-    if (!pos) return;
-    const raft = this.findNearFar(c, eid, st, pos, (x, y) => c.world.getBuilding(x, y)?.def.tags?.includes('raft') ?? false);
-    if (raft) { st.caveTarget = raft; c.moveAdjacent(eid, raft.x, raft.y); }
-    else st.job = '闲逛';
-  }
-
-  // 近距快扫 miss → 远距回扫（营地周边资源采空后仍能远行工作，防长期停产）
-  // miss 后 5s 冷却内完全跳过扫描：空闲小人（找不到目标）每 tick 都做
-  // 15 半径环扫（706 格）是长局行为系统 10 倍退化的主因（profiler 火焰图定位）
-  private findNearFar(c: SimContext, eid: number, st: PawnState, pos: PositionData, cond: (x: number, y: number) => boolean): { x: number; y: number } | null {
-    if ((st.farScanCd ?? 0) > 0) return null;
-    const near = c.findNearest(pos, cond, true);
-    if (near) return near;
-    const far = c.findNearest(pos, cond, true, c.tuning.pawn.farScanRadius);
-    if (!far) st.farScanCd = 5;
-    return far;
-  }
-
-  // 科技建筑渐进权重（用户设计）：解锁初期只有娱乐探索卡能建（权重 0），
-  // 随解锁时长 techBuildWeight 0→1 爬升——普通建造卡在无队列时按权重概率规划蓝图
-  private techBuildChance(c: SimContext, eid: number, st: PawnState): void {
-    const pos = c.readPosition(eid);
-    if (!pos) return;
-    const t = c.tuning.tech;
-    // 建造兴趣门控（v2026-08-13 兴趣驱动娱乐：建造是娱乐活动之一，只有有 build 兴趣的人才会
-    // 「按经验规划」科技建筑；无兴趣者即使科技解锁、权重爬满也不主动建——与探索卡同源设计）
-    if (!c.pawnStates.get(eid)?.dna.interests.includes('build')) { st.job = '闲逛'; return; }
-    // 已解锁的科技建筑（按解锁顺序，取"营地还没有的"）
-    const candidates: { techId: string; defId: string }[] = [];
-    for (const techId of Object.keys(c.techs)) {
-      const w = c.techBuildWeight(techId);
-      if (w <= 0) continue;
-      for (const defId of TECHS[techId]?.unlocks ?? []) {
-        if (c.world.hasBuildingWithTag(defId)) continue;
-        if (c.buildQueue.some((b) => b.defId === defId)) continue;
-        candidates.push({ techId, defId });
-      }
-    }
-    if (candidates.length === 0) { st.job = '闲逛'; return; }
-    // 按权重概率：权重 1 → 每候选 10% 概率规划（渐进接管）；权重低 → 更少
-    for (const cand of candidates) {
-      const w = c.techBuildWeight(cand.techId);
-      if (c.rng.next() < w * 0.1) {
-        const def = c.buildingDef(cand.defId);
-        if (!def) continue;
-        // 营地旁环扫落点（复用探索落点逻辑）
-        let camp: { x: number; y: number } | null = null;
-        for (const [k, b] of c.world.buildings) {
-          if (b.def.id === 'campfire') { camp = World.keyToXY(k); break; }
-        }
-        if (!camp) continue;
-        for (let r = 2; r <= 5; r++) {
-          for (let dy = -r; dy <= r; dy++) {
-            for (let dx = -r; dx <= r; dx++) {
-              if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
-              const x = camp.x + dx;
-              const y = camp.y + dy;
-              if (c.world.canBuildFootprint(x, y, def)) {
-                c.issueCommand({ type: 'build', x, y, buildingId: cand.defId });
-                c.logEvent(`🏗 #${eid} 按经验规划建造${def.name}（科技权重已就位）`);
-                return;
-              }
-            }
-          }
-        }
-      }
-    }
-    st.job = '闲逛';
-  }
-
-  private workBuild(c: SimContext, eid: number, st: PawnState): void {
-    if (c.buildQueue.length === 0) {
-      // 无队列 → 科技建筑渐进权重接管（解锁初期概率低，权重满后稳定自动建）
-      this.techBuildChance(c, eid, st);
-      return;
-    }
-    if (c.buildQueue.length > 0) {
-      // 找最近的蓝图（而不是永远第一个）
-      const pos = c.readPosition(eid);
-      let best: (typeof c.buildQueue)[number] | null = null;
-      let bestD = Infinity;
-      if (pos) {
-        for (const b of c.buildQueue) {
-          const d = (b.x - pos.x) ** 2 + (b.y - pos.y) ** 2;
-          if (d < bestD) { bestD = d; best = b; }
-        }
-      }
-      const b = best ?? c.buildQueue[0];
-      const def = c.buildingDef(b.defId);
-      st.job = `建造:${def?.name ?? b.defId}`;
-      c.moveTo(eid, b.x, b.y);
-    } else st.job = '闲逛';
-  }
-
-  private execEat(c: SimContext, eid: number, st: PawnState, _intent: BehaviorIntent): void {
-    const n = c.readNeeds(eid);
-    if (!n) return;
-    // 私有食物（2026-08-14）：优先吃自己口袋的；没有 → 公共粮仓兜底
-    if (this.consumeFood(c, eid, st, c.tuning.card.eatCost)) {
-      n.food = Math.min(100, n.food + c.tuning.card.eatAmount);
-      c.setNeeds(eid, n);
-      if (st.desires) fulfill(st.desires, 'gluttony', c.tuning.desire.fulfillGluttony);
-      c.recordOutcome(eid, 'eat', c.tuning.card.eatAmount);
-      c.bus.emit({ type: 'eat', eid });
-    }
-  }
-
-  // 消耗食物（私有优先，公共兜底）：返回是否吃上。个人 inventory 有 → 扣个人；
-  // 没有 → 全局粮仓有 → 扣全局（公共资源）。两个都没有 → 吃不上（饿着/求助）
-  private consumeFood(c: SimContext, eid: number, st: PawnState, cost: number): boolean {
-    const inv = st.inventory;
-    if ((inv?.food ?? 0) >= cost) {
-      st.inventory = { ...inv, food: (inv?.food ?? 0) - cost };
-      c.recordSpend(eid, 'food', cost); // 经济账本：支出
-      return true;
-    }
-    if (c.stockpile.food > 0) {
-      c.stockpile.food -= cost;
-      c.recordSpend(eid, 'food', cost); // 经济账本：支出（公共粮仓）
-      return true;
-    }
-    return false;
-  }
-
-  private execRest(c: SimContext, eid: number, st: PawnState, _intent: BehaviorIntent): void {
-    const n = c.readNeeds(eid);
-    if (n) {
-      n.rest = Math.min(100, n.rest + c.tuning.card.restAmount);
-      c.setNeeds(eid, n);
-      if (st.desires) fulfill(st.desires, 'sloth', c.tuning.desire.fulfillSloth);
-      c.recordOutcome(eid, 'rest', c.tuning.card.restAmount);
-      c.bus.emit({ type: 'rest', eid });
-    }
-  }
-
-  // 疗伤：去篝火旁休息回血
-  private execHeal(c: SimContext, eid: number, st: PawnState, _intent: BehaviorIntent): void {
-    const pos = c.readPosition(eid);
-    if (!pos) return;
-    const fire = c.findNearest(pos, (x, y) => c.world.getBuilding(x, y)?.def.tags?.includes('heal') ?? false, true);
-    if (fire) {
-      st.healTarget = fire;
-      c.moveAdjacent(eid, fire.x, fire.y);
-    } else {
-      // 无篝火则原地休养
-      st.healing = { progress: 0 };
-    }
-  }
-
-  private execPray(c: SimContext, eid: number, st: PawnState, _intent: BehaviorIntent): void {
-    const pos = c.readPosition(eid);
-    if (!pos) return;
-    const fire = c.findNearest(pos, (x, y) => c.world.getBuilding(x, y)?.def.tags?.includes('pray') ?? false, true);
-    if (fire) {
-      st.prayTarget = fire;
-      c.moveAdjacent(eid, fire.x, fire.y);
-    } else st.job = '闲逛';
-  }
-
   // 紧急需求处理（st.urgent 由 NeedsSystem 按阈值设定）：直接进食/休息，不抽卡、不打断
   private handleUrgent(eid: number, st: PawnState, dt: number): void {
     void dt;
@@ -555,7 +269,7 @@ export class BehaviorSystem implements GameSystem {
     if (!n) return;
     if (st.urgent === 'eat' && n.food >= this.ctx.tuning.needs.urgentEatAt) { st.urgent = undefined; return; }
     if (st.urgent === 'rest' && n.rest >= this.ctx.tuning.needs.urgentRestAt) { st.urgent = undefined; return; }
-    if (st.urgent === 'eat' && this.consumeFood(this.ctx, eid, st, this.ctx.tuning.card.eatCost)) {
+    if (st.urgent === 'eat' && consumeFood(this.ctx, eid, st, this.ctx.tuning.card.eatCost)) {
       n.food = Math.min(100, n.food + this.ctx.tuning.card.eatAmountUrgent);
       this.ctx.setNeeds(eid, n);
       if (st.desires) fulfill(st.desires, 'gluttony', this.ctx.tuning.desire.fulfillGluttony);
@@ -577,7 +291,13 @@ export class BehaviorSystem implements GameSystem {
   // 拥挤惩罚（2026-08-16 用户反馈"鼠鼠挤同一路径"）：±1 格内其他鼠越多移速越慢（floor 钳制），
   // 目标格被占时停在格前 crowdStopGap 排队不叠格——多鼠同目标自然减速成队列（涌现式避让，
   // 零新增状态，只读 pawnPositions 快照）
-  private walk(eid: number, st: PawnState, pos: { x: number; y: number }, dt: number): void {
+  //（2026-08-16 热路径优化：原拥挤统计与占位检查=每走一步全表遍历 pawnPositions
+  //（40 人 → 每帧 1600 次距离检查，profiler 定位行为系统占 step 50% 的主因之一）；
+  // 改由 update 每帧先按格聚合一次（buildCrowdGrid），此处查 3×3 邻域/目标格即 O(1)）
+  private walk(eid: number, st: PawnState, pos: { x: number; y: number }, dt: number, crowdGrid: Map<string, number>): void {
+    // 本帧起始格（walk 末尾会增量更新 crowdGrid——占位检查维持帧内顺序可见性：
+    // 先到者被后到者看到（与原逐人检查语义一致）；只改同格计数，O(1)）
+    const fromKey = `${Math.round(pos.x)},${Math.round(pos.y)}`;
     const target = st.path![st.pathIndex!];
     const dx = target.x - pos.x;
     const dy = target.y - pos.y;
@@ -586,14 +306,19 @@ export class BehaviorSystem implements GameSystem {
     const nd = this.ctx.readNeeds(eid);
     const pw = this.ctx.tuning.pawn;
     const moodFactor = nd ? pw.moodSpeedBase + (nd.mood / 100) * pw.moodSpeedScale : 1;
-    // 拥挤：统计 ±1 格外人（Chebyshev ≤1），每只 ×(1-penalty)，下限 crowdingFloor
+    // 拥挤：统计 ±1 格外人（切比雪夫 ≤1 的离散格近似——连续坐标取整归格，两人距离 ≤1
+    // 必落同格或邻格，仅临界值（0.5 格内）有 ±1 误差；惩罚本身是连续渐变、无跳变，可接受）
     let crowd = 1;
     {
       let d = 0;
-      for (const [oe, op] of this.ctx.pawnPositions) {
-        if (oe === eid) continue;
-        if (Math.abs(op.x - pos.x) <= 1 && Math.abs(op.y - pos.y) <= 1) d++;
+      const rx = Math.round(pos.x);
+      const ry = Math.round(pos.y);
+      for (let ox = rx - 1; ox <= rx + 1; ox++) {
+        for (let oy = ry - 1; oy <= ry + 1; oy++) {
+          d += crowdGrid.get(`${ox},${oy}`) ?? 0;
+        }
       }
+      d -= 1; // 自己（必在表中）
       if (d > 0) crowd = Math.max(pw.crowdingFloor, 1 - pw.crowdingPenalty * d);
     }
     const move = (sp?.v ?? pw.baseSpeed) * moodFactor * crowd * dt;
@@ -602,11 +327,11 @@ export class BehaviorSystem implements GameSystem {
       //（共同采集/挖掘不阻塞——排死会卡住生产，clothing 测试 30s 采不到 flax 即是此坑）；
       // 纯移动目标（玩家 move 命令等无工作回执）则停在 gap 排队,等占位者离开再补位
       const hasWork = !!(st.chopTarget ?? st.mineTarget ?? st.caveTarget ?? st.healTarget ?? st.prayTarget ?? st.onArriveWork);
-      let occupied = false;
-      for (const [oe, op] of this.ctx.pawnPositions) {
-        if (oe === eid) continue;
-        if (Math.hypot(op.x - target.x, op.y - target.y) < 0.5) { occupied = true; break; }
-      }
+      // 占位检查（同格聚合近似）：目标格聚集人数 - 自己（若同格）= 占用他人数；
+      // 原逐人 hypot<0.5 判定 → 格聚合半径 1 格，含 0.5 边界外的临界误报（排队语义不敏感）
+      const tk = `${Math.round(target.x)},${Math.round(target.y)}`;
+      const selfOnTarget = Math.round(pos.x) === Math.round(target.x) && Math.round(pos.y) === Math.round(target.y);
+      const occupied = (crowdGrid.get(tk) ?? 0) - (selfOnTarget ? 1 : 0) > 0;
       if (occupied && !hasWork && dist > pw.crowdStopGap) {
         pos.x += (dx / dist) * pw.crowdStopGap;
         pos.y += (dy / dist) * pw.crowdStopGap;
@@ -627,6 +352,13 @@ export class BehaviorSystem implements GameSystem {
     }
     this.ctx.setPosition(eid, pos);
     this.ctx.pawnPositions.set(eid, { x: pos.x, y: pos.y });
+    // 增量更新格表（从 fromKey 移到新格；同格不动零开销）——见 walk 头注释
+    const toKey = `${Math.round(pos.x)},${Math.round(pos.y)}`;
+    if (toKey !== fromKey) {
+      const from = (crowdGrid.get(fromKey) ?? 0) - 1;
+      if (from <= 0) crowdGrid.delete(fromKey); else crowdGrid.set(fromKey, from);
+      crowdGrid.set(toKey, (crowdGrid.get(toKey) ?? 0) + 1);
+    }
   }
 
   // 到达终点回执：按等待中的目标类型转入对应工作态（采集/祈祷/疗伤/mod 工作）

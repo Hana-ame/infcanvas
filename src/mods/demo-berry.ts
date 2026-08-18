@@ -14,8 +14,10 @@ import type { ModPack } from './pack';
 
 export const demoBerryPack: ModPack = {
   id: 'demo-berry',
-  // 依赖（2026-08-15 显式化）：gathering——浆果丛接入采集管线（可通行灌木 growable+harvest）
-  requires: ['gathering'],
+  // 依赖（2026-08-16 审计中②）：gathering——浆果丛接入采集管线（可通行灌木 growable+harvest）；
+  // farming——浆果摊 passive 配方由 farm 系统（systems/farmSystem.ts）结算，缺装时
+  // "静默不产出"（此前 requires 只写 gathering——没种田包就没有被动产粮结算者）
+  requires: ['gathering', 'farming'],
   name: '浆果玩法示例',
   apply(m: ModRegistry): void {
     m.registerItem({ id: 'berry', name: '浆果' });
@@ -66,7 +68,9 @@ export const demoBerryPack: ModPack = {
     // 5. 逻辑组件层：系统装配表插入（浆果保质：每 60s 库存减半，before autobuild）
     m.registerSystemDef({
       id: 'berrySpoil', label: '浆果变质', category: 'production', before: 'autobuild',
-      ctor: (sim) => {
+      // 系统闭包只用 SimContext（2026-08-16 审计中④：此前直用 sim——绕过 ctx 面无法最小
+      // ctx 单测；stockpile/logEvent 均在 SimContext 接口内）
+      ctor: (ctx) => {
         let acc = 0;
         return {
           id: 'berrySpoil',
@@ -74,10 +78,10 @@ export const demoBerryPack: ModPack = {
             acc += dt;
             if (acc >= 60) {
               acc = 0;
-              const b = sim.stockpile.berry ?? 0;
+              const b = ctx.stockpile.berry ?? 0;
               if (b > 0) {
-                sim.stockpile.berry = Math.max(0, Math.floor(b / 2));
-                sim.logEvent('🫐 浆果变质了一批');
+                ctx.stockpile.berry = Math.max(0, Math.floor(b / 2));
+                ctx.logEvent('🫐 浆果变质了一批');
               }
             }
           },

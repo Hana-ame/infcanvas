@@ -5,7 +5,8 @@ import type { SimContext } from './context';
 import type { EventBus } from '../core/events';
 import { World } from '../core/world';
 import type { EnemyDef } from '../defs/enemies';
-import { K_ATTACK } from '../mods/contracts'; // RW-1 征召指定攻击（drafting 包契约键）
+import { K_ATTACK, K_DRAFTED } from '../mods/contracts'; // RW-1 征召指定攻击（drafting 包契约键）+ 征召判定（战斗平衡 2026-08-16）
+import { pushHostile } from './hostiles'; // 敌人生成共享入口（审计 L6）
 
 export class RaidSystem implements GameSystem {
   id = 'raid';
@@ -70,12 +71,7 @@ export class RaidSystem implements GameSystem {
       else if (edge === 1) { x = this.ctx.rng.int(0, w.width - 1); y = w.height - 1; }
       else if (edge === 2) { x = 0; y = this.ctx.rng.int(0, w.height - 1); }
       else { x = w.width - 1; y = this.ctx.rng.int(0, w.height - 1); }
-      this.ctx.hostiles.push({
-        x, y, hp: enemy.hp * pressure, maxHp: enemy.hp * pressure,
-        targetX: cx, targetY: cy,
-        name: enemy.name, enemyId: enemy.id, faction: enemy.faction,
-        speed: enemy.speed, dmgPerSec: enemy.dmg, loot: enemy.loot,
-      });
+      pushHostile(this.ctx, enemy, x, y, { targetX: cx, targetY: cy, hpMul: pressure });
     }
     return count;
   }
@@ -87,11 +83,16 @@ export class RaidSystem implements GameSystem {
     const cy = Math.floor(this.ctx.world.height / 2);
     // ---- 移动阶段 ----
     for (const h of this.ctx.hostiles) {
+      // 玩家阵营守卫（beast-taming 驯服猫）不参与敌对移动/袭击——由驯兽系统驱动跟随/扑咬
+      if (h.faction === 'player') continue;
       const pred = this.predatorOf(h);
       let tx = h.targetX, ty = h.targetY;
       let spd = h.speed ?? t.catSpeed;
       if (pred?.predator) {
-        if (h.carried) {
+        if (h.taming) {
+          // 驯化中臣服趴伏：不追鼠、不逃、原地不动（驯兽 DLC）
+          tx = h.x; ty = h.y; spd = 0;
+        } else if (h.carried) {
           // 叼走鼠 → 直冲逃跑方向（捕获时定下的单位向量 × 足够远），速度 ×carrySpeedMul
           tx = h.x + h.carried.dirX * 100000;
           ty = h.y + h.carried.dirY * 100000;
@@ -113,8 +114,14 @@ export class RaidSystem implements GameSystem {
     // ---- 接敌 / 捕获 / 得手结算（从后往前 splice 安全）----
     for (let i = this.ctx.hostiles.length - 1; i >= 0; i--) {
       const h = this.ctx.hostiles[i];
+      if (h.faction === 'player') continue; // 守卫不结算敌对行为（驯兽系统驱动）
       const pred = this.predatorOf(h);
       if (pred?.predator) {
+        if (h.taming) {
+          // 驯化中臣服假死：不捕猎、不叼人、不被近身反击（玩家营地自动武器不打臣服者；
+          // 想反悔 → release/等驯化完成，设计意图见 beast-taming 包头部注释）
+          continue;
+        }
         if (h.carried) {
           // 得手判定：跑离营地中心 ≥ captureFleeDist → 消失（叼走的鼠 = 损失,不回场）
           if (Math.hypot(h.x - cx, h.y - cy) >= t.captureFleeDist) {
@@ -131,14 +138,19 @@ export class RaidSystem implements GameSystem {
           }
           continue;
         }
-        // 近身反击：捕猎期有鼠在 meleeRange 可砍猫（玩家以鼠墙迎击捕食者——猫强但非无敌）；
+        // 近身反击：捕猎期有鼠在 meleeRange 可砍猫（自动近身反击防御，非玩家操作）；
+        // 2026-08-16 战斗平衡：自动近身反击对捕食者伤害 ×predatorReactionMul(0.25)——
+        // 征召鼠（K_DRAFTED，玩家命令优先接战）全伤。动机：90hp 捕食者此前被自动反击
+        // 几秒消灭，战场指挥（征召/冲锋）与驯化（重伤窗口）没有存在意义；0.25 让自动
+        // 防御只拖不杀，玩家须征召/指挥才能高效击杀或把猫压到重伤驯化。
         // 反击结算在捕获判定前：猫被砍死 → 掉落 + 不叼人（含"砍死猎人"的合理反制，2026-08-16）
         const defender = this.nearestPawnInRange(h, t.meleeRange);
         if (defender !== null) {
-          h.hp -= t.pawnDmg * dt;
+          const drafted = this.ctx.pawnStates.get(defender)?.extra?.[K_DRAFTED] === true;
+          h.hp -= t.pawnDmg * (drafted ? 1 : t.predatorReactionMul) * dt;
           if (h.hp <= 0) {
             this.killHostile(defender, i, h.loot ?? { item: t.catLootItem, amount: t.catLootAmount });
-            this.ctx.logEvent('⚔ 野猫（哈基米）被鼠墙砍死！');
+            this.ctx.logEvent('⚔ 野猫（哈基米）被近身反击砍死！');
             continue;
           }
         }

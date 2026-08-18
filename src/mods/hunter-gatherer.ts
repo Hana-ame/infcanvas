@@ -4,7 +4,7 @@
 // 现改为 ModPack（id + requires + apply）——可进依赖图/远程加载，加载 = registry.mount()。
 // 依赖：gathering（狩猎玩法也要采集食物；gather 系统已随完全插件化迁出内核为玩法包）。
 // 机制：
-//   1. disableSystem 卸载默认系统（装配过滤，见 sim.registerSystems）
+//   1. disableSystem 卸载默认系统（装配过滤，见 ctx.registerSystems）
 //   2. 猫掉肉：overrideDef 野猫 loot → food（击杀私有化进个人口袋，见 raidSystem）
 //   3. 野外常驻猎物：mod 系统（huntWildSpawn）周期性在营地外刷少量游荡野猫（不是袭击波）
 //   4. 狩猎卡 + hunt 工作：小人主动找猫 → 走过去 → 插件系统推进攻击 → 猫死掉肉
@@ -12,6 +12,7 @@
 import type { ModRegistry, HookContext } from '../sim/mods/registry';
 import type { SimContext } from '../sim/systems/context';
 import { World } from '../sim/core/world';
+import { pushHostile } from '../sim/systems/hostiles';
 import type { ModPack } from './pack';
 
 export const hunterGathererPack: ModPack = {
@@ -34,7 +35,7 @@ export const hunterGathererPack: ModPack = {
   // 3) 野外常驻猎物：每 ~40s 在营地外环带刷 1-3 只游荡野猫（非袭击波，纯猎物）
   m.registerSystemDef({
     id: 'huntWildSpawn', label: '野外猎物', category: 'raid', before: 'raid',
-    ctor: (sim) => {
+    ctor: (ctx) => {
       let acc = 0;
       return {
         id: 'huntWildSpawn',
@@ -44,52 +45,47 @@ export const hunterGathererPack: ModPack = {
           if (acc < 40) return;
           acc = 0;
           // 猫数量上限（防堆积）：场内已有 ≥6 只野猫不再刷
-          const cats = sim.hostiles.filter((h) => h.enemyId === 'cat').length;
+          const cats = ctx.hostiles.filter((h) => h.enemyId === 'cat').length;
           if (cats >= 6) return;
           // 营地外环带随机位置（远于 15 格，避免出生点被围攻；收缩自 20-60——
           // raid 卸载后猫静止于刷点，20-60 格时大部分在 huntNearby(25) 外不可猎）
-          const cx = Math.floor(sim.world.width / 2);
-          const cy = Math.floor(sim.world.height / 2);
-          const r = 15 + Math.floor(sim.rng.next() * 25);
-          const a = sim.rng.next() * Math.PI * 2;
+          const cx = Math.floor(ctx.world.width / 2);
+          const cy = Math.floor(ctx.world.height / 2);
+          const r = 15 + Math.floor(ctx.rng.next() * 25);
+          const a = ctx.rng.next() * Math.PI * 2;
           const x = Math.round(cx + Math.cos(a) * r);
           const y = Math.round(cy + Math.sin(a) * r);
           // 发现背景：刷点不查地形 → 猫刷在水/山上，小人 A* 绕水每 pathCd 重寻路
           // 且永远打不到（water 不可走）→ behavior 系统 11ms/帧，200s 局 wall 60s。
-          if (!sim.world.inBounds(x, y) || !sim.world.isPassable(x, y)) return;
-          const count = 1 + Math.floor(sim.rng.next() * 3);
-          const enemy = sim.mods.enemyDef('cat');
+          if (!ctx.world.inBounds(x, y) || !ctx.world.isPassable(x, y)) return;
+          const count = 1 + Math.floor(ctx.rng.next() * 3);
+          const enemy = ctx.mods.enemyDef('cat');
           for (let i = 0; i < count; i++) {
             // 发现背景：此前 target 指向地图中心 → 猎物猫直奔营地拆篝火，
             // 与 campRebuild 重建形成拉锯战，聚居永远不稳定（1000s 内篝火 8 次被拆）。
             // 修复 v2：target 改为营地周边 15-25 格环带内游荡点——既不直奔营地拆家，
             // 又保持在狩猎卡 huntNearby 半径(25)可及范围（纯环带外猫永远不可猎，
             // 1800s 局猎杀 0 次，狩猎玩法形同虚设；20-30 格时仍有部分猫在 25 格外）。
-            const targetR = 15 + Math.floor(sim.rng.next() * 10);
-            const ta = sim.rng.next() * Math.PI * 2;
+            const targetR = 15 + Math.floor(ctx.rng.next() * 10);
+            const ta = ctx.rng.next() * Math.PI * 2;
             // 游荡点也须可走（同上：猫停在水上 = 永远猎不到 + 小人绕水空跑）；
             // 不可走时退化为沿 x 平移找可走点，仍不可走则丢弃该只（防刷出废猫）
-            let tx = Math.max(1, Math.min(sim.world.width - 2, Math.round(cx + Math.cos(ta) * targetR)));
-            let ty = Math.max(1, Math.min(sim.world.height - 2, Math.round(cy + Math.sin(ta) * targetR)));
-            if (!sim.world.isPassable(tx, ty)) {
-              const dir = sim.rng.next() < 0.5 ? 1 : -1;
+            let tx = Math.max(1, Math.min(ctx.world.width - 2, Math.round(cx + Math.cos(ta) * targetR)));
+            let ty = Math.max(1, Math.min(ctx.world.height - 2, Math.round(cy + Math.sin(ta) * targetR)));
+            if (!ctx.world.isPassable(tx, ty)) {
+              const dir = ctx.rng.next() < 0.5 ? 1 : -1;
               let placed = false;
               for (let s = 1; s <= 6 && !placed; s++) {
-                const nx = Math.max(1, Math.min(sim.world.width - 2, tx + dir * s));
-                if (sim.world.isPassable(nx, ty)) { tx = nx; placed = true; }
+                const nx = Math.max(1, Math.min(ctx.world.width - 2, tx + dir * s));
+                if (ctx.world.isPassable(nx, ty)) { tx = nx; placed = true; }
                 if (!placed) {
-                  const ny = Math.max(1, Math.min(sim.world.height - 2, ty + dir * s));
-                  if (sim.world.isPassable(tx, ny)) { ty = ny; placed = true; }
+                  const ny = Math.max(1, Math.min(ctx.world.height - 2, ty + dir * s));
+                  if (ctx.world.isPassable(tx, ny)) { ty = ny; placed = true; }
                 }
               }
               if (!placed) continue;
             }
-            sim.hostiles.push({
-              x, y, hp: enemy.hp, maxHp: enemy.hp,
-              targetX: tx, targetY: ty,
-              name: enemy.name, enemyId: enemy.id, faction: enemy.faction,
-              speed: enemy.speed, dmgPerSec: enemy.dmg, loot: enemy.loot,
-            });
+            pushHostile(ctx, enemy, x, y, { targetX: tx, targetY: ty }); // 审计 L6：与 raid/wildmouse 共享生成入口
           }
         },
       };
@@ -138,13 +134,13 @@ export const hunterGathererPack: ModPack = {
   // 狩猎攻击推进系统：小人 huntTarget 到近旁后每帧对目标猫造成伤害（杀猫掉肉）
   m.registerSystemDef({
     id: 'huntCombat', label: '狩猎攻击', category: 'raid', before: 'raid',
-    ctor: (sim) => ({
+    ctor: (ctx) => ({
       id: 'huntCombat',
       init: () => {},
       update(dt: number) {
-        for (const eid of sim.pawnList) {
-          const st = sim.pawnStates.get(eid);
-          const pos = sim.pawnPositions.get(eid);
+        for (const eid of ctx.pawnList) {
+          const st = ctx.pawnStates.get(eid);
+          const pos = ctx.pawnPositions.get(eid);
           if (!st || !pos) continue;
           // 狩猎扫描冷却递减（执行器只置位，这里负责衰减）
           if (st.huntScanCd) st.huntScanCd = Math.max(0, st.huntScanCd - dt);
@@ -168,32 +164,35 @@ export const hunterGathererPack: ModPack = {
           st.huntElapsed = 0;
           // 找该位置的猫（hostiles 按坐标匹配最近一只）
           let hit: number = -1;
-          for (let i = 0; i < sim.hostiles.length; i++) {
-            const h = sim.hostiles[i];
+          for (let i = 0; i < ctx.hostiles.length; i++) {
+            const h = ctx.hostiles[i];
             if (Math.hypot(h.x - t.x, h.y - t.y) < 2.5) { hit = i; break; }
           }
           if (hit < 0) { st.huntTarget = undefined; st.job = '闲逛'; continue; }
-          const h = sim.hostiles[hit];
+          const h = ctx.hostiles[hit];
           // 猎杀伤害：基础 + fight 技能加成（COC：fight 越高越快猎杀）
           const skill = st.skills?.fight ?? 10;
           h.hp -= (6 + skill * 0.15) * dt;
           // 技能成长节流（发现背景：每帧 growSkill → EWA 学习表更新开销大，
           // profile 实测 huntCombat 禁掉后 200s 局 88s→22.5s）
           if (!st.huntSkillCd || (st.huntSkillCd -= dt) <= 0) {
-            sim.growSkill(eid, 'fight');
+            ctx.growSkill(eid, 'fight');
             st.huntSkillCd = 1;
           }
           if (h.hp <= 0) {
-            sim.hostiles.splice(hit, 1);
+            ctx.hostiles.splice(hit, 1);
             const loot = h.loot ?? { item: 'food', amount: 4 };
             if (loot.item === 'food') {
               st.inventory = { food: (st.inventory?.food ?? 0) + loot.amount }; // 猎物进个人口袋
             } else {
-              sim.stockpile[loot.item] = (sim.stockpile[loot.item] ?? 0) + loot.amount;
+              ctx.stockpile[loot.item] = (ctx.stockpile[loot.item] ?? 0) + loot.amount;
             }
-            sim.bus.emit({ type: 'resource_gained', eid, item: loot.item, amount: loot.amount });
-            sim.recordOutcome(eid, 'fight', loot.amount);
-            sim.logEvent(`🏹 #${eid} 猎杀了一只${h.name ?? '野猫'}，获得${loot.item === 'food' ? '肉' : loot.item}×${loot.amount}`);
+            // 记账（审计中③）：掉肉也是"赚"——此前绕过 economy 账本，派系工作优先级
+            // 评估漏掉狩猎收益（loot 全量记到猎人头上——吃进个人口袋/入库都是营地资产）
+            ctx.recordEarn(loot.item === 'food' ? eid : null, loot.item, loot.amount, 'hunt');
+            ctx.bus.emit({ type: 'resource_gained', eid, item: loot.item, amount: loot.amount });
+            ctx.recordOutcome(eid, 'fight', loot.amount);
+            ctx.logEvent(`🏹 #${eid} 猎杀了一只${h.name ?? '野猫'}，获得${loot.item === 'food' ? '肉' : loot.item}×${loot.amount}`);
             st.huntTarget = undefined;
             st.job = '闲逛';
           }
@@ -283,10 +282,10 @@ export const hunterGathererPack: ModPack = {
   //    连续几夜 san 清零 → 全员理智崩溃 → 乱跑死循环（600s 局 5/6 崩溃）。
   m.registerSystemDef({
     id: 'campRebuild', label: '营火自治', category: 'world', before: 'events',
-    ctor: (sim) => {
+    ctor: (ctx) => {
       let acc = 0;
       const campfireAt = (b: { x: number; y: number }) =>
-        sim.world.placeBuilding(b.x, b.y, 'campfire', 'auto');
+        ctx.world.placeBuilding(b.x, b.y, 'campfire', 'auto');
       return {
         id: 'campRebuild',
         init: () => {},
@@ -294,35 +293,37 @@ export const hunterGathererPack: ModPack = {
           acc += dt;
           if (acc < 60) return;
           acc = 0;
-          const cx = Math.floor(sim.world.width / 2);
-          const cy = Math.floor(sim.world.height / 2);
+          const cx = Math.floor(ctx.world.width / 2);
+          const cy = Math.floor(ctx.world.height / 2);
           const camps: { x: number; y: number }[] = [];
-          for (const [k, b] of sim.world.buildings) {
+          for (const [k, b] of ctx.world.buildings) {
             if (b.def.id === 'campfire') camps.push(World.keyToXY(k));
           }
           // 出生点营火被拆且全图无火 → 重建（防鼠鼠散落成游牧）
-          if (camps.length === 0 && (sim.stockpile.wood ?? 0) >= 10) {
+          if (camps.length === 0 && (ctx.stockpile.wood ?? 0) >= 10) {
             if (campfireAt({ x: cx, y: cy + 2 })) {
-              sim.socialUnits.onCampfireBuilt(sim.world.buildKey(cx, cy + 2));
-              sim.stockpile.wood = Math.max(0, (sim.stockpile.wood ?? 0) - 10);
-              sim.logEvent('🔥 鼠鼠们在原营地重建了篝火');
+              ctx.socialUnits.onCampfireBuilt(ctx.world.buildKey(cx, cy + 2));
+              ctx.stockpile.wood = Math.max(0, (ctx.stockpile.wood ?? 0) - 10);
+              ctx.recordSpend(null, 'wood', 10); // 记账（审计中③）：重建也是支出，此前漏记
+              ctx.logEvent('🔥 鼠鼠们在原营地重建了篝火');
             }
             return;
           }
           // 人口增长 → 营地环带补篝火（每 4 人 1 火）
-          const need = Math.ceil(sim.pawnList.length / 4);
-          if (camps.length >= need || (sim.stockpile.wood ?? 0) < 10) return;
+          const need = Math.ceil(ctx.pawnList.length / 4);
+          if (camps.length >= need || (ctx.stockpile.wood ?? 0) < 10) return;
           const ref = camps[0];
           for (let a = 0; a < 12; a++) {
-            const r = 4 + Math.floor(sim.rng.next() * 6);
-            const ang = sim.rng.next() * Math.PI * 2;
+            const r = 4 + Math.floor(ctx.rng.next() * 6);
+            const ang = ctx.rng.next() * Math.PI * 2;
             const nx = Math.round(ref.x + Math.cos(ang) * r);
             const ny = Math.round(ref.y + Math.sin(ang) * r);
-            if (!sim.world.inBounds(nx, ny)) continue;
+            if (!ctx.world.inBounds(nx, ny)) continue;
             if (campfireAt({ x: nx, y: ny })) {
-              sim.socialUnits.onCampfireBuilt(sim.world.buildKey(nx, ny));
-              sim.stockpile.wood = Math.max(0, (sim.stockpile.wood ?? 0) - 10);
-              sim.logEvent(`🔥 鼠鼠们添了一堆篝火（人口 ${sim.pawnList.length}，${camps.length + 1}/${need} 堆）`);
+              ctx.socialUnits.onCampfireBuilt(ctx.world.buildKey(nx, ny));
+              ctx.stockpile.wood = Math.max(0, (ctx.stockpile.wood ?? 0) - 10);
+              ctx.recordSpend(null, 'wood', 10); // 记账（审计中③）：添篝火也是支出
+              ctx.logEvent(`🔥 鼠鼠们添了一堆篝火（人口 ${ctx.pawnList.length}，${camps.length + 1}/${need} 堆）`);
               break;
             }
           }

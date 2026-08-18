@@ -4,7 +4,7 @@
 import type { World } from '../core/world';
 import type { SimRng } from '../core/rng';
 import type { EventBus } from '../core/events';
-import type { PawnState } from '../sim';
+import type { PawnState, Command } from '../sim';
 import type { SkillId } from '../ai/pawn';
 import type { World as BitecsWorld } from 'bitecs';
 import type { TuningConfig } from '../defs/tuning';
@@ -24,6 +24,13 @@ export interface Hostile {
   // 捕食者携带态（2026-08-16）：叼走的鼠 eid + 逃跑方向（捕获时定的单位向量）；
   // 携带中不索敌/不拆家,直冲方向跑离营地
   carried?: { eid: number; dirX: number; dirY: number };
+  // 驯兽守卫 DLC（2026-08-16 beast-taming 包）：驯化中 = 臣服趴伏（不攻击不捕猎，
+  // raid 战斗跳过；tamer = 驯养人 eid，死亡后驯化中止）。tamed 用 faction==='player'
+  // 标识（营地守卫，随局不随档——hostiles 是运行时状态，存档天然不含，产品语义：
+  // 读档后守卫野生化；同 carried 的先例）
+  taming?: { progress: number; tamer: number };
+  // 守卫驯养人 eid（beast-taming：taming 转正时从 tamer 迁入；主人逝去 → 守卫就地游荡）
+  owner?: number;
 }
 
 export interface BuildItem {
@@ -95,8 +102,10 @@ export interface SimContext {
   setNeeds(eid: number, n: { food: number; rest: number; mood: number; san: number }): void;
   setHealth(eid: number, h: { hp: number; maxHp: number }): void;
   setPosition(eid: number, p: { x: number; y: number }): void;
-  // 命令/移动
-  moveTo(eid: number, x: number, y: number): void;
+  // 命令/移动。markCommand=false = 系统行为移动（征召追击/理智乱跑）不标记"玩家命令"——
+  // 否则 moveTo 会把 commandCooldown 重置为 3s，系统自身的持续追击被自己锁死（2026-08-16
+  // 审查发现：DraftSystem 追击 moveTo → cooldown 永 3 → 征召门挡住衰减 → 追击永冻只发生一次）。
+  moveTo(eid: number, x: number, y: number, opts?: { markCommand?: boolean }): void;
   // 返回是否发起了寻路（false = 超距/节流/无路——调用方可决定放弃目标或等待节流）
   moveAdjacent(eid: number, tx: number, ty: number): boolean;
   findNearest(pos: { x: number; y: number }, cond: (x: number, y: number) => boolean, allowNonPassable?: boolean, radius?: number): { x: number; y: number } | null;
@@ -109,7 +118,10 @@ export interface SimContext {
   rollEvent(eid: number, dc: number): { success: boolean; roll: number };
   rollEventSkill(eid: number, dc: number, skill: SkillId): { success: boolean; roll: number };
   adjustMood(eid: number, delta: number): void;
-  issueCommand(cmd: { type: 'build'; x: number; y: number; buildingId?: string }): void;
+  /** 命令路由（2026-08-16 审查修复：此前接口是窄 'build' 联合——系统侧发新命令
+   *（wear/draft/attack/strategy…）被迫 cast；命令协议已开放（sim.Command 枚举含
+   * (string & {}) + args 通用位），接口与实现同宽，协议即契约 */
+  issueCommand(cmd: Command): void;
   // 2026-08-15 纯引擎：命令 = 引擎协议，Sim 路由到注册的命令处理器（mods.commandHandlers）
   // 引擎内建 'move'（实体移动），其余（build/mine/oracle/assign…）由玩法包注册
   // 经济账本（用户设计：收益/支出自动调节工作概率；个人预期 + 全局资源流）

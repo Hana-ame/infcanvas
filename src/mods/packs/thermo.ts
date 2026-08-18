@@ -22,6 +22,9 @@ import type { ModPack } from '../pack';
 // 正向加成常驻——热源覆盖区心情回暖（烤火舒服，社交暖源），这让温度包有存在感但不作恶
 const CFG = {
   evalInterval: 2,    // 评估周期（秒）
+  fuelInterval: 10,   // 暖炉燃料结算周期（秒）——头注承诺"每 10s 烧 1 木维持热度"落地
+  fuelPerEval: 1,     // 每结算周期消耗木数（无木可烧 → 暖炉断电不出热，热度靠燃料维持）
+  fuelItem: 'wood',   // 燃料物品 id（全局仓库 wood，数据驱动可改）
   comfortLo: 2,       // 舒适带下限（低于此才冷）
   comfortHi: 30,      // 舒适带上限（高于此才热）
   moodPerDegree: 0.01, // 每偏离舒适带 1°C 每评估周期的心情流失（温差超带才累计）
@@ -55,7 +58,8 @@ export const thermoPack: ModPack = {
   m.registerSystemDef({
     id: 'thermo', label: '温度场', category: 'production',
     ctor: (sim) => new ThermoSystem(sim),
-    before: 'raid',
+    // 表内系统不设 before：执行序 = 类别序 × 组内注册序推导（SYSTEM_DEFS 表位置定序；
+    // before 锚点仅第三方表外系统专用——2026-08-16 审计 L7 清理死锚点）
   });
   },
 };
@@ -65,7 +69,9 @@ export const thermoPack: ModPack = {
 export class ThermoSystem {
   id = 'thermo';
   private timer = 0;
+  private fuelTimer = 0;
   private heaters = new Map<number, BuildingData>(); // 热源缓存（建筑变化时刷新）
+  private offline = new Set<number>(); // 断供暖炉 key 集（本结算周期无木可烧 → 不出热）
 
   constructor(private ctx: SimContext) {}
 
@@ -79,11 +85,33 @@ export class ThermoSystem {
   }
 
   update(dt: number): void {
+    // 燃料结算（2026-08-16 审计中①）：头注承诺"暖炉每 10s 烧 1 木维持热度"此前未实现
+    //（免费无限热源）——现在发热有代价：全局 wood ≥ 1 才续供（扣 1 + 记 economy 支出，
+    // 烧木也是消耗），无木 → 该暖炉进 offline 断电。结算必须在热源评估前完成，
+    // 断供当周期即失效。篝火/教堂是基础暖源不烧木（内核免费取暖语义不动）。
+    this.fuelTimer -= dt;
+    if (this.fuelTimer <= 0) {
+      this.fuelTimer = CFG.fuelInterval;
+      const off = new Set<number>();
+      for (const [key, b] of this.ctx.world.buildings) {
+        if (b.def.id !== 'heater') continue;
+        if ((this.ctx.stockpile[CFG.fuelItem] ?? 0) >= CFG.fuelPerEval) {
+          this.ctx.stockpile[CFG.fuelItem] -= CFG.fuelPerEval;
+          this.ctx.recordSpend(null, CFG.fuelItem, CFG.fuelPerEval);
+        } else off.add(key);
+      }
+      this.offline = off;
+    }
+
     this.timer -= dt;
     if (this.timer > 0) return;
     this.timer = CFG.evalInterval;
     this.refreshHeaters();
-    if (this.heaters.size === 0) return;
+
+    // 低项 L 顺带修复（2026-08-16）：原"无热源早退"跳过整个评估 → 无热源时
+    // 极端温差惩罚失效（模拟里火场外冻伤逻辑全靠这段）。早退改为只跳过热源叠加，
+    // 有效温度计算与极端温差惩罚对全体常跑（2s 一拍，成本可控）。
+    const haveHeat = this.heaters.size > 0
 
     const envT = this.ctx.env.temperature;
     for (const eid of this.ctx.pawnList) {
@@ -91,7 +119,9 @@ export class ThermoSystem {
       if (!pos) continue;
       // 热源叠加（距离衰减）
       let boost = 0;
-      for (const [key, b] of this.heaters) {
+      if (haveHeat) for (const [key, b] of this.heaters) {
+        // 断供暖炉本轮不出热（烧木供暖承诺的另一半：不烧 = 不暖）
+        if (b.def.id === 'heater' && this.offline.has(key)) continue;
         const h = heatOf(b)!;
         // 新 key 编码（2026-08-14 无限地图）：必须 World.keyToXY 解码——
         // 旧 `key % w` 公式解码 y 坐标乱到上亿，热源全部定位错误（review 暴露）

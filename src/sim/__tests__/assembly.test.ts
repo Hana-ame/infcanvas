@@ -31,18 +31,25 @@ import { Sim } from '../sim';
 import { ModRegistry } from '../mods/registry';
 import { SYSTEM_DEFS, KERNEL_SYSTEM_IDS } from '../defs/systems';
 import { DEFAULT_PLAYSTYLE_PACKS } from '../../mods/packs/playstyle';
+// 声明表 × 实现表全覆盖回归（2026-08-16 大文件拆分：执行器自 BehaviorSystem 类方法迁出
+// 为 executors.ts 纯函数实现表，装配改 handler 键查表——防"声明表加了、实现表没加"
+// 的装配期 throw 只在新测试路径暴露）
+import { BUILTIN_INTENTS, BUILTIN_WORKS } from '../defs/executors';
+import { INTENT_IMPL, WORK_IMPL } from '../systems/executors';
 
 // 内核（引擎）系统 id：2026-08-15 一致性重构 = 1 个（behavior 决策引擎 = 引擎服务归内核）
 const KERNEL_IDS = KERNEL_SYSTEM_IDS;
 // 玩法包系统 id 全集（默认清单 DEFAULT_PLAYSTYLE_PACKS 里各包注册的系统）：
 // 改装配面时此处须与 playstyle.ts 清单同步（防清单改动后断言失真）
-const PACK_IDS = ['needs', 'san', 'desire', 'economy', 'socialUnit', 'social', 'gather', 'build', 'farm', 'craft', 'repair', 'medicine', 'power', 'thermo', 'trade', 'prison', 'cook', 'clothing', 'raid', 'drafting', 'population', 'events', 'techPool', 'autobuild', 'bootstrap'];
+const PACK_IDS = ['needs', 'san', 'desire', 'economy', 'socialUnit', 'social', 'gather', 'build', 'farm', 'craft', 'repair', 'medicine', 'power', 'thermo', 'trade', 'prison', 'cook', 'clothing', 'beastTaming', 'raid', 'drafting', 'field-command', 'population', 'events', 'techPool', 'autobuild', 'bootstrap'];
 
 // 期望执行序（2026-08-15 起由类别序 × 组内注册序推导；本数组 = 推导结果快照 = 测试文档）：
 // needs(数值修正) → ai(behavior 决策引擎) → society(socialUnit/social) → production
 // (产出 12 系统，clothing 组内末位 = 清单末位) → raid → world(population/events/techPool/
 // autobuild——清单序调整后与旧 BASE_SYSTEM_ORDER 一致) → boot(bootstrap 恒表尾)
-const EXPECTED_ORDER = ['needs', 'san', 'desire', 'economy', 'behavior', 'socialUnit', 'social', 'gather', 'build', 'farm', 'craft', 'repair', 'medicine', 'power', 'thermo', 'trade', 'prison', 'cook', 'clothing', 'raid', 'drafting', 'population', 'events', 'techPool', 'autobuild', 'bootstrap'];
+// 2026-08-16 战场指挥 DLC（field-command 玩法包）：raid 组内注册序 = drafting 之后——
+// 每 tick 先征召追击结算（冲锋/集火拖动）再战术修正（固守/撤退/集结）。27→28 系统（beastTaming 驯兽守卫 2026-08-16 加入）。
+const EXPECTED_ORDER = ['needs', 'san', 'desire', 'economy', 'behavior', 'socialUnit', 'social', 'gather', 'build', 'farm', 'craft', 'repair', 'medicine', 'power', 'thermo', 'trade', 'prison', 'cook', 'clothing', 'beastTaming', 'raid', 'drafting', 'field-command', 'population', 'events', 'techPool', 'autobuild', 'bootstrap'];
 
 function systemOrder(seed = 3): string[] {
   return [...new Sim({ registry: ModRegistry.default(), pawnCount: 1, seed }).systemIds];
@@ -58,9 +65,9 @@ describe('插件化：正向组装（内核引擎 + 玩法包 = 最终模拟器�
     expect(KERNEL_IDS).not.toContain('bootstrap');
   });
 
-  it('默认装配 = 26 系统（RW-1 drafting 征召 2026-08-15 加入），且执行序 = 类别推导序（EXPECTED_ORDER 快照）', () => {
+  it('默认装配 = 28 系统（field-command + beastTaming 2026-08-16 加入），且执行序 = 类别推导序（EXPECTED_ORDER 快照）', () => {
     const order = systemOrder();
-    expect(order).toHaveLength(26);
+    expect(order).toHaveLength(28);
     // 产出位序：farm→craft→repair→medicine→power→thermo→trade→prison→cook→clothing 必须位于 raid 前
     const raidIdx = order.indexOf('raid');
     expect(order.indexOf('farm')).toBeLessThan(raidIdx);
@@ -120,5 +127,19 @@ describe('插件化：正向组装（内核引擎 + 玩法包 = 最终模拟器�
     // "卸载不破坏核心"契约：装配 + 步进不崩（纯引擎无需求/采集 = 无生存闭环，只断言能跑不崩
     // ——生存玩法由默认清单的玩法包提供）
     for (let i = 0; i < 30; i++) sim.step(1);
+  });
+
+  it('内置执行器声明表 × 实现表一一对应（2026-08-16 拆分回归：执行器自类方法迁出为纯函数表）', () => {
+    for (const d of BUILTIN_INTENTS) {
+      expect(INTENT_IMPL[d.handler], `意图 ${d.id} 的 handler ${d.handler} 缺实现`).toBeDefined();
+    }
+    for (const d of BUILTIN_WORKS) {
+      expect(WORK_IMPL[d.handler], `工作 ${d.type} 的 handler ${d.handler} 缺实现`).toBeDefined();
+    }
+    // 反向：实现表无孤儿键（键名 = 声明表 handler 全集，防实现表复制粘贴拼错键名）
+    const handlers = new Set([...BUILTIN_INTENTS.map((d) => d.handler), ...BUILTIN_WORKS.map((d) => d.handler)]);
+    for (const k of Object.keys({ ...INTENT_IMPL, ...WORK_IMPL })) {
+      expect(handlers.has(k), `实现表键 ${k} 不在声明表 handler 中`).toBe(true);
+    }
   });
 });

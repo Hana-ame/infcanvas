@@ -245,6 +245,28 @@ describe('COC 技能成长', () => {
     expect(grew).toBe(true);
   });
 
+  it('growSkill 数值可覆盖（审计 L5）：cap 生效封顶、增幅范围生效', () => {
+    // 覆盖 cap=50 / gainMin=gainMax=1（确定性增幅 1）→ 技能到 50 后不再涨
+    const sim = new Sim({ seed: 16, pawnCount: 1, mods: (m) => m.overrideTuning({ combat: { skillGrowth: { base: 10, cap: 50, gainMin: 1, gainMax: 1 } } }) });
+    const eid = sim.pawns[0];
+    const st = sim.pawnStates.get(eid)!;
+    st.skills = { ...st.skills, work: 49 };
+    // 大量尝试：成功时必 +1，但 cap=50 封顶；失败不涨 → 结果 ∈ {49, 50}
+    for (let i = 0; i < 300; i++) sim.growSkill(eid, 'work');
+    const v = sim.skillOf(eid, 'work');
+    expect(v).toBeLessThanOrEqual(50);
+    // base 可覆盖：清空技能记录（旧档无记录路径）→ 查询与成长起点都用覆盖后的 base
+    const sim2 = new Sim({ seed: 17, pawnCount: 1, mods: (m) => m.overrideTuning({ combat: { skillGrowth: { base: 42, cap: 50, gainMin: 1, gainMax: 1 } } }) });
+    const st2 = sim2.pawnStates.get(sim2.pawns[0])!;
+    st2.skills = {};
+    expect(sim2.skillOf(sim2.pawns[0], 'social')).toBe(42);
+    sim2.growSkill(sim2.pawns[0], 'social'); // 成功 → 42+1=43；失败 → 仍 42（gain 恒 1 已证明 cap 段）
+    expect(sim2.skillOf(sim2.pawns[0], 'social')).toBeGreaterThanOrEqual(42);
+    expect(sim2.skillOf(sim2.pawns[0], 'social')).toBeLessThanOrEqual(43);
+    // （注：出生 pawn 的 skills 由 tuning.pawn.skillInit 预置，skillOf 默认路径只在
+    //  无技能记录时触发——上面 skills={} 即该路径；默认 tuning base=10 与旧行为一致）
+  });
+
   it('skills persist through save/load', () => {
     const sim = new Sim({ seed: 15, pawnCount: 1 });
     const eid = sim.pawns[0];
@@ -1519,6 +1541,31 @@ describe('寻路策略表（tuning.path 参数数据化）', () => {
 });
 
 describe('demo mod 逻辑组件层闭环（demo-berry）', () => {
+  it('依赖 farming 自动装入（审计中②）：浆果摊 passive 配方有结算者不再静默不产出', () => {
+    const mods = ModRegistry.default();
+    mods.mount(demoBerryPack);
+    const sim = new Sim({ seed: 10, pawnCount: 2, registry: mods });
+    // requires ['gathering','farming'] 拓扑 → farm 系统随包自动装配（此前 requires 只写
+    // gathering——没装 farming 时浆果摊 passive 配方无人结算 = 静默不产出）
+    expect(sim.systemIds).toContain('farm');
+    // 放浆果摊（找空位）→ 步进 → 被动产出 berry
+    const cx = Math.floor(sim.world.width / 2);
+    const cy = Math.floor(sim.world.height / 2);
+    let at: { x: number; y: number } | null = null;
+    for (let r = 0; r < 12 && !at; r++) {
+      for (let dx = -r; dx <= r && !at; dx++) {
+        for (let dy = -r; dy <= r && !at; dy++) {
+          if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+          if (sim.world.placeBuilding(cx + dx, cy + dy, 'berryStand', 'player')) at = { x: cx + dx, y: cy + dy };
+        }
+      }
+    }
+    expect(at).not.toBeNull();
+    const before = sim.stockpile.berry ?? 0;
+    sim.step(20);
+    expect(sim.stockpile.berry ?? 0).toBeGreaterThan(before); // 0.15/s × 20s = +3
+  });
+
   it('谓词 + 声明式卡 + 系统装配表全链路', () => {
     // 2026-08-14 完全插件化：demo mod 已是 ModPack，经 mount 装配（注册表 API 路径）
     const mods = ModRegistry.default();
@@ -2018,6 +2065,32 @@ describe('B 方案：篝火 = 区域历史载体，伙伴/敌人由交流篝火�
       const b = sim.world.buildings.get(fid);
       expect(b?.def.id).toBe('campfire'); // 指向存在的 campfire
     }
+  });
+
+  it('摧毁锚点建筑 → 航点段缓存失效（2026-08-16 审查修复回归）', () => {
+    // 发现背景：寻路缓存只在"建成/地形变更"时清；摧毁路径（raids 拆家/怒砸）不触发 →
+    // 被拆篝火/教堂的锚点段仍被 trailCache 复用（小人借道已消失锚点）。
+    const sim = new Sim({ seed: 906, pawnCount: 2 });
+    const eid = sim.pawns[0];
+    // 制造缓存：多次寻路（moveTo 各写一条锚点段/路径缓存）
+    for (let i = 0; i < 20; i++) sim.step(1 / 20);
+    sim.moveTo(eid, 3, 3);
+    sim.moveTo(eid, 7, 7);
+    sim.moveTo(eid, 2, 5);
+    // 跑几步让轨迹缓存真正写入（getPath 惰性缓存）
+    for (let i = 0; i < 10; i++) sim.step(1 / 20);
+    const tc = () => (sim as unknown as { trailCache: Map<string, unknown> }).trailCache.size;
+    // 前提：确实有缓存（否则测试无意义）
+    const before = tc();
+    expect(before).toBeGreaterThan(0);
+    // 摧毁一座 campfire（选小人的"家"锚点；buildings 里第一个 campfire 即可）
+    const fireKey = [...sim.world.buildings.keys()].find((k) => sim.world.buildings.get(k)!.def.id === 'campfire')!;
+    const { x: fx, y: fy } = World.keyToXY(fireKey);
+    sim.world.damageBuilding(fx, fy, 99999);
+    // 摧毁后缓存必须被清（2026-08-16 修复：onBuildingDestroyed → clearTrailCache）
+    expect(tc()).toBe(0);
+    // 顺带验证：destroyed 分支触发（建筑已移除）
+    expect(sim.world.buildings.has(fireKey)).toBe(false);
   });
 
   it('migrate：只有营地真实被毁（💥 记忆 + 威胁在场）才另起篝火；狼路过不算', () => {

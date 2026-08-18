@@ -50,7 +50,8 @@ export const prisonPack: ModPack = {
   m.registerSystemDef({
     id: 'prison', label: '囚笼', category: 'production',
     ctor: (sim) => new PrisonSystem(sim),
-    before: 'raid',
+    // 表内系统不设 before：执行序 = 类别序 × 组内注册序推导（SYSTEM_DEFS 表位置定序；
+    // before 锚点仅第三方表外系统专用——2026-08-16 审计 L7 清理死锚点）
   });
   },
 };
@@ -121,6 +122,7 @@ export class PrisonSystem {
         if (!c.captive) continue;
         if ((this.ctx.stockpile.food ?? 0) >= CFG.foodPerFeed) {
           this.ctx.stockpile.food = Math.max(0, (this.ctx.stockpile.food ?? 0) - CFG.foodPerFeed);
+          this.ctx.recordSpend(null, 'food', CFG.foodPerFeed); // 记账（审计中③）：喂食是营地支出，此前漏记
           c.captive.lastFed = this.ctx.time;
         } else if (this.ctx.time - (c.captive.lastFed >= 0 ? c.captive.lastFed : c.captive.capturedAt) > CFG.feedInterval * 2) {
           // 断粮挣脱（review 修复）：此前只放走"从未喂过"的囚犯——喂过之后断粮的

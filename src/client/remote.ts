@@ -1,180 +1,16 @@
-// RemoteSim —— 连 P1 server 的客户端视图（DESIGN §5：权威在 server）
-// 实现与本地 Sim 同构的读取面，HUD/Renderer 无需区分本地/远程。
-// 用法：?remote=ws://127.0.0.1:8080
-import { K_WEARABLE } from '../sim/mods/contracts';
 import { EventBus, type GameEvent } from '../sim/core/events';
-import type { BehaviorCard } from '../sim/ai/pawn';
-import type { TileDef, BuildingDef, ItemDef } from '../sim/defs';
-import type { EnvTuning } from '../sim/defs/tuning';
-import type { WelcomeTuning } from '../shared/protocol';
-import type { FactionTuning } from '../sim/defs/tuning';
 import type { Command } from '../sim/sim';
 import type { ServerMsg, WelcomeMsg, SnapshotMsg, DeltaMsg } from '../shared/protocol';
-import { World, type ChunkData } from '../sim/core/world';
-
-// 协议快照里建筑形状
-interface SnapBuilding {
-  defId: string; x: number; y: number; hp: number; maxHp: number; faction: string;
-  footprint: { x: number; y: number }[];
-  def?: BuildingDef;
-}
-
-// ---- HUD / Renderer 所需的 sim 公共读取面（本地 Sim 与 RemoteSim 都满足） ----
-export interface SimViewHostile { i?: number; enemyId?: string; x: number; y: number; hp: number; maxHp: number; faction?: string }
-
-export interface SimViewPawn {
-  dna: { str: number; con: number; siz: number; dex: number; int: number; pow: number; app: number; edu: number; traits: string[]; maxSlots: number };
-  slots: (BehaviorCard | null)[];
-  job: string; assignedJob?: string;
-  needs?: { food: number; rest: number; mood: number; san: number } | null;
-  health?: { hp: number; maxHp: number } | null;
-  pos: { x: number; y: number };
-  faith: number;
-  skills: Record<string, number>;
-  desires: Record<string, number>;
-  oracleBuff?: { until: number; mood: number };
-  expectEarn?: number;  // 个人经济预期：工作赚（滚动平均）
-  expectSpend?: number; // 个人经济预期：花费花（滚动平均）
-  lastDecision?: { drawn: string[]; picked: string; time: number };
-  // RW-1（2026-08-15）：征召（协议透传自 server pawn.extra）。缺省 = 未征召——
-  // HUD 征召按钮据此渲染（本地与远程共用同一 SimViewPawn 契约）。工作优先级 M1 已撤回。
-  drafted?: boolean;
-}
-
-export interface SimViewUnit {
-  key: number; members: number[]; memory: { time: number; text: string }[];
-  label: string; // 篝火名（2026-08-14 重构：派系=涌现展示，无 id/name/level/资源/看法）
-}
-
-export interface SimViewBuilding { def: BuildingDef; defId: string; hp: number; maxHp: number; faction: string }
-
-export interface SimView {
-  techs?: ReadonlySet<string>; // 已解锁科技（单机有；远端缺省 undefined → 全部可见）
-  techsMap?: Record<string, { name: string; desc: string; fragments: number }>; // 科技表（2026-08-14 加 fragments=所需碎片数；单机有；远端可选）
-  techFragments?: Record<string, number>; // 已集碎片（2026-08-14 碎片制；单机有；远端缺省 → 只显已解锁）
-  stockpile: Record<string, number>;
-  hostiles: SimViewHostile[];
-  paused: boolean; speed: number; time: number; dayLength: number; tickHz: number;
-  env: { raining: boolean; temperature: number; rainLeft: number };
-  tuning: { env?: EnvTuning; needs?: WelcomeTuning['needs']; faction?: Partial<FactionTuning> };
-  isNight(): boolean;
-  /**
-   * 渲染播放时钟：消息驱动的视图（RemoteSim）用它给出帧间连续时间做插值；
-   * 本地 Sim（逐帧步进 time）不实现 → 渲染层回退用 time。
-   */
-  renderNow?(): number;
-  pawns: readonly number[];
-  pawnPositions: Map<number, { x: number; y: number }>;
-  pawnProfile(eid: number): SimViewPawn | null;
-  healthOf(eid: number): { hp: number; maxHp: number } | null;
-  selected: number[];
-  get selectedIds(): number[];
-  bus: { on(type: string, fn: (ev: GameEvent) => void): () => void };
-  mods: { tiles: Record<string, TileDef>; buildings: Record<string, BuildingDef>; items: Record<string, ItemDef> };
-  world: {
-    width: number; height: number;
-    buildings: Map<number, any>;
-    buildingVersion: number;
-    getTile(x: number, y: number): string;
-    footprintOf(x: number, y: number): { x: number; y: number }[];
-    buildKey(x: number, y: number): number;
-    canBuildAt(x: number, y: number): boolean;
-    canBuildFootprint(x: number, y: number, def: BuildingDef): boolean;
-  };
-  buildCount: number;
-  buildQueueItems: { x: number; y: number; defId: string; progress: number }[];
-  events: { time: number; text: string }[];
-  historyRecent: { id: number; time: number; day: number; type: string; eid?: number; x?: number; y?: number; cause?: string; data?: Record<string, unknown> }[];
-  factionsView(): SimViewUnit[]; // 派系 = 涌现展示（按 fireId 聚合，纯只读）
-  buildingAt(x: number, y: number): SimViewBuilding | null;
-  buildingDef(id: string): BuildingDef | undefined;
-  issueCommand(cmd: Command): void;
-  step(dt: number): void;
-}
-
-// ---- 世界视图（只读；tile 增量由 event 更新） ----
-// 无限地图（DESIGN §370 双图层 P0 快照形态）：tileGrid = 已生成 chunk 的完整地形
-//（chunk 键支持负坐标）；未收到 chunk 的区域 = 未知（'mountain'，P2 流式 watchArea 拉取）
-class RemoteWorld {
-  width = 192;
-  height = 192;
-  private chunks = new Map<number, string[]>(); // chunkKey → 完整地形 tile id 数组
-  buildings = new Map<number, SnapBuilding>();
-  buildingVersion = 0;
-  private defs: Record<string, BuildingDef>;
-
-  constructor(defs: Record<string, BuildingDef>) {
-    this.defs = defs;
-  }
-
-  setWorld(w: WelcomeMsg['world'], chunks: ChunkData[]): void {
-    this.width = w.width;
-    this.height = w.height;
-    this.chunks = new Map();
-    for (const c of chunks) this.chunks.set((c.x + 32768) + (c.y + 32768) * 65536, c.tiles);
-  }
-
-  getTile(x: number, y: number): string {
-    const cx = Math.floor(x / 64);
-    const cy = Math.floor(y / 64);
-    const chunk = this.chunks.get((cx + 32768) + (cy + 32768) * 65536);
-    if (!chunk) return 'mountain'; // 未知区域（server 未下发；P2 流式补齐）
-    return chunk[(y - cy * 64) * 64 + (x - cx * 64)] ?? 'grass';
-  }
-
-  setTile(x: number, y: number, id: string): void {
-    const cx = Math.floor(x / 64);
-    const cy = Math.floor(y / 64);
-    const ck = (cx + 32768) + (cy + 32768) * 65536;
-    const chunk = this.chunks.get(ck);
-    if (!chunk) return; // 未下发的 chunk：无本地地形，忽略（server 权威）
-    chunk[(y - cy * 64) * 64 + (x - cx * 64)] = id;
-  }
-
-  buildKey(x: number, y: number): number { return x + y * 2 ** 31; }
-
-  buildingAt(x: number, y: number): SnapBuilding | null {
-    const b = this.buildings.get(this.buildKey(x, y));
-    if (b) return b;
-    for (const ent of this.buildings.values()) {
-      if (ent.footprint.some((f) => f.x === x && f.y === y)) return ent;
-    }
-    return null;
-  }
-
-  footprintOf(x: number, y: number): { x: number; y: number }[] {
-    return this.buildingAt(x, y)?.footprint ?? [{ x, y }];
-  }
-
-  defOf(id: string): BuildingDef | undefined { return this.defs[id]; }
-
-  canBuildAt(x: number, y: number): boolean {
-    if (x < 0 || y < 0 || x >= this.width || y >= this.height) return false;
-    return !this.buildingAt(x, y);
-  }
-
-  canBuildFootprint(x: number, y: number, def: BuildingDef): boolean {
-    for (let dx = 0; dx < def.size.x; dx++) {
-      for (let dy = 0; dy < def.size.y; dy++) {
-        if (!this.canBuildAt(x + dx, y + dy)) return false;
-      }
-    }
-    return true;
-  }
-
-  applySnapshot(snap: SnapshotMsg): void {
-    this.buildings = new Map();
-    for (const b of snap.buildings) {
-      // key = 协议自带（World 编码，2026-08-15 审计修复：与 delta 身份统一，不再重拼）
-      this.buildings.set(b.key, {
-        ...b,
-        def: this.defs[b.defId] ?? { id: b.defId, name: b.defId, size: { x: 1, y: 1 }, hp: b.maxHp, color: '#888', passable: true, buildTime: 3 },
-      });
-    }
-    this.buildingVersion = snap.buildingVersion;
-  }
-}
-
+import { World, MAX_TILE, type ChunkData } from '../sim/core/world';
+import type { SimViewHostile, SimViewPawn, SimViewUnit, SimViewBuilding, SimView } from './remote-view';
+import { RemoteWorld, type SnapBuilding } from './remote-view';
+import type { TileDef, BuildingDef, ItemDef } from '../sim/defs';
+import type { EnvTuning, FactionTuning } from '../sim/defs/tuning';
+import type { WelcomeTuning } from '../shared/protocol';
+import type { BehaviorCard } from '../sim/ai/pawn';
+import { K_WEARABLE } from '../sim/mods/contracts';
+// Re-export SimView types for backward compatibility (imported by hud.ts etc.)
+export type { SimViewHostile, SimViewPawn, SimViewUnit, SimViewBuilding, SimView };
 // ---- 客户端视图 ----
 export class RemoteSim {
   ws!: WebSocket;
@@ -223,7 +59,10 @@ export class RemoteSim {
   private lastMessageAt = 0;
   private watchdogTimer: ReturnType<typeof setInterval> | null = null;
   // 心跳阈值：超过此时长没收到任何 server 消息 → 判定断线（server 假死/网络黑洞），主动重连
-  watchdogMs = 5000;
+  // 看门狗超时（2026-08-16 审计 M1）：5000 默认值 == 服务器全量对账间隔，静默期
+  //（暂停/无事件）唯一消息源 5s 一发，零抖动余量 + 后台标签页定时器节流即误断重连。
+  // 服务器现每 2s 显式心跳（PingMsg），15s 窗口 = 7 倍余量（仍远小于重连退避）。
+  watchdogMs = 15000;
 
   // 连接状态（HUD 可显示）：connecting 初次 / connected / reconnecting 断线重连 / offline 已销毁
   status: 'connecting' | 'connected' | 'reconnecting' | 'offline' = 'connecting';
@@ -347,11 +186,15 @@ export class RemoteSim {
 
   private onMessage(raw: string): void {
     const m = JSON.parse(raw) as ServerMsg;
-    // 权威时间锚定（welcome 无 t；快照/增量/事件都有）
+    // 任何消息都算心跳（2026-08-16 审计 M1 根修：此前 lastMessageAt 只在连接/看门狗
+    // 启动时更新——消息收到也从不刷新，看门狗在静默期竟会"有消息也断线"）
+    this.lastMessageAt = Date.now();
+    // 权威时间锚定（welcome 无 t；快照/增量/事件/心跳都有）
     if ('t' in m && typeof (m as { t?: unknown }).t === 'number') {
       this.anchorT = (m as { t: number }).t;
       this.anchorWall = performance.now();
     }
+    if (m.type === 'ping') return; // 心跳：仅刷新 lastMessageAt（t 锚定已处理），无业务
     if (m.type === 'welcome') {
       this.connectedOnce = true;
       this.tickHz = m.tickHz;
@@ -416,7 +259,23 @@ export class RemoteSim {
 
   // tick delta：把变化量合并进本地缓存（身份对齐：pawn eid / 建筑 key）
   private applyDelta(m: DeltaMsg): void {
-    this.snap = { ...this.snap ?? { type: 'snapshot', t: 0, paused: false, speed: 1, isNight: false, day: 1, weather: { raining: false, temperature: 18 }, stockpile: {}, pawns: [], hostiles: [], buildings: [], buildQueue: [], buildingVersion: 0 }, ...m as unknown as SnapshotMsg };
+    // 权威快照基线（M2 修复，2026-08-16 审计）：此前整对象 spread delta 进 this.snap——
+    // delta 是增量形状（pawns = 逐 pawn 部分字段、顶层字段不全），spread 后 this.snap 变
+    // 成"半残快照"：pawns 数组被增量整体替换 → 其余 pawn 从 snap 蒸发；字段缺失 → 读面
+    //（isNight/buildCount/buildQueueItems 及未来的对账点）误读 undefined。
+    // 现在 this.snap 按"权威全量字段局部合入"维护：pawn 条目逐 eid 字段合并（与
+    // pawnCache 共用 merged 对象）、removed 过滤、pawnList 重排；顶层变化字段单点赋值。
+    // 全量对账（applySnapshot）仍是最终收敛点——delta 合入只做本地读面保鲜。
+    if (!this.snap) this.snap = { type: 'snapshot', t: 0, paused: false, speed: 1, isNight: false, day: 1, weather: { raining: false, temperature: 18 }, stockpile: {}, pawns: [], hostiles: [], buildings: [], buildQueue: [], buildingVersion: 0 };
+    else this.snap = { ...this.snap };
+    this.snap.t = m.t;
+    if (m.paused !== undefined) this.snap.paused = m.paused;
+    if (m.speed !== undefined) this.snap.speed = m.speed;
+    if (m.isNight !== undefined) this.snap.isNight = m.isNight;
+    if (m.day !== undefined) this.snap.day = m.day;
+    if (m.weather) this.snap.weather = m.weather;
+    if (m.stockpile) this.snap.stockpile = m.stockpile;
+
     this.time = m.t;
     if (m.paused !== undefined) this.paused = m.paused;
     if (m.speed !== undefined) this.speed = m.speed;
@@ -426,15 +285,20 @@ export class RemoteSim {
 
     let pawnListChanged = false;
     if (m.pawns) {
+      // snap.pawns 随增量同步（M2：逐 eid 合并保全量形状，不整体替换）
+      this.snap.pawns = this.snap.pawns.map((p) => p);
       for (const pd of m.pawns) {
         if (pd.removed) {
           this.pawnCache.delete(pd.eid);
           this.pawnPositions.delete(pd.eid);
+          this.snap.pawns = this.snap.pawns.filter((p) => p.eid !== pd.eid);
           pawnListChanged = true;
           continue;
         }
         const old = this.pawnCache.get(pd.eid);
-        const merged = { ...old } as SnapshotMsg['pawns'][number];
+        // eid 显式拷贝（2026-08-16 审计 M2/L3 补漏）：新 pawn 增量 old=undefined 时 merged
+        // 只有变化字段；snap.pawns 直接存 merged，条目缺 eid → pawns 权威序推导出 undefined
+        const merged = { ...old, eid: pd.eid } as SnapshotMsg['pawns'][number];
         if (pd.x !== undefined) merged.x = pd.x;
         if (pd.y !== undefined) merged.y = pd.y;
         if (pd.hp !== undefined) merged.hp = pd.hp;
@@ -456,17 +320,34 @@ export class RemoteSim {
         if (pd.worn !== undefined) merged.worn = pd.worn || undefined;
         // RW-1（2026-08-15）：征召 delta 合并（drafted 标量）。工作优先级 M1 已撤回。
         if (pd.drafted !== undefined) merged.drafted = pd.drafted;
+        // 战场指挥 DLC（field-command 包 2026-08-16）：编制树/生效战术 delta 合并（低频
+        // 字段，命令/册封才变化——与 worn 同模式；缺省 undefined = 非指挥官/无战术）
+        if (pd.commander !== undefined) merged.commander = pd.commander;
+        if (pd.tactic !== undefined) merged.tactic = pd.tactic;
         this.pawnCache.set(pd.eid, merged);
+        // M2：同一条目合入 snap.pawns（新增 push；既有 = 替换为 merged 同源对象）
+        const idx = this.snap.pawns.findIndex((p) => p.eid === pd.eid);
+        if (idx >= 0) this.snap.pawns[idx] = merged;
+        else this.snap.pawns.push(merged);
         if (pd.x !== undefined && pd.y !== undefined) this.pawnPositions.set(pd.eid, { x: pd.x, y: pd.y });
         if (!old) pawnListChanged = true;
       }
     }
     if (m.pawnList) {
       this.pawns = m.pawnList;
+      // M2：snap.pawns 按权威顺序重排（其余条目字段保持不变）
+      const byEid = new Map(this.snap.pawns.map((p) => [p.eid, p]));
+      this.snap.pawns = m.pawnList.map((eid) => byEid.get(eid)!).filter(Boolean);
     } else if (pawnListChanged) {
-      this.pawns = [...this.pawnCache.keys()];
+      // 无权威 pawnList 的增量（审计 L3 防御）：跟随 snap 权威序（M2 已逐 eid 合入/追加），
+      // 不用 pawnCache 键的 Map 插入序——插入序是本地缓存顺序，与权威出生/招降序无关，
+      // 传给渲染/HUD 的 pawns 顺序会与 snapshot/对账漂移。
+      this.pawns = this.snap.pawns.map((p) => p.eid);
     }
-    if (m.hostiles) this.hostiles = m.hostiles;
+    if (m.hostiles) {
+      this.hostiles = m.hostiles;
+      this.snap.hostiles = m.hostiles;
+    }
     if (m.buildings) {
       for (const b of m.buildings) {
         if (b.removed) {
@@ -482,7 +363,26 @@ export class RemoteSim {
         }
       }
     }
-    if (m.buildingVersion !== undefined) this.world.buildingVersion = m.buildingVersion;
+    if (m.buildingVersion !== undefined) {
+      this.world.buildingVersion = m.buildingVersion;
+      this.snap.buildingVersion = m.buildingVersion;
+    }
+    // M2 收尾：delta 其余整体覆盖字段同步进 snap（buildings 按 key 对齐增量，
+    // snap.buildings 与 world.buildings 同源维护——全量对账仍为最终收敛）
+    if (m.buildings) {
+      const snapB = new Map(this.snap.buildings.map((b) => [b.key, b]));
+      for (const b of m.buildings) {
+        if (b.removed) snapB.delete(b.key);
+        else {
+          // delta 建筑无 x/y（增量形状）——snap 是全量形状，用 key 解码补全（与
+          // world.buildings 同源：World.keyToXY 是 key 编码的唯一解码器）
+          const { x, y } = World.keyToXY(b.key);
+          snapB.set(b.key, { key: b.key, defId: b.defId, x, y, hp: b.hp, maxHp: b.maxHp, faction: b.faction, footprint: b.footprint });
+        }
+      }
+      this.snap.buildings = [...snapB.values()];
+    }
+    if (m.buildQueue) this.snap.buildQueue = m.buildQueue;
   }
 
   isNight(): boolean { return this.snap?.isNight ?? false; }
@@ -518,6 +418,9 @@ export class RemoteSim {
       desires: p.desires,
       lastDecision: p.lastDecision,
       drafted: p.drafted === true, // 归一 boolean（协议缺省 = 未征召）
+      // 战场指挥 DLC（field-command 包 2026-08-16）：编制树/生效战术回显（协议透传字段直通）
+      commander: p.commander,
+      tactic: p.tactic,
     };
   }
 

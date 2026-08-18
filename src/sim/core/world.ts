@@ -304,6 +304,11 @@ export class World {
   // 瓦片变更监听（采集/事件改地形 → server 推送增量；null = 不监听）
   onTileChange: ((x: number, y: number, tileId: string) => void) | null = null;
 
+  // 建筑摧毁监听（2026-08-16 审查修复：清算/袭击/怒砸摧毁锚点 → sim 需清航点段缓存；
+  // 此前仅"建成"清缓存（buildSystem），"摧毁"路径不触发 → 被拆篝火/教堂的锚点对路由
+  // 仍被 trailCache 复用（小人借道已消失的锚点）。tile 变更不覆盖此处：拆建筑不改瓦片。）
+  onBuildingDestroyed: ((key: number) => void) | null = null;
+
   setTile(x: number, y: number, tileId: string): void {
     if (!this.inBounds(x, y)) return;
     const cx = Math.floor(x / CHUNK_SIZE);
@@ -537,6 +542,8 @@ export class World {
       this.unindexBuilding(main);
       this.buildingVersion++;
       this.recomputeLight();
+      // 通知 sim 清航点缓存（锚点销毁后旧路由不可用；2026-08-16 审查修复）
+      this.onBuildingDestroyed?.(main);
       return { destroyed: true, building: b };
     }
     return { destroyed: false, building: b };
@@ -623,6 +630,46 @@ export class World {
     return out;
   }
 
+  // 半径内带 tag 建筑的**最近一栋**（2026-08-16 热路径优化：决策谓词 campfireDist 等
+  // 原用 queryBuildingsNear(…, 64) 每小人每帧构建全部近邻建筑数组（对象分配 + 排序
+  // 遍历），profiler 采样 world 查询为热点前列——专用查询免数组分配、共享 chunk 遍历、
+  // 命中即可比较早退；返回 null = 半径内无该 tag 建筑）
+  nearestBuildingWithTag(x: number, y: number, radius: number, tag: string): { key: number; dist: number } | null {
+    const r2 = radius * radius;
+    let best: { key: number; dist: number } | null = null;
+    let bestD2 = Infinity;
+    const seen = new Set<number>();
+    const c0x = Math.floor((x - radius) / World.CHUNK);
+    const c1x = Math.floor((x + radius) / World.CHUNK);
+    const c0y = Math.floor((y - radius) / World.CHUNK);
+    const c1y = Math.floor((y + radius) / World.CHUNK);
+    for (let cy = c0y; cy <= c1y; cy++) {
+      for (let cx = c0x; cx <= c1x; cx++) {
+        const cell = this.buildingChunks.get(cx + cy * 1000000);
+        if (!cell) continue;
+        for (const mk of cell) {
+          if (seen.has(mk)) continue;
+          seen.add(mk);
+          const b = this.buildings.get(mk);
+          if (!b || !b.def.tags?.includes(tag)) continue;
+          let minD = Infinity;
+          for (const fk of this.buildingFootprint.get(mk) ?? [mk]) {
+            // 内联 World.keyToXY（热路径：每 footprint 格解码一次，省对象分配）
+            let fx = fk % World.COORD_K;
+            if (fx === 0) fx = 0;
+            if (fx > MAX_TILE) fx -= World.COORD_K;
+            else if (fx < -MAX_TILE) fx += World.COORD_K;
+            const fy = (fk - fx) / World.COORD_K;
+            const d = (fx - x) ** 2 + (fy - y) ** 2;
+            if (d < minD) minD = d;
+          }
+          if (minD < bestD2) { bestD2 = minD; best = { key: mk, dist: Math.sqrt(minD) }; }
+        }
+      }
+    }
+    return bestD2 <= r2 ? best : null;
+  }
+
   canBuildFootprint(x: number, y: number, def: (typeof BUILDINGS)[string]): boolean {
     if (def.onTunnel) {
       // 地道入口：挖在**地表可通行格**（grass/泥/沙/石等——人得先走到洞口才能进地道；
@@ -700,12 +747,34 @@ export class World {
     return true;
   }
 
+  // 升级落点校验（2026-08-16 审查修复）：升级会扩展 footprint（如 1×1 篝火 → 2×2 教堂），
+  // 新 footprint 中超出旧 footprint 的格子必须可建且未被其他建筑占用。此前 upgradeBuilding
+  // 无条件覆盖 gridToBuilding → 相邻建筑的格子归属被后升级者顶掉（建筑索引错乱：两座相邻
+  // 篝火各升教堂，后者的 2×2 覆盖前者格）。旧 footprint 格豁免（本来就是自己的）。
+  // 返回 false = 不可升级（buildSystem 应放弃蓝图且不扣资源）。
+  canUpgradeAt(x: number, y: number, def: (typeof BUILDINGS)[string]): boolean {
+    const main = this.mainKey(x, y);
+    if (!this.buildings.has(main)) return false;
+    const old = this.buildingFootprint.get(main) ?? [main];
+    for (const key of this.footprintKeys(x, y, def)) {
+      if (old.includes(key)) continue; // 旧 footprint 格豁免（自身占用）
+      const { x: gx, y: gy } = World.keyToXY(key);
+      if (!this.inBounds(gx, gy)) return false;
+      if (!this.getTileDef(gx, gy).buildable) return false;
+      if (this.getBuilding(gx, gy)) return false;
+    }
+    return true;
+  }
+
   // 升级建筑（如篝火→教堂，Q9 即时指令：教堂=篝火升级）
   upgradeBuilding(x: number, y: number, defId: string, faction: string): boolean {
     const main = this.mainKey(x, y);
     if (!this.buildings.has(main)) return false;
     const def = this.buildingsDefs[defId];
     if (!def) return false;
+    // 落点校验（2026-08-16 审查修复）：新 footprint 超出旧 footprint 的格子被占/不可建
+    // → 拒绝升级（此前无条件覆盖 gridToBuilding，相邻建筑归属错乱）
+    if (!this.canUpgradeAt(x, y, def)) return false;
     // 旧 footprint 释放
     const old = this.buildingFootprint.get(main) ?? [main];
     for (const fk of old) this.gridToBuilding.delete(fk);

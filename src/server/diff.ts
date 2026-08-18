@@ -27,7 +27,7 @@ export function buildDelta(prev: SnapshotMsg | null, cur: SnapshotMsg): DeltaMsg
   const pawns: NonNullable<DeltaMsg['pawns']> = [];
   for (const p of cur.pawns) {
     const old = prevPawns.get(p.eid);
-    if (!old) { pawns.push({ eid: p.eid, x: p.x, y: p.y, attrs: p.attrs, hp: p.hp, maxHp: p.maxHp, job: p.job, needs: p.needs, faith: p.faith, skills: p.skills, traits: p.traits, maxSlots: p.maxSlots, slots: p.slots, desires: p.desires, lastDecision: p.lastDecision, worn: p.worn ?? '', drafted: p.drafted }); any = true; continue; }
+    if (!old) { pawns.push({ eid: p.eid, x: p.x, y: p.y, attrs: p.attrs, hp: p.hp, maxHp: p.maxHp, job: p.job, needs: p.needs, faith: p.faith, skills: p.skills, traits: p.traits, maxSlots: p.maxSlots, slots: p.slots, desires: p.desires, lastDecision: p.lastDecision, worn: p.worn ?? '', drafted: p.drafted, commander: p.commander, tactic: p.tactic }); any = true; continue; }
     const pd: NonNullable<DeltaMsg['pawns']>[number] = { eid: p.eid };
     let ch = false;
     if (old.x !== p.x || old.y !== p.y) { pd.x = p.x; pd.y = p.y; ch = true; }
@@ -49,6 +49,10 @@ export function buildDelta(prev: SnapshotMsg | null, cur: SnapshotMsg): DeltaMsg
     // RW-1（2026-08-15）：征召（drafted 标量）。缺省 undefined 与未征召视为等同——
     // 只在值实际变化时下发（带宽 + 旧客户端兼容）。工作优先级 M1 已撤回，无 workPriorities diff。
     if ((old.drafted ?? false) !== (p.drafted ?? false)) { pd.drafted = p.drafted ?? false; ch = true; }
+    // 战场指挥 DLC（field-command 包 2026-08-16）：编制的低频字段用 JSON 比较（命令/册封
+    // 才变化，40 人 × 2/s 的 stringify 开销可忽略）；tactic 标量 diff（同 drafted 模式）
+    if ((old.commander ? JSON.stringify(old.commander) : '') !== (p.commander ? JSON.stringify(p.commander) : '')) { pd.commander = p.commander; ch = true; }
+    if ((old.tactic ?? '') !== (p.tactic ?? '')) { pd.tactic = p.tactic ?? ''; ch = true; }
     if (ch) { pawns.push(pd); any = true; }
   }
   for (const eid of prevPawns.keys()) {

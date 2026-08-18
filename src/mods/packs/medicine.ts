@@ -18,6 +18,7 @@
 // 依赖：内核 heal 卡（physio）+ heal tag 建筑（篝火）+ craft 技能 + 存档 extra。
 import type { ModRegistry } from '../../sim/mods/registry';
 import type { SimContext } from '../../sim/systems/context';
+import { beginHeal } from '../../sim/systems/heal';
 import type { PawnState } from '../../sim/sim';
 import type { ModPack } from '../pack';
 
@@ -131,14 +132,9 @@ export const medicinePack: ModPack = {
     const pos = c.pawnPositions.get(eid);
     if (!pos) return;
     if (woundsOf(st).length === 0) { st.job = '闲逛'; return; }
-    // 走到篝火（heal tag）旁治疗；无篝火原地休养
-    const fire = c.findNearest(pos, (x, y) => c.world.getBuilding(x, y)?.def.tags?.includes('heal') ?? false, true);
-    if (fire) {
-      st.healTarget = fire;
-      c.moveAdjacent(eid, fire.x, fire.y);
-    } else {
-      st.healing = { progress: 0 };
-    }
+    // 走到篝火（heal tag）旁治疗；无篝火原地休养——与内核 heal 卡共用 beginHeal
+    //（2026-08-16 收敛：此前两处同构复制，行为语义漂移会静默分叉，见 systems/heal.ts）
+    beginHeal(c, eid, st);
     st.job = '疗伤养伤';
   });
   },
@@ -260,6 +256,16 @@ export class MedicineSystem {
       if (!pos) continue;
       // 未到达治疗点（在脚步声里）不算治疗
       if (st.healTarget) {
+        // 篝火被毁清理（2026-08-16 审查修复）：healTarget 指的建筑已不存在（raids 拆家/
+        // 怒砸/清剿）→ 清理目标、退出疗伤态交给决策层重新规划。此前残留的目标坐标让
+        // 距离判定恒 > 2.2 → 本分支永久 continue，小人卡在"疗伤养伤"等一座不存在的火
+        const b = this.ctx.world.getBuilding(Math.round(st.healTarget.x), Math.round(st.healTarget.y));
+        if (!b || !(b.def.tags?.includes('heal') ?? false)) {
+          st.healTarget = undefined;
+          st.healing = undefined;
+          st.job = '闲逛';
+          continue;
+        }
         const d = Math.hypot(pos.x - st.healTarget.x, pos.y - st.healTarget.y);
         if (d > 2.2) continue;
       }

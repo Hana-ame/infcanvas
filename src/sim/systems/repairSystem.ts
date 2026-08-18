@@ -3,6 +3,7 @@
 import type { GameSystem } from './registry';
 import type { SimContext } from './context';
 import { World } from '../core/world';
+import { K_DRAFTED } from '../mods/contracts';
 
 export class RepairSystem implements GameSystem {
   id = 'repair';
@@ -37,6 +38,9 @@ export class RepairSystem implements GameSystem {
       if (st.path && st.path.length > 0) continue;
       if (st.mining || st.chopXY || st.praying) continue;
       if (st.urgent) continue;
+      // 征召/战斗指挥中的小人不受自动修理差遣（2026-08-16 修复：meleeRange 缩小后
+      // 站桩敌会拆营地 → RepairSystem 把征召兵拉去修篝火，覆盖玩家战术命令））
+      if (st.extra?.[K_DRAFTED] === true) continue;
       const pos = this.ctx.readPosition(eid);
       if (!pos) continue;
       // 找受损建筑

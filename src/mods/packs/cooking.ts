@@ -46,7 +46,8 @@ export const cookingPack = {
     m.registerSystemDef({
       id: 'cook', label: '烹饪', category: 'production',
       ctor: (sim) => new CookSystem(sim),
-      before: 'raid',
+      // 表内系统不设 before：执行序 = 类别序 × 组内注册序推导（SYSTEM_DEFS 表位置定序；
+      // before 锚点仅第三方表外系统专用——2026-08-16 审计 L7 清理死锚点）
     });
   },
 };

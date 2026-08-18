@@ -6,6 +6,7 @@ import { describe, it, expect } from 'vitest';
 import { Sim } from '../../sim/sim';
 import { ModRegistry } from '../../sim/mods/registry';
 import { hunterGathererPack } from '../hunter-gatherer';
+import { World } from '../../sim/core/world';
 import { cardPredicateOf } from '../../sim/mods/query';
 
 // 2026-08-14 完全插件化：hg 已是 ModPack，经 registry.mount 装配（依赖图解析 requires:['gathering']）
@@ -48,6 +49,31 @@ describe('hunter-gatherer 玩法包', () => {
     expect(st.inventory?.food ?? 0).toBeGreaterThanOrEqual(4);
     // 公共库存不涨（猎物私有化：击杀前后库存不变，开局 30）
     expect(sim.stockpile.food).toBe(30);
+    // 记账（审计中③）：猎杀掉肉进 economy 流（earn 记到猎人头上,工作优先级评估可见狩猎收益）
+    expect(sim.flow['food']?.earn ?? 0).toBeGreaterThanOrEqual(4);
+  });
+
+  it('营火自主（审计中③）：重建篝火扣木记账（recordSpend → flow.wood.spend）', () => {
+    const sim = makeHg();
+    // 拆光所有 campfire（出生篝火）→ 触发重建分支。必须走 damageBuilding 正规拆除路径
+    //（footprint/索引/拥挤占位表全清）——裸 delete 会残留拥挤表条目，后续 queryBuildingsNear
+    // 读到幽灵建筑崩（hunger/nearAura 每帧查）。
+    for (const [k, b] of [...sim.world.buildings]) {
+      if (b.def.id === 'campfire') {
+        const { x, y } = World.keyToXY(k);
+        sim.world.damageBuilding(x, y, 999999);
+      }
+    }
+    expect([...sim.world.buildings].some(([, b]) => b.def.id === 'campfire')).toBe(false);
+    sim.stockpile.wood = 25;
+    // 推进 60s：campRebuild acc 首个周期到点（无火 + wood>=10 → 重建出生点篝火）
+    for (let i = 0; i < 65; i++) sim.step(1);
+    const campsAfter = [...sim.world.buildings].filter(([, b]) => b.def.id === 'campfire').length;
+    expect(campsAfter).toBeGreaterThanOrEqual(1); // 重建发生（campRebuild 是 hg 唯一补火来源）
+    // 记账：重建扣 10 木 → flow.wood.spend 记录（此前直扣 stockpile 不记账；
+    // 伐木 earn 同时入账使 stockpile 回升，故不断言库存上限）
+    expect(sim.flow['wood']?.spend ?? 0).toBeGreaterThanOrEqual(10);
+    expect(sim.flow['wood']?.spend ?? 0).toBeLessThan((sim.flow['wood']?.earn ?? 0) + 10);
   });
 
   it('狩猎卡白天约束：夜晚猫在旁时猎杀不发生（huntIsDay 谓词）', () => {

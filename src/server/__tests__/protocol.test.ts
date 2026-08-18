@@ -2,6 +2,9 @@ import { describe, it, expect } from 'vitest';
 import { Sim } from '../../sim/sim';
 import { RemoteSim } from '../../client/remote';
 import type { WelcomeMsg, SnapshotMsg, EventMsg, DeltaMsg } from '../../shared/protocol';
+import { validateCommand, type CmdGuardState } from '../cmdValidate';
+import { buildDelta } from '../diff';
+import { World, MAX_TILE } from '../../sim/core/world';
 
 // P1 server 骨架（DESIGN §5/§8）：权威在 server，客户端只读视图
 describe('server 网络层基础（P1）', () => {
@@ -141,5 +144,211 @@ describe('server 网络层基础（P1）', () => {
     const delta2: DeltaMsg = { type: 'delta', t: 42.5, pawns: [{ eid: 9, worn: '' }] };
     (rs as unknown as { onMessage(s: string): void }).onMessage(JSON.stringify(delta2));
     expect(rs.wornOf(9)).toBeUndefined();
+  });
+});
+
+// ---- H1（2026-08-16 审计修复）：播放控制 = 引擎内建命令面 ----
+// 此前 main.ts/hud.ts 直改 sim.paused/speed：远程模式改的是本地壳字段，服务器权威
+// 不知情 → HUD 谎报暂停、时钟漂移。修复后唯一写入路径 = issueCommand（pause/speed
+// 与 move 同层硬编码分支），cmdValidate 白名单 + 形状校验，RemoteSim 经既有命令通道。
+describe('引擎内建播放控制命令面（H1，2026-08-16）', () => {
+  it('本地 Sim：pause/speed 命令生效（值域内），非法值静默忽略', () => {
+    const sim = new Sim({ seed: 9, pawnCount: 1 });
+    sim.issueCommand({ type: 'pause', x: 0, y: 0 });
+    expect(sim.paused).toBe(true); // args 缺省 = 暂停
+    sim.issueCommand({ type: 'pause', x: 0, y: 0, args: { paused: false } });
+    expect(sim.paused).toBe(false);
+    sim.issueCommand({ type: 'speed', x: 0, y: 0, args: { speed: 2 } });
+    expect(sim.paused).toBe(false);
+    expect(sim.speed).toBe(2);
+    const before = { paused: sim.paused, speed: sim.speed };
+    sim.issueCommand({ type: 'speed', x: 0, y: 0, args: { speed: 9 } }); // 值域外
+    sim.issueCommand({ type: 'pause', x: 0, y: 0, args: { paused: 'yes' } } as never); // 形状外（本地宽容）
+    expect(sim.paused).toBe(before.paused);
+    expect(sim.speed).toBe(before.speed);
+  });
+
+  it('RemoteSim：pause/speed 命令经 {type:cmd} 通道上行，不直改本地字段', () => {
+    const rs = new RemoteSim('ws://127.0.0.1:1');
+    const sent: string[] = [];
+    (rs as unknown as { ws: { readyState: number } & Record<string, unknown> }).ws = {
+      readyState: 1,
+      send: (s: string) => sent.push(s),
+    };
+    rs.issueCommand({ type: 'pause', x: 0, y: 0, args: { paused: true } });
+    rs.issueCommand({ type: 'speed', x: 0, y: 0, args: { speed: 3 } });
+    expect(sent).toHaveLength(2);
+    const c1 = JSON.parse(sent[0]!).cmd;
+    const c2 = JSON.parse(sent[1]!).cmd;
+    expect(c1.type).toBe('pause');
+    expect(c1.args.paused).toBe(true);
+    expect(c2.type).toBe('speed');
+    expect(c2.args.speed).toBe(3);
+    // 本地字段不被动（权威 = server 回显的 snapshot/delta 才更新）
+    expect(rs.paused).toBe(false);
+    expect(rs.speed).toBe(1);
+  });
+
+  it('cmdValidate：pause/speed 白名单放行 + 形状校验（错误值拒收）', () => {
+    const sim = new Sim({ seed: 10, pawnCount: 1 });
+    const guard: CmdGuardState = { lastCmdAt: 0, budget: 30 };
+    const v = (cmd: unknown) => validateCommand(sim, cmd, guard, Date.now()).ok;
+    expect(v({ type: 'pause', x: 0, y: 0 })).toBe(true);
+    expect(v({ type: 'pause', x: 0, y: 0, args: { paused: false } })).toBe(true);
+    expect(v({ type: 'speed', x: 0, y: 0, args: { speed: 1 } })).toBe(true);
+    expect(v({ type: 'speed', x: 0, y: 0, args: { speed: 0 } })).toBe(false);  // 值域外
+    expect(v({ type: 'speed', x: 0, y: 0, args: { speed: 9 } })).toBe(false);  // 值域外
+    expect(v({ type: 'pause', x: 0, y: 0, args: { paused: 'yes' } })).toBe(false); // 非布尔
+  });
+});
+
+// ---- 审计 M2（2026-08-16）：applyDelta 不把增量形状灌进权威快照 ----
+// 此前 this.snap = { ...this.snap, ...delta }：delta.pawns 是"逐 pawn 部分字段"增量，
+// spread 后 snap.pawns 被整体替换 → 其余 pawn 蒸发、条目字段残缺（半残快照潜伏误读）。
+// 修复后 = 逐 eid 字段合并（与 pawnCache 同源）+ 顶层字段单点赋值 + 对账仍为收敛点。
+describe('applyDelta 权威快照合并（审计 M2，2026-08-16）', () => {
+  function buildWelcome(_sim: Sim): WelcomeMsg {
+    return {
+      type: 'welcome', you: 1, seed: 42, tickHz: 20, dayLength: 120,
+      tuning: { needs: { foodMoodLow: 30 }, faction: { unitCapChurch: 10, unitCapCampfire: 3 }, env: { dayLength: 120, baseTemp: 18 } },
+      world: { width: 4, height: 3 },
+      tiles: { grass: { id: 'grass', color: '#3a7d44', passable: true, buildable: true } },
+      buildings: {}, items: {},
+      tileGrid: [{ x: 0, y: 0, tiles: Array(12).fill('grass') }],
+    };
+  }
+  function buildSnapshot(sim: Sim): SnapshotMsg {
+    const all = sim.pawns.map((eid) => {
+      const p = sim.pawnStates.get(eid)!;
+      const pos = sim.pawnPositions.get(eid)!;
+      return {
+        eid, x: pos.x, y: pos.y, hp: sim.healthOf(eid)?.hp ?? 0, maxHp: sim.healthOf(eid)?.maxHp ?? 1, job: p.job ?? '', faith: p.faith ?? 0,
+        attrs: { str: p.dna.str, con: p.dna.con, siz: p.dna.siz, dex: p.dna.dex, int: p.dna.int, pow: p.dna.pow, app: p.dna.app, edu: p.dna.edu },
+        skills: { ...p.skills }, traits: [...(p.dna.traits ?? [])],
+        maxSlots: 2, slots: [], desires: {},
+      };
+    });
+    return {
+      type: 'snapshot', t: sim.time, paused: sim.paused, speed: sim.speed, isNight: sim.isNight(),
+      day: 1, weather: { raining: false, temperature: 18 },
+      stockpile: { ...sim.stockpile }, pawns: all, hostiles: [],
+      buildings: [...sim.world.buildings].map(([key, b]) => {
+        const { x, y } = World.keyToXY(key);
+        return { key, defId: b.def.id, x, y, hp: Math.round(b.hp), maxHp: b.def.hp, faction: b.faction, footprint: sim.world.footprintOf(x, y) };
+      }),
+      buildQueue: [], buildingVersion: sim.world.buildingVersion,
+    };
+  }
+  function freshSim(pawnCount: number): { sim: Sim; rs: RemoteSim } {
+    const sim = new Sim({ seed: 11, pawnCount });
+    for (let i = 0; i < 10; i++) sim.step(0.02);
+    // 走 server 快照序列：snapshot → 若干 delta（含半残形状的真实 diff）
+    const rs = new RemoteSim('ws://127.0.0.1:1');
+    const w = buildWelcome(sim);
+    const feed = (raw: string) => (rs as unknown as { onMessage(s: string): void }).onMessage(raw);
+    feed(JSON.stringify(w));
+    feed(JSON.stringify(buildSnapshot(sim)));
+    return { sim, rs };
+  }
+  const feedD = (rs: RemoteSim, d: DeltaMsg) =>
+    (rs as unknown as { onMessage(s: string): void }).onMessage(JSON.stringify(d));
+
+  it('delta 增量合入后：snap.pawns 保留全部 pawn（不蒸发、形状全量）', () => {
+    const { rs } = freshSim(3);
+    const eids = () => (rs as unknown as { snap: SnapshotMsg }).snap.pawns.map((p) => p.eid);
+    expect(eids()).toHaveLength(3);
+    // 半残形状增量（diff 同构：只有 2 号 pawn 动了一点，条目只有变化字段）
+    feedD(rs, { type: 'delta', t: 1, pawns: [{ eid: 2, x: 9, y: 9, hp: 3 }] });
+    const snap = (rs as unknown as { snap: SnapshotMsg }).snap; // 每次 feedD 后重新取引用（applyDelta 浅克隆）
+    expect(eids()).toEqual([1, 2, 3]);            // 不蒸发：其余 pawn 还在
+    const pawn2 = snap.pawns.find((p) => p.eid === 2)!;
+    expect(pawn2.hp).toBe(3);                     // 增量字段合入
+    expect(typeof pawn2.maxHp).toBe('number');    // 未变化字段保留（不全量形状 = 半残误读）
+    expect(typeof pawn2.job).toBe('string');
+  });
+
+  it('removed 摘除 + pawnList 权威重排（与 pawnCache 一致）', () => {
+    const { rs } = freshSim(2);
+    const eids = () => (rs as unknown as { snap: SnapshotMsg }).snap.pawns.map((p) => p.eid);
+    feedD(rs, { type: 'delta', t: 1, pawns: [{ eid: 5, removed: true }] }); // eid 5 不存在也不炸
+    expect(eids()).toEqual([1, 2]);
+    feedD(rs, { type: 'delta', t: 1, pawnList: [2, 1] }); // 权威顺序重排
+    expect(eids()).toEqual([2, 1]);
+    feedD(rs, { type: 'delta', t: 1, pawns: [{ eid: 2, removed: true }] });
+    expect(eids()).toEqual([1]);
+    expect((rs as unknown as { pawns: number[] }).pawns).toEqual([1]);
+  });
+
+  it('顶层字段单点合入：weather/stockpile/buildings/buildQueue 不丢权威形状', () => {
+    const { rs } = freshSim(1);
+    feedD(rs, {
+      type: 'delta', t: 2, weather: { raining: true, temperature: 10 },
+      buildingVersion: 7, buildQueue: [{ x: 1, y: 1, defId: 'farm', progress: 0.5 }],
+    } as never);
+    const snap = (rs as unknown as { snap: SnapshotMsg }).snap;
+    expect(snap.weather).toEqual({ raining: true, temperature: 10 });
+    expect(snap.buildingVersion).toBe(7);
+    expect(snap.buildQueue).toEqual([{ x: 1, y: 1, defId: 'farm', progress: 0.5 }]);
+    expect(typeof snap.isNight).toBe('boolean'); // 未变化的字段保留（不 undefined）
+  });
+});
+
+// ---- 审计 L2/L3（2026-08-16）----
+// L2：RemoteWorld.canBuildAt 边界此前用 welcome 的 width/height 且拒绝负坐标——与 server
+//     （无限地图 ±MAX_TILE）不一致 → 客户端 UI 说不可建、server 实际接受。修复对齐 MAX_TILE。
+// L3：无 pawnList 的新 pawn 增量，this.pawns 此前按 pawnCache Map 插入序重建——与权威序
+//     （snap.pawns 顺序）漂移。修复 = 跟随 snap 权威序。
+describe('远程视图边界/权威序（审计 L2/L3，2026-08-16）', () => {
+  function fresh(): { rs: RemoteSim; feedS: (s: SnapshotMsg) => void } {
+    const rs = new RemoteSim('ws://127.0.0.1:1');
+    const feed = (raw: string) => (rs as unknown as { onMessage(s: string): void }).onMessage(raw);
+    const w: WelcomeMsg = {
+      type: 'welcome', you: 1, seed: 42, tickHz: 20, dayLength: 120,
+      tuning: { needs: { foodMoodLow: 30 }, faction: { unitCapChurch: 10, unitCapCampfire: 3 }, env: { dayLength: 120, baseTemp: 18 } },
+      world: { width: 4, height: 3 },
+      tiles: { grass: { id: 'grass', color: '#3a7d44', passable: true, buildable: true } },
+      buildings: {}, items: {},
+      tileGrid: [{ x: 0, y: 0, tiles: Array(12).fill('grass') }],
+    };
+    feed(JSON.stringify(w));
+    const snap: SnapshotMsg = {
+      type: 'snapshot', t: 0, paused: false, speed: 1, isNight: false, day: 1,
+      weather: { raining: false, temperature: 18 }, stockpile: {},
+      pawns: [
+        { eid: 1, x: 2, y: 1, hp: 50, maxHp: 50, job: '', faith: 0, attrs: { str: 10, con: 10, siz: 10, dex: 10, int: 10, pow: 10, app: 10, edu: 10 }, skills: {}, traits: [], maxSlots: 2, slots: [], desires: {} },
+        { eid: 2, x: 2, y: 2, hp: 50, maxHp: 50, job: '', faith: 0, attrs: { str: 10, con: 10, siz: 10, dex: 10, int: 10, pow: 10, app: 10, edu: 10 }, skills: {}, traits: [], maxSlots: 2, slots: [], desires: {} },
+      ],
+      hostiles: [], buildings: [], buildQueue: [], buildingVersion: 1,
+    };
+    feed(JSON.stringify(snap));
+    return { rs, feedS: (s2: SnapshotMsg) => feed(JSON.stringify(s2)) };
+  }
+  const feedDelta = (rs: RemoteSim, d: DeltaMsg) =>
+    (rs as unknown as { onMessage(s: string): void }).onMessage(JSON.stringify(d));
+
+  it('L2：RemoteWorld 边界对齐无限地图 MAX_TILE（负坐标/区块外可建，超限拒绝）', () => {
+    const { rs } = fresh();
+    // welcome width=4 height=3：旧代码 x<0||x>=4 全拒；现在负坐标/区块外都在 MAX_TILE 内
+    expect(rs.world.canBuildAt(-1, 0)).toBe(true);
+    expect(rs.world.canBuildAt(5, 0)).toBe(true);
+    expect(rs.world.canBuildAt(100, 200)).toBe(true);
+    // 超 MAX_TILE 防御边界 → 拒绝（与 server/sim.world.inBounds 同语义）
+    expect(rs.world.canBuildAt(MAX_TILE + 1, 0)).toBe(false);
+    expect(rs.world.canBuildAt(0, -MAX_TILE - 1)).toBe(false);
+  });
+
+  it('L3：新 pawn 增量（无 pawnList）→ this.pawns 跟随 snap 权威序', () => {
+    const { rs, feedS } = fresh();
+    // 全量对账后权威序 = [1,2]；增量新增 eid 7（无 pawnList）→ snap 追加末尾、pawns 同步
+    feedDelta(rs, { type: 'delta', t: 0.5, pawns: [{ eid: 7, x: 1, y: 1, hp: 40, maxHp: 50 }] });
+    expect((rs as unknown as { pawns: number[] }).pawns).toEqual([1, 2, 7]);
+    // 对账覆盖：authority 序变化（eid 7 排最前）→ 全量合并后 pawns = [7,1,2]
+    const snap2 = (rs as unknown as { snap: SnapshotMsg }).snap;
+    const reordered = { ...snap2, pawns: [snap2.pawns[2]!, snap2.pawns[0]!, snap2.pawns[1]!] } as SnapshotMsg;
+    feedS(reordered);
+    expect((rs as unknown as { pawns: number[] }).pawns).toEqual([7, 1, 2]);
+    // 再增量（无 pawnList）仍跟随最新权威序，不清到插入序
+    feedDelta(rs, { type: 'delta', t: 1, pawns: [{ eid: 1, x: 9, y: 9 }] });
+    expect((rs as unknown as { pawns: number[] }).pawns).toEqual([7, 1, 2]);
   });
 });
