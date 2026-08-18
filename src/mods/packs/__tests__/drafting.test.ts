@@ -139,7 +139,7 @@ describe('drafting 玩法包（征召战斗，RW-1 M2）', () => {
     const cy = Math.round(sim.world.height / 2);
     const spot = findWalkable(sim, cx, cy);
     addCat(sim, spot.x, spot.y);
-    // P 距猫 1 格（meleeRange 5 内），Q 距猫 0.4 格（最近的未征召者）
+    // P 距猫 1 格（meleeRange 3 内），Q 距猫 0.4 格（最近的未征召者）
     sim.setPosition(eP, { x: spot.x - 1, y: spot.y });
     sim.setPosition(eQ, { x: spot.x + 0.4, y: spot.y });
     sim.setNeeds(eQ, { ...sim.readNeeds(eQ)!, food: 100, rest: 100 });

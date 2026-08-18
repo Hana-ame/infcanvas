@@ -90,7 +90,7 @@ describe('RaidSystem 独立测试（最小 ctx，无 Sim）', () => {
     const wallBefore = [...ctx.world.buildings.keys()].length;
     const cat = ctx.mods.enemies['cat'];
     ctx.hostiles.push({ x: 96.6, y: 96, hp: 50, maxHp: cat.hp, targetX: 96, targetY: 96, enemyId: 'cat', name: cat.name, speed: cat.speed, dmgPerSec: cat.dmg, loot: cat.loot });
-    // 捕获(容忍闪避帧) → 逃跑:cat speed 6.5×1.5≈9.75/帧,96→离中心 ≥32 需 ~4 帧
+    // 捕获(容忍闪避帧) → 逃跑:cat speed 8×1.5≈12/帧,96→离中心 ≥32 需 ~4 帧
     for (let i = 0; i < 60 && ctx.hostiles.length > 0; i++) sys.update(1);
     expect(ctx.hostiles.length).toBe(0);                    // 得手消失
     expect([...ctx.world.buildings.keys()].length).toBe(wallBefore); // 没拆墙
@@ -98,7 +98,7 @@ describe('RaidSystem 独立测试（最小 ctx，无 Sim）', () => {
 
   it('近身反击:捕食者冲向鼠时被自动近身反击砍死（不叼人）', () => {
     const sys = new RaidSystem(ctx);
-    // 猫放鼠 meleeRange(5) 内、captureRange(1.2) 外:鼠恰好能砍,猫还叼不到
+    // 猫放鼠 meleeRange(3) 内、captureRange(1.5) 外（约 2.5 格：在反击圈内又没到叼人距离）:鼠恰好能砍,猫还叼不到
     const eid = ctx.spawnPawn(96, 96);
     const t = ctx.tuning.combat;
     const cat = ctx.mods.enemies['cat'];

@@ -305,6 +305,7 @@ export interface EnvTuning {
 
 export interface PawnTuning {
   baseSpeed: number;       // 小人移动速度（格/秒）
+  decisionInterval: number; // 决策节流（2026-08-16：pawn 非每帧决策——每 N 秒才抽卡决定，间隔内保持上次意图；降 CPU）
   climb: number;           // 通过能力：可攀爬的地形高差上限（|Δz| ≤ climb 可通行；用户 2026-08-14 设计）
   hpBase: number;          // 血量基础值（+ (con+siz)/2）
   scanRadius: number;      // 目标搜索半径（找树/矿/建筑等，近距快扫）
@@ -750,6 +751,7 @@ export const TUNING: TuningConfig = {
   },
   pawn: {
     baseSpeed: 4,
+    decisionInterval: 2, // 决策节流：每 2 秒才抽卡决策（非每帧——降 CPU，pawn 行为略滞后但可接受）
     climb: 1,                // 通过能力：高差 ≤1 可上（草地↔石头），山坡(2)上不去——修路/绕行
     hpBase: 40,
     scanRadius: 15,

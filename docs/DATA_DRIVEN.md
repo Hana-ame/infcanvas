@@ -658,12 +658,12 @@ overrideTuning(patch: DeepPartial<TuningConfig>): this  // 覆盖平衡参数（
 
 | 字段 | 类型 | 语义 |
 | --- | --- | --- |
-| `predator` | `boolean` | 捕食者：袭击波固定 1 只（压力只放大 hp 强度）、目标 = 最近鼠实时位置、接触 ≤ `tuning.combat.captureRange`(1.2) 复用 DEX 闪避判定 → 未闪开即叼走（`pawn_died cause='captured'` + `Hostile.carried` 携带态）、逃跑方向 = 远离营地中心、跑离 ≥ `captureFleeDist`(32) 得手消失。不拆家、不原地磨血。 |
+| `predator` | `boolean` | 捕食者：袭击波固定 1 只（压力只放大 hp 强度）、目标 = 最近鼠实时位置、接触 ≤ `tuning.combat.captureRange`(1.5) 复用 DEX 闪避判定 → 未闪开即叼走（`pawn_died cause='captured'` + `Hostile.carried` 携带态）、逃跑方向 = 远离营地中心、跑离 ≥ `captureFleeDist`(32) 得手消失。不拆家、不原地磨血。 |
 | `carrySpeedMul` | `number` | 叼走后的逃跑移速倍率（缺省 1.5）。 |
 
 - 移动/捕获/得手数值在 `tuning.combat`（captureRange/captureFleeDist）,逃跑速度倍率在敌人表（同一敌人数据驱动,mod 可 overrideDef/registerEnemy 自定义捕食者）。
-- 捕猎期近身反击沿用 `meleeRange` + `pawnDmg`（近身反击拦截语义,非捕食者攻击不做特殊加成）;得手途中被击杀 = 共用 killHostile 掉落路径（food 私有进击杀者口袋）。
-- `cat` 现为捕食者样例（hp90/speed6.5/dmg6/climb2,predator:true,carrySpeedMul:1.5,loot food 3）;`raider` 保持非捕食者（faction 'unit' 群体袭击语义不变）。
+- 捕猎期近身反击沿用 `meleeRange`(3) + `pawnDmg`(5)（近身反击拦截语义,非捕食者攻击不做特殊加成）;得手途中被击杀 = 共用 killHostile 掉落路径（food 私有进击杀者口袋）。
+- `cat` 现为捕食者样例（hp110/speed8/dmg6/climb2,predator:true,carrySpeedMul:1.5,loot food 3）;`raider` 保持非捕食者（faction 'unit' 群体袭击语义不变）。
 
 ## 世界层升级/摧毁钩子（2026-08-16 审查修复）
 
@@ -683,16 +683,9 @@ overrideTuning(patch: DeepPartial<TuningConfig>): this  // 覆盖平衡参数（
 
 `SaveData.techUnlockedAt: Record<string, number>`（解锁时刻随档）——原:不随档 → `techBuildWeight` 读档恒 0,科技建筑自动建造权重永不爬升。旧档兼容:无此字段 → 已解锁科技按读档时刻起算（权重从 0 重新爬升,不永久冻结）。其余存档字段不变。
 
-## 当前装配态快照（2026-08-16 追加，前列"24 系统/25 系统、23 包/25 包"等均为历史演进记录请勿改动——以本快照为最新）
+## 历史装配态快照（2026-08-16 早前）
 
-- `SYSTEM_DEFS` = **26 系统**（内核 1 = behavior 决策引擎，内联 ctor；余 25 由玩法包 registerSystemDef 回填；drafting 为 raid 类最后加入者）；`KERNEL_SYSTEM_IDS = ['behavior']`。
-- `DEFAULT_PLAYSTYLE_PACKS` = **25 包**（needs/economy/socialUnit/social/gathering/build/farming/crafting/repair/medicine/power/thermo/trade/prison/wildmouse/cooking/raid/population/events/techPool/autobuild/bootstrap/clothing/oracle-guidance/drafting）。
-- 测试 = **451 用例 / 49 文件**（全量 `npm test` + `npx tsc --noEmit` 干净；用例数随修复递增，最新计数以 AGENTS.md「当前装配态快照」为准）。
-- **执行器实现表 = 数据登记**（2026-08-16 拆分轮）：INTENT_IMPL / WORK_IMPL 与 BUILTIN_INTENTS / BUILTIN_WORKS 构成"声明键 × 实现值"两张登记表（键 = handler 全名，与 defs 表同构的查表驱动）；mod 专用 registerIntent/registerWork 沿用同一登记通道，dens 传引用令晚注册可见。装配回归测试断言两表键集一一对应。
-- **存档迁移注册表**（2026-08-16）：`SAVE_MIGRATIONS` = 按目标版本下标的迁移函数数组（版本号 = 数组长度），load 顺序应用；v0→v1 空实现占位,后续迁移函数只增不改（老函数语义 = 历史事实,反序删改会破坏老档链路）。
-- **跨包字段级契约登记**（2026-08-16 收口）：`pawn.healTarget/healing`（顶层强类型瞬时字段,非字符串键）以字段名义登记进 CONTRACTS 跨界读写清单（写 cardSystem/medicine/sim,读 gatherSystem/medicine/drafting/cardSystem,check 谓词恒真占位）——"跨包即登记"边界 = 内核↔玩法包双向访问项,单包自洽键依旧不入表。
-- **拥挤格表（性能数据面）**（2026-08-16）：walk 拥挤/占位语义的参数仍全部来自 tuning.pawn（crowdingFloor/crowdingPenalty/crowdStopGap 等），格表只是查询结构（帧初构建 Map<`${x},${y}`,count> 全量聚合、帧内增量更新）,不含任何可调语义。近邻格聚合后查 3×3 邻域 = O(1)。
----
+- 451/49、26 系统、25 包；详细演进见 AGENTS.md / PROGRESS.md。
 
 ## 战术表与战场指挥数据面（field-command 包，2026-08-16）
 
@@ -728,4 +721,5 @@ overrideTuning(patch: DeepPartial<TuningConfig>): this  // 覆盖平衡参数（
 - 测试 = **511 用例 / 56 文件**（全量 `npm test` + `npx tsc --noEmit` 干净）。
 - `tuning.combat.predatorReactionMul = 0.25`：非征召鼠对捕食者自动近身反击倍率；征召鼠（K_DRAFTED）全伤。语义见上节捕食者近身反击倍率。
 - 战斗数值（2026-08-16 终版）：`pawnDmg = 5`（鼠近战）、`meleeRange = 3`（反击圈）、`captureRange = 1.5`（捕食者叼鼠距离）。
+- 决策节流（2026-08-16）：`tuning.pawn.decisionInterval = 2`——小人每 2 秒抽卡决策一次，冷却中保持上次意图；不阻塞紧急需求/走路/征召/工作。
 - 捕食者本体：`enemies.ts` 野猫 hp = **110**、speed = **8**（2026-08-16 战斗平衡第二轮延伸；PLAYING 已同步）。

@@ -189,11 +189,20 @@ export class BehaviorSystem implements GameSystem {
         continue;
       }
 
+      // 决策节流（2026-08-16：pawn 非每帧抽卡决策——每 decisionInterval 秒才真正 decide，
+      // 间隔内保持上次意图不变。降 CPU：40 pawn × 3000 tick = 120k 次 decide → /2 = 60k 次。
+      // 鼠的行为略滞后（最多 2 秒延迟响应环境变化），但可接受且更贴近"非全知"的拟真感。
+      if ((st.decisionCd ?? 0) > 0) {
+        st.decisionCd = (st.decisionCd ?? 0) - dt;
+        continue; // 冷却中：不抽卡，保持上次 job/intent
+      }
+
       // 空闲：抽3选1 → 执行意图
       // 每 pawn 刷新 view 的 per-pawn 字段（CardView 复用，减分配）
       view.lastSeries = st.lastSeries;
       view.assignedJob = st.assignedJob;
       const intent = this.decide(eid, st, view);
+      st.decisionCd = this.ctx.tuning.pawn.decisionInterval; // 设下一次决策冷却
       if (intent) {
         st.job = intent.label;
         const exec = this.intentExecutors.get(intent.action);

@@ -45,6 +45,7 @@ export interface PawnState {
   healTarget?: { x: number; y: number }; // 疗伤点
   healing?: { progress: number };
   commandCooldown?: number; // 玩家命令后的一段时间不自动决策
+  decisionCd?: number; // 决策节流冷却（2026-08-16：非零时不抽卡，保持上次意图——降 CPU）
   faith?: number; // 信仰度（祈祷积累，影响违抗与心情）
   defyCd?: number; // 违抗后的冷却时间（秒）
   crazyCooldown?: number; // 狂乱乱跑冷却

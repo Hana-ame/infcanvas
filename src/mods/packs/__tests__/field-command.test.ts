@@ -191,7 +191,7 @@ it('⑤b 编排槽 active：commander 命令写入持久预设；临战下达覆
     const [g, s] = sim.pawns;
     sim.issueCommand({ type: 'commander', x: 0, y: 0, pawnId: g, args: { subordinates: [s] } });
     // 指挥官移到远处空地（避免寻路找路失败）
-    const target = { x: Math.round(sim.pawnPositions.get(g)!.x) + 15, y: Math.round(sim.pawnPositions.get(g)!.y) };
+    const target = { x: Math.round(sim.pawnPositions.get(g)!.x) - 15, y: Math.round(sim.pawnPositions.get(g)!.y) }; // 种子 49 右侧是水面，改用左侧草地
     sim.issueCommand({ type: 'move', x: target.x, y: target.y, pawnId: g });
     stepN(sim, 5); // 指挥官先走过去
     sim.issueCommand({ type: 'dispatch', x: 0, y: 0, pawnId: g, args: { tactic: 'regroup' } });
