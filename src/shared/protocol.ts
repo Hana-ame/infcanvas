@@ -63,7 +63,7 @@ export interface SnapshotMsg {
     commander?: { role: 'officer' | 'general'; subordinates: number[] };
     tactic?: string;
   }[];
-  hostiles: { i: number; enemyId?: string; x: number; y: number; hp: number; maxHp: number; faction?: string }[];
+  hostiles: { i: number; enemyId?: string; x: number; y: number; hp: number; maxHp: number; faction?: string; taming?: { progress: number; tamer: number }; owner?: number; dashCd?: number }[];
   buildings: { key: number; defId: string; x: number; y: number; hp: number; maxHp: number; faction: string; footprint: { x: number; y: number }[] }[];
   // key = World 编码 x + y*2^31（2026-08-15 审计：与 DeltaMsg.buildings.key 统一同一编码——
   // 此前 snapshot 无 key，diff 端用魔数 x + y*1000000 重拼，客户端按 World.keyToXY(2^31)
@@ -106,7 +106,7 @@ export interface DeltaMsg {
   }[];
   // pawn 集合整体变化（增/删）时带全量列表，client 据此重建 pawns 顺序
   pawnList?: number[];
-  hostiles?: { i: number; enemyId?: string; x: number; y: number; hp: number; maxHp: number; faction?: string }[];
+  hostiles?: { i: number; enemyId?: string; x: number; y: number; hp: number; maxHp: number; faction?: string; taming?: { progress: number; tamer: number }; owner?: number; dashCd?: number }[];
   buildings?: { key: number; defId: string; hp: number; maxHp: number; faction: string; footprint: { x: number; y: number }[]; removed?: boolean }[];
   buildingVersion?: number;
   buildQueue?: { x: number; y: number; defId: string; progress: number }[];

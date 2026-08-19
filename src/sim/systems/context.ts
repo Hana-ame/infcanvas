@@ -31,6 +31,9 @@ export interface Hostile {
   taming?: { progress: number; tamer: number };
   // 守卫驯养人 eid（beast-taming：taming 转正时从 tamer 迁入；主人逝去 → 守卫就地游荡）
   owner?: number;
+  // 冲刺冷却（2026-08-16：猫的跳跃/冲刺技能——周期性向目标方向瞬移，越过近身反击圈；
+  // 随局不随档同 carried/taming 先例。EnemyDef.dash={range,cd} 配置，dashCd 运行时递减）
+  dashCd?: number;
 }
 
 export interface BuildItem {

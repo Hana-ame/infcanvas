@@ -176,6 +176,8 @@ function buildSnapshot(): SnapshotMsg {
   }
   const hostiles: SnapshotMsg['hostiles'] = sim.hostiles.map((h, i) => ({
     i, enemyId: h.enemyId, x: h.x, y: h.y, hp: h.hp, maxHp: h.maxHp, faction: h.faction,
+    // 2026-08-16 协议一致性：透传驯化/守卫/冲刺状态（此前远程看不到驯化进度 → HUD 失真）
+    taming: h.taming, owner: h.owner, dashCd: h.dashCd,
   }));
   const buildings: SnapshotMsg['buildings'] = [];
   for (const [key, b] of w.buildings) {

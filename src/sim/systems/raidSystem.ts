@@ -103,6 +103,23 @@ export class RaidSystem implements GameSystem {
           if (prey) { tx = prey.x; ty = prey.y; }
         }
       }
+      // 冲刺技能（2026-08-16：猫的跳跃/冲刺——周期性向目标方向瞬间位移一段距离，
+      // 越过 meleeRange(3) 近身反击圈突围；dashCd 运行时递减，归零时触发一次瞬移）
+      if (pred?.predator && pred.dash && !h.taming) {
+        h.dashCd = (h.dashCd ?? 0) - dt;
+        if (h.dashCd <= 0) {
+          h.dashCd = pred.dash.cd;
+          // 向目标方向瞬移 dash.range 格（若目标在 dash 范围内则直接贴脸）
+          const ddx = tx - h.x, ddy = ty - h.y;
+          const dd = Math.hypot(ddx, ddy);
+          if (dd > 0.1) {
+            const dashStep = Math.min(pred.dash.range, dd);
+            h.x += (ddx / dd) * dashStep;
+            h.y += (ddy / dd) * dashStep;
+            this.ctx.logEvent(`⚡ ${h.name ?? '野猫'} 发动冲刺！越过近身反击圈`);
+          }
+        }
+      }
       const dx = tx - h.x, dy = ty - h.y;
       const d = Math.hypot(dx, dy);
       const step = spd * dt;

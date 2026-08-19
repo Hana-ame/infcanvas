@@ -27,7 +27,7 @@ describe('插件化：卸载不破坏核心（逐个卸载 smoke）', () => {
       mods.disableSystem(id);
       const sim = new Sim({ registry: mods, pawnCount: 2, seed: idx + 7 });
       expect(sim.systemIds).not.toContain(id);
-      for (let i = 0; i < 120; i++) sim.step(1);
+      for (let i = 0; i < 60; i++) sim.step(1); // 60s：首波敌袭前（initialRaidDelay=90s），smoke 不崩即可
       expect(sim.pawnList.length).toBeGreaterThan(0);
     });
   }

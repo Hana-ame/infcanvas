@@ -1752,10 +1752,12 @@ describe('流言沿社交网络传播（gossip spread）', () => {
     sim.pawnPositions.set(c, { x: pb.x - 1, y: pb.y });
     sim.setPosition(c, { x: pb.x - 1, y: pb.y });
     for (const eid of [a, b, c]) sim.setNeeds(eid, { food: 100, rest: 100, mood: 95, san: 100 });
+    // 决策分散优化后 decisionCd 随机初始 → 非确定性 → 设 0 保证立即决策
+    for (const eid of [a, b, c]) sim.pawnStates.get(eid)!.decisionCd = 0;
     // 跑足够步数，直到 B 听到八卦（gossip_spread 事件出现）
     let spread = false;
     const off = sim.bus.on('gossip_spread' as never, () => { spread = true; });
-    for (let i = 0; i < 600 && !spread; i++) sim.step(0.1);
+    for (let i = 0; i < 1200 && !spread; i++) sim.step(0.1); // 路径简化后移动轨迹变化，延长窗口
     off();
     expect(spread).toBe(true); // A 的八卦传出去了
     expect(stB.gossip?.text).toBe('说新盖了个church'); // B 记住了
@@ -1763,7 +1765,7 @@ describe('流言沿社交网络传播（gossip spread）', () => {
     // B 再转述给 C（传播链路）
     let spread2 = false;
     const off2 = sim.bus.on('gossip_spread' as never, () => { spread2 = true; });
-    for (let i = 0; i < 600 && !spread2; i++) sim.step(0.1);
+    for (let i = 0; i < 1200 && !spread2; i++) sim.step(0.1); // 同上
     off2();
     expect(spread2).toBe(true);
     expect(stC.gossip?.text).toBe('说新盖了个church'); // C 也听到了（网络传播）

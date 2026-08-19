@@ -13,6 +13,8 @@ export interface EnemyDef {
   // 不走群体袭击/拆家/原地磨血路径；mod 可用 registerEnemy 定义自己的捕食者
   predator?: boolean;
   carrySpeedMul?: number;     // 叼走鼠后的逃跑移速倍率（数据驱动）
+  // 冲刺技能（2026-08-16：猫的跳跃/冲刺——周期性向目标方向瞬间位移，越过近身反击圈）
+  dash?: { range: number; cd: number; };
 }
 
 export const ENEMIES: Record<string, EnemyDef> = {
@@ -21,7 +23,7 @@ export const ENEMIES: Record<string, EnemyDef> = {
   // 2026-08-16 设计（用户）：哈基米 = 独行捕食者——力量速度远高于鼠鼠（基准 hp40/speed4 →
   // 猫 hp110/speed8），接触鼠直接叼走跑路，不纠缠不拆家。击杀掉落=肉（私有进口袋）
   // 2026-08-16 战斗平衡：hp 90→110（更扛揍）、speed 6.5→8（突围快，玩家更难拦）。
-  cat: { id: 'cat', name: '野猫', hp: 110, speed: 8, climb: 2, dmg: 6, predator: true, carrySpeedMul: 1.5, loot: { item: 'food', amount: 3 } },
+  cat: { id: 'cat', name: '野猫', hp: 110, speed: 8, climb: 2, dmg: 6, predator: true, carrySpeedMul: 1.5, loot: { item: 'food', amount: 3 }, dash: { range: 6, cd: 8 } },
   // 派系掠夺者（派系 vs 派系袭击的兵种；faction 'unit' → 征服/UI 身份识别）
   raider: { id: 'raider', name: '掠夺者', hp: 90, speed: 3.5, climb: 1, dmg: 7, faction: 'unit', loot: { item: 'ore', amount: 4 } },
 };

@@ -87,4 +87,43 @@ describe('SanSystem 独立测试（最小 ctx，无 Sim）', () => {
     // 火旁恢复把 san 拉回狂乱阈值之上（此前会落下去乱跑走开，san 恒 ≤ crazyAt）
     expect(ctx._needs.get(eid)!.san).toBeGreaterThan(t.crazyAt);
   });
+
+  // ---- 2026-08-16 架构优化回归：篝火缓存 ----
+
+  it('篝火缓存：warmth 建筑在 fireComfortRadius 内恢复理智，远离不恢复', () => {
+    const sys = attach(ctx, new SanSystem(ctx));
+    const eid = ctx.spawnPawn(20, 20);
+    // 受创
+    ctx.bus.emit({ type: 'pawn_died', eid: 999, x: 21, y: 21, cause: 'combat' } as never);
+    const low = ctx._needs.get(eid)!.san;
+    expect(low).toBeLessThan(100);
+    // 放 campfire 在远处
+    let fx = 0, fy = 0;
+    for (let x = 0; x < ctx.world.width && !fx; x++)
+      for (let y = 0; y < ctx.world.height; y++)
+        if (ctx.world.placeBuilding(x, y, 'campfire', 'player')) { fx = x; fy = y; break; }
+    // pawn 远离 campfire → 不恢复
+    ctx.setPosition(eid, { x: 20, y: 20 });
+    sys.update(1);
+    expect(ctx._needs.get(eid)!.san).toBe(low); // 远离篝火不恢复
+    // pawn 到 campfire 旁 → 恢复
+    ctx.setPosition(eid, { x: fx, y: fy });
+    for (let i = 0; i < 60; i++) sys.update(1);
+    expect(ctx._needs.get(eid)!.san).toBeGreaterThan(low);
+  });
+
+  it('篝火缓存：fireRecover fallback 恢复（campfire 无 aura.sanPerSec → 用 tuning 值）', () => {
+    const sys = attach(ctx, new SanSystem(ctx));
+    const eid = ctx.spawnPawn(20, 20);
+    ctx.setNeeds(eid, { food: 100, rest: 100, mood: 100, san: 50 });
+    let fx = 0, fy = 0;
+    for (let x = 0; x < ctx.world.width && !fx; x++)
+      for (let y = 0; y < ctx.world.height; y++)
+        if (ctx.world.placeBuilding(x, y, 'campfire', 'player')) { fx = x; fy = y; break; }
+    ctx.setPosition(eid, { x: fx, y: fy });
+    sys.update(1);
+    const after = ctx._needs.get(eid)!.san;
+    expect(after).toBeGreaterThan(50); // fireRecover fallback 生效
+  });
+
 });

@@ -10,6 +10,8 @@ export class NeedsSystem implements GameSystem {
   id = 'needs';
   private wonderVersion = -1;
   private wonderCache = false;
+  // 2026-08-16 优化：缓存 aura 建筑列表（原每 pawn 每帧 queryBuildingsNear = 287ms 热点）
+  private auraBuildings: { x: number; y: number; radius: number; moodPerSec?: number; restPerSec?: number }[] = [];
 
   constructor(private ctx: SimContext) {}
 
@@ -37,6 +39,14 @@ export class NeedsSystem implements GameSystem {
   // 每帧：需求衰减 + 环境/光环修正 + 饥饿死亡 + 紧急需求标记
   update(dt: number): void {
     const t = this.ctx.tuning.needs;
+    // 2026-08-16 优化：每 tick 刷新 aura 建筑缓存（替代每 pawn queryBuildingsNear）
+    this.auraBuildings = [];
+    const R = t.auraScanRadius;
+    for (const [k, b] of this.ctx.world.buildings) {
+      if (!b.def.aura) continue;
+      const { x, y } = World.keyToXY(k);
+      this.auraBuildings.push({ x, y, radius: b.def.aura.radius ?? R, moodPerSec: b.def.aura.moodPerSec, restPerSec: b.def.aura.restPerSec });
+    }
     for (const eid of this.ctx.pawnList) {
       const st = this.ctx.pawnStates.get(eid);
       if (!st) continue;
@@ -119,20 +129,15 @@ export class NeedsSystem implements GameSystem {
     if (best !== null) this.ctx.socialUnits.addMemory(best, text);
   }
 
-  // 附近 aura 建筑（篝火/纪念碑）——返回最近的 aura 定义（读 BuildingDef.aura）
+  // 附近 aura 建筑——用缓存遍历（2026-08-16：原 queryBuildingsNear 每 pawn 每帧调用 = 热点）
   private nearAura(eid: number): { moodPerSec?: number; restPerSec?: number } | null {
     const pos = this.ctx.pawnPositions.get(eid);
     if (!pos) return null;
-    const w = this.ctx.world;
-    const R = this.ctx.tuning.needs.auraScanRadius; // 扫描半径（tuning；生效距离由 def.aura.radius 决定）
     let best: { moodPerSec?: number; restPerSec?: number } | null = null;
     let bestD = Infinity;
-    // chunk 空间分区查询（原 O(r²) 全格扫描 × pawn × tick = 性能热点）
-    for (const b of w.queryBuildingsNear(Math.round(pos.x), Math.round(pos.y), R)) {
-      if (b.def.aura) {
-        const radius = b.def.aura.radius ?? R; // mod 可调各建筑光环半径
-        if (b.dist <= radius && b.dist < bestD) { bestD = b.dist; best = b.def.aura; }
-      }
+    for (const a of this.auraBuildings) {
+      const d = (a.x - pos.x) ** 2 + (a.y - pos.y) ** 2;
+      if (d <= a.radius * a.radius && d < bestD) { bestD = d; best = { moodPerSec: a.moodPerSec, restPerSec: a.restPerSec }; }
     }
     return best;
   }

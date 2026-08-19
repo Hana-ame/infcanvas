@@ -23,5 +23,7 @@ export function pushHostile(ctx: SimContext, enemy: EnemyDef, x: number, y: numb
     hp: enemy.hp * mul, maxHp: enemy.hp * mul,
     targetX: opts.targetX ?? x, targetY: opts.targetY ?? y,
     enemyId: enemy.id, dmgPerSec: enemy.dmg,
+    // 2026-08-16 修复首帧冲刺：dashCd 初始设为 cd（首次冲刺在 cd 秒后触发，而非首帧 0→立即冲）
+    dashCd: enemy.dash?.cd,
   });
 }

@@ -140,6 +140,17 @@ export class BeastTamingSystem {
           h.y += ((target.y - h.y) / d) * step;
         } else {
           target.hp -= CFG.guardDps * dt;
+          // 2026-08-16 修复守卫猫无敌：被咬的敌方猫反击守卫猫（此前 raidSystem 跳过
+          // player faction → 无路径对守卫猫造成伤害 → 守卫猫永不被杀。这里补：目标
+          // 活着且近身时，以敌方猫的 dmgPerSec 反击守卫猫。守卫猫 hp 归零 → 移除）
+          if (target.hp > 0 && (target.dmgPerSec ?? 0) > 0) {
+            h.hp -= (target.dmgPerSec ?? 0) * dt;
+            if (h.hp <= 0) {
+              const idx = this.ctx.hostiles.indexOf(h);
+              if (idx >= 0) this.ctx.hostiles.splice(idx, 1);
+              this.ctx.logEvent('💔 营地守卫猫在战斗中牺牲！');
+            }
+          }
         }
         continue;
       }

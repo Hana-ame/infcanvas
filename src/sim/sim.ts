@@ -112,12 +112,20 @@ export class Sim implements SimContext {
   pawnStates = new Map<number, PawnState>();
   pawnPositions = new Map<number, { x: number; y: number }>();
   selected: number[] = [];
-  hostiles: { x: number; y: number; hp: number; maxHp: number; targetX: number; targetY: number; name?: string; faction?: string; enemyId?: string; speed?: number; dmgPerSec?: number; loot?: { item: string; amount: number }; taming?: { progress: number; tamer: number }; owner?: number }[] = [];
+  hostiles: { x: number; y: number; hp: number; maxHp: number; targetX: number; targetY: number; name?: string; faction?: string; enemyId?: string; speed?: number; dmgPerSec?: number; loot?: { item: string; amount: number }; taming?: { progress: number; tamer: number }; owner?: number; dashCd?: number }[] = [];
   buildQueue: { x: number; y: number; defId: string; progress: number; faction: string; cost?: { wood: number; ore: number } }[] = [];
   stockpile: Record<string, number>; // 初始库存 = tuning.population.startStockpile（构造函数里装配）
 
   private _pawnList: number[] = [];
+  // 寻路缓存（2026-08-16 架构优化：上限 32768 + FIFO 近似淘汰——满 8192 时全清太粗暴，
+  // 所有路径失效 → 下一帧全量 A* 重算 → 尖峰。改：满 32768 → 删前 8192 条（FIFO 近似），
+  // 保留 75% 热路径。建筑/地形变更仍全清（正确性优先）。hit/miss 计数用于验证效果。
   private trailCache = new Map<string, { x: number; y: number }[]>();
+  private trailHits = 0;
+  private trailMisses = 0;
+  private static readonly TRAIL_CACHE_MAX = 32768;
+  private trailDirty = false; // 地形/建筑变更标记（延迟清空，避免帧内多次 clear）
+  private static readonly TRAIL_CACHE_EVICT = 8192; // 满了删前 N 条（FIFO 近似）
   private registry = new SystemRegistry();
   // 结构化历史日志（仿真日志：事实来自 sim，LLM 只润色）
   history = new HistoryLog();
@@ -255,13 +263,16 @@ export class Sim implements SimContext {
     // 瓦片变更 → 事件总线（server 增量推送 / mod 订阅 / 测试断言的统一入口）
     this.world.onTileChange = (x, y, tileId) => {
       this.bus.emit({ type: 'tile_changed', x, y, tileId });
-      // 地形变更（伐木/采矿/事件改地形）→ 可走性可能变化 → 寻路缓存（含失败缓存）失效
-      // 背景：失败路径加入缓存后，必须在地形变更时清掉，否则"伐木后目标变可达"仍被旧失败缓存拒
-      this.clearTrailCache();
+      // 地形变更 → 标记脏（延迟清空：一帧内可能多次 onTileChange，只清一次）
+      // 2026-08-16 架构优化：原每次 onTileChange 都 clearTrailCache → 伐木每帧改 1 块
+      // tile → 全清 → 命中率 15.7%。改延迟清：step 末统一清一次，帧内多次只清一次。
+      this.trailDirty = true;
     };
     // 建筑摧毁 → 清航点段缓存（2026-08-16 审查修复：此前仅"建成"清缓存，摧毁路径
     //（raids 拆家/怒砸/清剿）不触发 → 被拆篝火/教堂锚点的段缓存仍被复用，小人借道已消失锚点）
-    this.world.onBuildingDestroyed = () => this.clearTrailCache();
+    // 建筑摧毁 → 全清缓存（航点锚点消失 → 段缓存失效；比 onTileChange 更严重，
+    // 立即清而非标脏——step 内也可能有后续 getPath 依赖最新缓存状态）
+    this.world.onBuildingDestroyed = () => { this.clearTrailCache(); this.trailDirty = false; };
     // 所有事件 → 结构化历史
     this.bus.onAny((ev) => this.history.record(ev, this.time, this.time / this.dayLength));
     // 2026-08-15 纯引擎：出生刷人/初始营地/建篝火归属回调移入 bootstrap 玩法包系统
@@ -409,7 +420,40 @@ export class Sim implements SimContext {
     const pos = this.readPosition(eid);
     if (!pos) return;
     // 寻路带单位通过能力（高差判定）：每个单位各自 climb
-    const path = this.getPath(Math.round(pos.x), Math.round(pos.y), Math.round(x), Math.round(y), this.pawnStates.get(eid)?.climb);
+    const climb = this.pawnStates.get(eid)?.climb;
+    const sx = Math.round(pos.x), sy = Math.round(pos.y);
+    const ex = Math.round(x), ey = Math.round(y);
+    let path = this.getPath(sx, sy, ex, ey, climb);
+    // 远距离回退（2026-08-16 无限世界支持）：A* 在远距离（>128 格）下 maxIter 不够
+    // 会返回空路径——大片水/山隔断无法绕行。回退为分段直线导航：沿目标方向找
+    // 128 格内最近可走格作中间点，小人走过去后重新决策再 moveTo，逐步逼近目标。
+    // 不保证最优路径但保证"能走"（无限世界远距离移动的最低保底）。
+    if (path.length === 0 && this.world.inBounds(ex, ey)) {
+      const dx = ex - sx, dy = ey - sy;
+      const d = Math.hypot(dx, dy);
+      if (d > 1) {
+        const stepLen = Math.min(128, d); // 每段最多 128 格
+        const tx = Math.round(sx + (dx / d) * stepLen);
+        const ty = Math.round(sy + (dy / d) * stepLen);
+        // 中间点必须可走（否则找附近可走格）
+        if (this.world.isPassable(tx, ty, this.world.getTileDef(sx, sy).z ?? 0, climb)) {
+          path = [{ x: tx, y: ty }];
+        } else {
+          // 沿目标方向找最近可走格（扫 ±5 格）
+          for (let r = 1; r <= 5; r++) {
+            for (let a = 0; a < 8; a++) {
+              const ax = tx + Math.round(Math.cos(a * Math.PI / 4) * r);
+              const ay = ty + Math.round(Math.sin(a * Math.PI / 4) * r);
+              if (this.world.isPassable(ax, ay, this.world.getTileDef(sx, sy).z ?? 0, climb)) {
+                path = [{ x: ax, y: ay }];
+                break;
+              }
+            }
+            if (path.length > 0) break;
+          }
+        }
+      }
+    }
     const st = this.pawnStates.get(eid);
     if (st) {
       st.path = path;
@@ -524,6 +568,9 @@ export class Sim implements SimContext {
       skills: Object.fromEntries(Object.entries(this.tuning.pawn.skillInit).map(([k, v]) => [k, v + intBase])) as Record<SkillId, number>,
       desires: initDesires(this.rng, this.tuning.desire),
       lean: initLean(this.rng),
+      // 决策分散（2026-08-16 架构优化）：随机初始 decisionCd，避免所有 pawn 同 tick
+      // 集中 decide 产生尖峰；每人决策周期错开，decide 均摊到各 tick
+      decisionCd: this.rng.next() * this.tuning.pawn.decisionInterval,
     });
     this._pawnList.push(eid);
     this.pawnPositions.set(eid, { x, y });
@@ -660,30 +707,33 @@ export class Sim implements SimContext {
   // 寻路（A* 二叉堆 + 篝火航点中转，缓存带 climb）——2026-08-15 纯引擎公开入 SimContext：
   // mine/gather 命令处理器（gathering 玩法包）需要路径能力，引擎负责提供而非包自实现
   getPath(sx: number, sy: number, ex: number, ey: number, climb = this.tuning.pawn.climb): { x: number; y: number }[] {
-    // ⚠️ 2026-08-14 review 修复：缓存 key 必须带 climb——寻路结果依赖单位通过能力
-    //（高差判定），若不同单位 climb 不同，低 climb 的失败路径会被高 climb 的成功路径
-    // 污染（反之亦然：失败路径缓存更致命）。此前 key 只含坐标，全部单位 climb 相同
-    // 时无症状，mod 差异化 climb（接口声称"单位各自能力"）即错乱。
     const c = `c${climb}`;
     const key = `${sx},${sy}->${ex},${ey}#${c}`;
     const cached = this.trailCache.get(key);
-    if (cached) return cached;
+    if (cached) { this.trailHits++; return cached; }
+    this.trailMisses++;
     // 寻路策略表（tuning.path）：迭代上限/暗区代价/启发式 + 篝火航点中转，
     // mod 可覆盖；航点段（锚点对）路径复用同一 trailCache（建筑变更 clearTrailCache 自动失效）
-    // climb = 单位通过能力（高差判定），走单位各自能力（段缓存同理带 climb，见下）
     const path = findPath(this.world, sx, sy, ex, ey, this.tuning.path, {
       get: (ax, ay, bx, by) => this.trailCache.get(`${ax},${ay}->${bx},${by}#${c}`),
       set: (ax, ay, bx, by, p) => {
-        if (this.trailCache.size > 8192) this.trailCache.clear();
+        if (this.trailCache.size >= Sim.TRAIL_CACHE_MAX) this.evictTrailCache();
         this.trailCache.set(`${ax},${ay}->${bx},${by}#${c}`, p);
       },
     }, climb);
-    // 成功/失败都缓存：失败路径（目标被石丘/水隔断等）若每帧重算 A* 会跑满 maxIter——
-    // 石丘地图实测 16x 性能退化（2026-08-14）；失败缓存在地形/建筑变更时失效
-    //（onTileChange → clearTrailCache；buildSystem 建成 → clearTrailCache）
-    if (this.trailCache.size > 8192) this.trailCache.clear();
-    this.trailCache.set(key, path);
+    if (this.trailCache.size >= Sim.TRAIL_CACHE_MAX) this.evictTrailCache();
+    // 失败路径（空数组）key 加 !F 后缀 → onTileChange 时只清失败路径（成功路径跨帧保留）
+    this.trailCache.set(path.length === 0 ? key + '!F' : key, path);
     return path;
+  }
+
+  // FIFO 近似淘汰：删前 N 条（Map 迭代序 = 插入序，最旧在前）
+  private evictTrailCache(): void {
+    let n = Sim.TRAIL_CACHE_EVICT;
+    for (const k of this.trailCache.keys()) {
+      this.trailCache.delete(k);
+      if (--n <= 0) break;
+    }
   }
 
   // 空世界（旧档全灭/坏档）重开：重建出生点小人 + 初始营地（供客户端恢复局面）
@@ -784,6 +834,15 @@ export class Sim implements SimContext {
     if (this.oracleGoal && this.time > this.oracleGoal.until) this.oracleGoal = null;
     // mod 钩子：step 后（观察结果）
     this.mods.runHooks('step:after', { sim: this, dt });
+    // 延迟清缓存：帧内可能多次 onTileChange 标脏 → step 末只清失败路径
+    // 成功路径跨帧保留（地形变化后可能不精确但仍可走，小人最多绕一下；
+    // 失败路径可能变可行 → 必须清，否则"伐木后目标变可达"仍被旧失败缓存拒）
+    if (this.trailDirty) {
+      for (const k of this.trailCache.keys()) {
+        if (k.endsWith('!F')) this.trailCache.delete(k);
+      }
+      this.trailDirty = false;
+    }
   }
 
   // ---- UI 读取 ----

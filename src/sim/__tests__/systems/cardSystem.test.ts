@@ -3,6 +3,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { BehaviorSystem } from '../../systems/cardSystem';
 import { makeMinCtx } from '../helpers/minCtx';
+import { Sim } from '../../sim';
 import type { BehaviorIntent } from '../../ai/pawn';
 
 describe('CardSystem 独立测试（最小 ctx，无 Sim）', () => {
@@ -60,4 +61,59 @@ describe('CardSystem 独立测试（最小 ctx，无 Sim）', () => {
     expect(ctx._pawnStates.get(a)!.lastDecision!.time).toBeGreaterThan(0);
     expect(ctx._pawnStates.get(b)!.lastDecision!.time).toBeGreaterThan(0);
   });
+
+  // ---- 2026-08-16 决策节流回归 ----
+
+  it('决策节流：decisionCd > 0 时不抽卡决策（保持上次 job）', () => {
+    const sys = new BehaviorSystem(ctx);
+    const eid = ctx.spawnPawn(30, 30);
+    const st = ctx._pawnStates.get(eid)!;
+    // 第一次决策（decisionCd 缺省 → 0 → 真正 decide）
+    sys.update(0.2);
+    const firstJob = st.job;
+    expect(firstJob).toBeDefined();
+    // decisionCd 应被设为 decisionInterval
+    expect(st.decisionCd).toBe(ctx.tuning.pawn.decisionInterval);
+    // 第二次 update（decisionCd > 0）→ 不 decide，job 不变
+    sys.update(0.2);
+    expect(st.job).toBe(firstJob); // 保持上次意图
+    expect(st.decisionCd).toBeLessThan(ctx.tuning.pawn.decisionInterval); // 冷却递减
+  });
+
+  it('决策节流：冷却归零后恢复决策（job 可能变化）', () => {
+    const sys = new BehaviorSystem(ctx);
+    const eid = ctx.spawnPawn(30, 30);
+    const st = ctx._pawnStates.get(eid)!;
+    sys.update(0.2); // 首次决策
+    expect(st.decisionCd).toBe(ctx.tuning.pawn.decisionInterval);
+    // 推过冷却期
+    for (let i = 0; i < 20; i++) sys.update(0.2); // 4 秒 > 2 秒冷却
+    // 冷却归零后恢复决策 → 新 decisionCd > 0（刚 decide 后设了冷却）
+    expect(st.decisionCd ?? 0).toBeGreaterThan(0);
+  });
+
+  it('决策节流：紧急需求不被节流阻塞（urgent 优先于 decisionCd）', () => {
+    const sys = new BehaviorSystem(ctx);
+    const eid = ctx.spawnPawn(30, 30);
+    const st = ctx._pawnStates.get(eid)!;
+    // 设高 decisionCd + 紧急需求
+    st.decisionCd = 10; // 远未到决策时间
+    st.urgent = 'eat';
+    const n = ctx._needs.get(eid)!;
+    n.food = 100; // 紧急进食
+    // urgent 分支在 decisionCd 检查之前 → 不被节流阻塞（不崩即可）
+    expect(() => sys.update(0.2)).not.toThrow();
+  });
+
+  it('决策分散：spawnPawn 后 decisionCd 为随机值（0~interval 范围内）', () => {
+    // 用完整 Sim（spawnPawn 在 sim.ts 里设随机 decisionCd，分散同 tick 集中 decide）
+    const sim = new Sim({ seed: 42, pawnCount: 3 });
+    for (const eid of sim.pawns) {
+      const st = sim.pawnStates.get(eid)!;
+      const cd = st.decisionCd ?? 0;
+      expect(cd).toBeGreaterThanOrEqual(0);
+      expect(cd).toBeLessThanOrEqual(sim.tuning.pawn.decisionInterval);
+    }
+  });
+
 });

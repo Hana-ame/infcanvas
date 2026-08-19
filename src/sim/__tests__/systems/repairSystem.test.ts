@@ -43,4 +43,32 @@ describe('RepairSystem 独立测试（最小 ctx，无 Sim）', () => {
     for (let i = 0; i < 10; i++) sys.update(1);
     expect(st.job).toBe('闲逛');
   });
+
+  // ---- 2026-08-16 扩展 ----
+  it('满血建筑不修（无开销）', () => {
+    const sys = attach(ctx, new RepairSystem(ctx));
+    let fx = 0, fy = 0;
+    for (let x = 1; x < ctx.world.width && !fx; x++) for (let y = 1; y < ctx.world.height; y++) {
+      if (ctx.world.placeBuilding(x, y, 'campfire', 'player')) { fx = x; fy = y; break; }
+    }
+    const woodBefore = ctx.stockpile.wood ?? 0;
+    for (let i = 0; i < 60; i++) sys.update(1);
+    expect(ctx.stockpile.wood ?? 0).toBe(woodBefore); // 满血不修 = 不扣木
+  });
+
+  it('征召中鼠不触发修理（战术命令优先）', () => {
+    const sys = attach(ctx, new RepairSystem(ctx));
+    const eid = ctx.spawnPawn(50, 50);
+    const st = ctx.pawnStates.get(eid)!;
+    st.extra = { ...(st.extra ?? {}), drafted: true };
+    let fx = 0, fy = 0;
+    for (let x = 1; x < ctx.world.width && !fx; x++) for (let y = 1; y < ctx.world.height; y++) {
+      if (ctx.world.placeBuilding(x, y, 'campfire', 'player')) { fx = x; fy = y; break; }
+    }
+    ctx.world.damageBuilding(fx, fy, 20);
+    const woodBefore = ctx.stockpile.wood ?? 0;
+    for (let i = 0; i < 60; i++) sys.update(1);
+    expect(ctx.stockpile.wood ?? 0).toBe(woodBefore); // 征召中不修
+  });
+
 });

@@ -40,4 +40,26 @@ describe('PopulationSystem 独立测试（最小 ctx，无 Sim）', () => {
     for (let i = 0; i < Math.ceil(t.recruitInterval) + 10; i++) sys.update(1);
     expect(ctx.pawnList.length).toBe(before);
   });
+
+  // ---- 2026-08-16 扩展 ----
+  it('食物不足时不招募（foodThreshold 门控）', () => {
+    const sys = attach(ctx, new PopulationSystem(ctx));
+    ctx.stockpile.food = 0;
+    const before = ctx.pawnList.length;
+    for (let i = 0; i < 120; i++) sys.update(1);
+    expect(ctx.pawnList.length).toBe(before); // 缺粮不招人
+  });
+
+  it('达人口上限后不招募（maxPawns 门控）', () => {
+    const sys = attach(ctx, new PopulationSystem(ctx));
+    ctx.stockpile.food = 9999;
+    // 先填满到上限
+    while (ctx.pawnList.length < ctx.tuning.population.maxPawns) {
+      ctx.spawnPawn(50, 50);
+    }
+    const before = ctx.pawnList.length;
+    for (let i = 0; i < 120; i++) sys.update(1);
+    expect(ctx.pawnList.length).toBe(before); // 到上限不招
+  });
+
 });

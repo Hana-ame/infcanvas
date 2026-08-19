@@ -122,4 +122,30 @@ describe('驯兽守卫 DLC（beast-taming，2026-08-16）', () => {
     const sim = new Sim({ seed: 48, pawnCount: 1 });
     sim.issueCommand({ type: 'tame', x: 0, y: 0, args: { hostileIndex: 0 } });
   });
+
+  // ---- 2026-08-16 修复回归 ----
+
+  it('⑨ 守卫猫可被敌方猫反击致死（不再无敌）', () => {
+    const sim = makeSim(60);
+    // 守卫猫 + 敌方猫同位
+    sim.hostiles.push({ x: 50, y: 50, hp: 10, maxHp: 110, targetX: 50, targetY: 50, enemyId: 'cat', name: '守卫猫', faction: 'player', speed: 8, dmgPerSec: 6, loot: { item: 'food', amount: 3 }, owner: sim.pawns[0] });
+    sim.hostiles.push({ x: 50.5, y: 50.5, hp: 200, maxHp: 200, targetX: 50, targetY: 50, enemyId: 'raider', name: '敌方猫', faction: 'wild', speed: 0, dmgPerSec: 8, loot: { item: 'food', amount: 2 } });
+    const guard = sim.hostiles[0]!;
+    const foe = sim.hostiles[1]!;
+    // 步进 5 秒：守卫咬敌方 + 敌方反击守卫
+    for (let i = 0; i < 50; i++) sim.step(0.1);
+    // 守卫猫应该掉血（被反击）
+    expect(guard.hp).toBeLessThan(10);
+  });
+
+  it('⑩ pushHostile 初始 dashCd = cd（首帧不冲刺）', () => {
+    const mods = ModRegistry.default();
+    mods.mount(beastTamingPack);
+    const sim = new Sim({ seed: 61, pawnCount: 1, registry: mods });
+    const cat = ENEMIES.cat;
+    pushHostile(sim as never, cat, 50, 50, { targetX: 60, targetY: 50 });
+    const h = sim.hostiles[0]!;
+    expect(h.dashCd).toBe(cat.dash?.cd); // 初始 = cd（非 undefined/0）
+  });
+
 });

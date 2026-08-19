@@ -249,7 +249,7 @@ describe('drafting 玩法包（征召战斗，RW-1 M2）', () => {
   });
 
   it('追击持续刷新：敌人移动后按新位置重寻路（不再只追一次）', () => {
-    const sim = makeSim(52, 2);
+    const sim = makeSim(52, 1); // 1 人：避免 2 人时 pawn[1] 的随机决策挡 pawn[0] 追击路径
     const e0 = sim.pawns[0];
     const start = sim.pawnPositions.get(e0)!;
     // 无 raid 刷波干扰，手动塞一个静止敌 + 手动搬动（验证 resolveTarget 写回快照）
@@ -257,8 +257,9 @@ describe('drafting 玩法包（征召战斗，RW-1 M2）', () => {
     addCat(sim, spot.x, spot.y);
     sim.issueCommand({ type: 'draft', x: 0, y: 0, pawnId: e0, args: { drafted: true } });
     sim.issueCommand({ type: 'attack', x: 0, y: 0, pawnId: e0, args: { hostileIndex: 0 } });
+    sim.pawnStates.get(e0)!.decisionCd = 0; // 确保立即决策（不受随机初始 decisionCd 影响）
     // 敌人先被追杀一段，然后搬走 5 格 → 追击目标应切换到新位置（快照被刷新）
-    for (let i = 0; i < 30; i++) sim.step(1 / 20); // 1.5s：先接近
+    for (let i = 0; i < 60; i++) sim.step(1 / 20); // 3s：先接近（commandCooldown=3s 过后 drafting 续推追击）
     const h0 = sim.hostiles[0];
     const p0 = sim.pawnPositions.get(e0)!;
     expect(Math.hypot(h0.x - p0.x, h0.y - p0.y)).toBeLessThan(4); // 已接近

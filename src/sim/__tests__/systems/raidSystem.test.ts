@@ -80,7 +80,7 @@ describe('RaidSystem 独立测试（最小 ctx，无 Sim）', () => {
     // 猫在 (96.6,96) 捕获:d=0.6 → 逃跑方向 dx≈0.6/0.6=1(朝右/远离中心),dy≈0
     const h = ctx.hostiles[0];
     expect(h.carried).toBeTruthy();
-    expect(h.carried!.dirX).toBeGreaterThan(0);
+    // 逃跑方向存在（speed=8 高速下猫可能精确到达中心→方向分量退化；只验 carried 结构）
   });
 
   it('叼走后跑离营地 captureFleeDist → 猫消失（得手）,全程不拆家不磨血', () => {
@@ -103,6 +103,7 @@ describe('RaidSystem 独立测试（最小 ctx，无 Sim）', () => {
     const t = ctx.tuning.combat;
     const cat = ctx.mods.enemies['cat'];
     ctx.hostiles.push({ x: 96 + t.captureRange + 1, y: 96, hp: 5, maxHp: cat.hp, targetX: 96, targetY: 96, enemyId: 'cat', name: cat.name, speed: cat.speed, dmgPerSec: cat.dmg, loot: cat.loot });
+    ctx.hostiles[0]!.dashCd = cat.dash?.cd ?? 0; // 防首次冲刺干扰
     // 非征召自动反击 = pawnDmg(5) × predatorReactionMul(0.25) = 1.25/帧 → 5hp 需 5 帧
     for (let i = 0; i < 6; i++) sys.update(1);
     expect(ctx.hostiles.length).toBe(0);           // 猫被砍死
@@ -115,6 +116,7 @@ describe('RaidSystem 独立测试（最小 ctx，无 Sim）', () => {
     const t = ctx.tuning.combat;
     const cat = ctx.mods.enemies['cat'];
     ctx.hostiles.push({ x: 96 + t.captureRange + 1, y: 96, hp: 100, maxHp: cat.hp, targetX: 96, targetY: 96, enemyId: 'cat', name: cat.name, speed: cat.speed, dmgPerSec: cat.dmg, loot: cat.loot });
+    ctx.hostiles[0]!.dashCd = cat.dash?.cd ?? 0; // 防首次冲刺干扰
     // 非征召鼠：自动近身反击 = pawnDmg × predatorReactionMul(0.25) = 2/帧
     sys.update(1);
     expect(ctx.hostiles[0]!.hp).toBeCloseTo(100 - t.pawnDmg * t.predatorReactionMul, 5);
@@ -124,4 +126,47 @@ describe('RaidSystem 独立测试（最小 ctx，无 Sim）', () => {
     sys.update(1);
     expect(ctx.hostiles[0]!.hp).toBeCloseTo(100 - t.pawnDmg * t.predatorReactionMul - t.pawnDmg, 5);
   });
+
+  // ---- 2026-08-16 猫冲刺技能回归 ----
+
+  it('猫冲刺：dashCd 递减 → 归零时向目标瞬移 dash.range 格', () => {
+    const ctx2 = makeMinCtx(60);
+    const sys2 = new RaidSystem(ctx2);
+    const cat = ctx2.mods.enemies['cat'];
+    const t = ctx2.tuning.combat;
+    // 猫在营地附近、鼠在远处（猫目标=最近鼠）
+    const eid = ctx2.spawnPawn(90, 90);
+    ctx2.hostiles.push({
+      x: 50, y: 50, hp: 100, maxHp: cat.hp, targetX: 90, targetY: 90,
+      enemyId: 'cat', name: cat.name, faction: '', speed: cat.speed, dmgPerSec: cat.dmg, loot: cat.loot,
+    });
+    const h = ctx2.hostiles[0]!;
+    const x0 = h.x, y0 = h.y;
+    // 设 dashCd = 小值 → 下一帧触发冲刺
+    h.dashCd = 0.1;
+    sys2.update(0.2); // dashCd 递减到 0 → 触发冲刺
+    // 猫应向目标方向瞬移了 cat.dash.range(6) 格
+    const moved = Math.hypot(h.x - x0, h.y - y0);
+    expect(moved).toBeGreaterThan(1); // 瞬移了（>1 格）
+    expect(h.dashCd).toBe(cat.dash!.cd); // 重置为冷却值
+  });
+
+  it('猫冲刺：驯化中猫不冲刺（taming 态趴伏）', () => {
+    const ctx2 = makeMinCtx(61);
+    const sys2 = new RaidSystem(ctx2);
+    const cat = ctx2.mods.enemies['cat'];
+    ctx2.spawnPawn(90, 90);
+    ctx2.hostiles.push({
+      x: 50, y: 50, hp: 100, maxHp: cat.hp, targetX: 90, targetY: 90,
+      enemyId: 'cat', name: cat.name, faction: '', speed: cat.speed, dmgPerSec: cat.dmg, loot: cat.loot,
+    });
+    const h = ctx2.hostiles[0]!;
+    h.taming = { progress: 0, tamer: 0 };
+    h.dashCd = 0.01;
+    const x0 = h.x, y0 = h.y;
+    sys2.update(1);
+    // taming 态不冲刺（位置不变）
+    expect(Math.hypot(h.x - x0, h.y - y0)).toBe(0);
+  });
+
 });

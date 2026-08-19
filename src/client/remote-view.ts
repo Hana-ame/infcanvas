@@ -1,15 +1,14 @@
 // RemoteSim —— 连 P1 server 的客户端视图（DESIGN §5：权威在 server）
 // 实现与本地 Sim 同构的读取面，HUD/Renderer 无需区分本地/远程。
 // 用法：?remote=ws://127.0.0.1:8080
-import { K_WEARABLE } from '../sim/mods/contracts';
-import { EventBus, type GameEvent } from '../sim/core/events';
 import type { BehaviorCard } from '../sim/ai/pawn';
 import type { TileDef, BuildingDef, ItemDef } from '../sim/defs';
 import type { EnvTuning } from '../sim/defs/tuning';
-import type { WelcomeTuning } from '../shared/protocol';
+import type { WelcomeTuning, WelcomeMsg } from '../shared/protocol';
 import type { FactionTuning } from '../sim/defs/tuning';
 import type { Command } from '../sim/sim';
-import type { ServerMsg, WelcomeMsg, SnapshotMsg, DeltaMsg } from '../shared/protocol';
+import type { SnapshotMsg } from '../shared/protocol';
+import type { GameEvent } from '../sim/core/events';
 import { World, MAX_TILE, type ChunkData } from '../sim/core/world';
 
 // 协议快照里建筑形状
@@ -20,7 +19,7 @@ export interface SnapBuilding {
 }
 
 // ---- HUD / Renderer 所需的 sim 公共读取面（本地 Sim 与 RemoteSim 都满足） ----
-export interface SimViewHostile { i?: number; enemyId?: string; name?: string; x: number; y: number; hp: number; maxHp: number; faction?: string; taming?: { progress: number; tamer: number }; owner?: number }
+export interface SimViewHostile { i?: number; enemyId?: string; name?: string; x: number; y: number; hp: number; maxHp: number; faction?: string; taming?: { progress: number; tamer: number }; owner?: number; dashCd?: number }
 
 export interface SimViewPawn {
   dna: { str: number; con: number; siz: number; dex: number; int: number; pow: number; app: number; edu: number; traits: string[]; maxSlots: number };

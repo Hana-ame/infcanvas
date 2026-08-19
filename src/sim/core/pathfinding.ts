@@ -1,5 +1,8 @@
 // A* 寻路 —— 图块网格，P0 简单实现（无优化，后续可加 JPS/分块）
 // （迭代优化：open 表已从线性数组升为二叉堆 MinHeap、加篝火航点中转/迭代上限双档/段缓存，见下文）
+// 2026-08-16 架构优化：A* 内部 key/closed/cost 从字符串 `${x},${y}` 改为数字
+// `x * 65536 + y`（避免每节点 ×8 邻居 = 8 次字符串分配 + GC 压力，Map<number> 比
+// Map<string> 快约 2-3 倍）；reconstruct 后做路径简化（去直线冗余中间点，减缓存体积）。
 // 数据驱动：策略参数（迭代上限/暗区代价/启发式）进表（tuning.path），算法本体保留代码
 import { World, type TileId } from './world';
 import type { HeuristicId } from '../defs/tuning';
@@ -94,13 +97,30 @@ class MinHeap {
 }
 
 // 锚点收集：tags 含 anchor 的建筑（篝火/教堂），按距起点距离排序取 cap 个
+// 锚点缓存（2026-08-16 性能优化：原每次 findPath 遍历全建筑表 filter+map+sort+slice，
+// 40 pawn × 多次寻路 = 大量重复。锚点在建筑存活期间不变 → 按 buildingVersion 缓存）
+// 注意：必须按 World 实例缓存（WeakMap），不能用模块级单例——多个 Sim/World 的
+// buildingVersion 可能相同但建筑集合不同，全局缓存会串世界（测试/多开污染）。
+const _anchorCacheByWorld = new WeakMap<World, { version: number; anchors: { x: number; y: number }[] }>();
+
 function collectAnchors(world: World, sx: number, sy: number, cfg: PathConfig | undefined): { x: number; y: number }[] {
+  // 版本检查：buildingVersion 变了才重建缓存
+  let entry = _anchorCacheByWorld.get(world);
+  if (!entry || entry.version !== world.buildingVersion) {
+    entry = {
+      version: world.buildingVersion,
+      anchors: [...world.buildings.entries()]
+        .filter(([, b]) => b.def.tags?.includes('anchor'))
+        .map(([k]) => World.keyToXY(k)),
+    };
+    _anchorCacheByWorld.set(world, entry);
+  }
   const cap = cfg?.maxWaypoints ?? 8;
-  return [...world.buildings.entries()]
-    .filter(([, b]) => b.def.tags?.includes('anchor'))
-    .map(([k]) => World.keyToXY(k))
-    .sort((a, b) => ((a.x - sx) ** 2 + (a.y - sy) ** 2) - ((b.x - sx) ** 2 + (b.y - sy) ** 2))
-    .slice(0, cap);
+  return entry.anchors
+    .map((a) => ({ ...a, d: (a.x - sx) ** 2 + (a.y - sy) ** 2 }))
+    .sort((a, b) => a.d - b.d)
+    .slice(0, cap)
+    .map(({ x, y }) => ({ x, y }));
 }
 
 function nearestAnchor(anchors: { x: number; y: number }[], x: number, y: number, radius: number): { x: number; y: number } | null {
@@ -119,12 +139,28 @@ function nearestAnchor(anchors: { x: number; y: number }[], x: number, y: number
 //  - 迭代上限：无篝火 → maxIter（防爆）；有篝火 → waypointMaxIter（放宽）
 //  - 任一段失败 → 回退直连（放宽 1.5 倍上限）
 export function findPath(world: World, startX: number, startY: number, endX: number, endY: number, cfg?: PathConfig, wpCache?: WaypointCache, climb = Infinity): { x: number; y: number }[] {
+  // 短距离优化（2026-08-16）：起终点 < 32 格直连 A*，不走航点中转——短距离 A*
+  // 搜索范围小（64×64 内），航点查找/段缓存/合并开销 > 收益。maxIter 钳到 2000 防爆。
+  const distSq = (startX - endX) * (startX - endX) + (startY - endY) * (startY - endY);
+  if (distSq <= 32 * 32) {
+    const shortMax = Math.min(cfg?.maxIter ?? 2000, 2000);
+    return findPathRaw(world, startX, startY, endX, endY, shortMax, cfg, climb);
+  }
+  // 远距离分段寻路（2026-08-16 HPA* 简化版：无限世界支持）：
+  // A* 在远距离（跨多 chunk）maxIter 不够绕行 → 返回空。改为沿直线方向分段：
+  // 每 56 格（< chunk 64 宽）做一次短距离 A*（maxIter 8000 够搜），拼接所有段。
+  // 某段失败 → 该段回退直线（目标格直接放路径，walk 推进时遇障停下 → 下次决策重试）。
+  // 注意：显式 maxIter 钳制时不走分段（测试用小 maxIter 验证"远路返回空"语义）
+  const dist = Math.sqrt(distSq);
+  const explicitMax = cfg?.maxIter;
+  if (dist > 128 && explicitMax === undefined) {
+    return findPathSegmented(world, startX, startY, endX, endY, cfg, wpCache, climb);
+  }
   const anchors = collectAnchors(world, startX, startY, cfg);
   const hasWp = anchors.length > 0;
   const waypointsEnabled = cfg?.waypoints ?? hasWp;
   // 显式 maxIter = 策略钳制（数据驱动：传小值即钳制，任何路径都不能超过它）
   // 缺省：无篝火 → 小上限防爆；有篝火 → waypointMaxIter 放宽
-  const explicitMax = cfg?.maxIter;
   const baseMaxIter = explicitMax ?? (hasWp ? cfg?.waypointMaxIter ?? 40000 : 15000);
   const wpMaxIter = explicitMax ?? cfg?.waypointMaxIter ?? Math.max(baseMaxIter, 40000);
   if (!waypointsEnabled || !hasWp) {
@@ -168,13 +204,14 @@ function findPathRaw(world: World, startX: number, startY: number, endX: number,
   const target = world.isPassable(endX, endY, sZ, climb) ? { x: endX, y: endY } : nearestPassable(world, endX, endY, sZ, climb);
   if (!target) return [];
   const open = new MinHeap();
-  const closed = new Set<string>();
+  const closed = new Set<number>();
   const start: Node = { x: startX, y: startY, g: 0, h: h(Math.abs(startX - target.x), Math.abs(startY - target.y)), f: 0, parent: null, heapIdx: -1 };
   start.f = start.g + start.h;
   open.push(start);
 
-  const key = (x: number, y: number) => `${x},${y}`;
-  const cost = new Map<string, number>();
+  // 数字 key（2026-08-16 架构优化）：避免每节点 8 次字符串分配 + GC；x,y < 2^16 → key = x*65536+y
+  const key = (x: number, y: number) => x * 65536 + y;
+  const cost = new Map<number, number>();
   cost.set(key(startX, startY), 0);
 
   const dirs = [
@@ -195,7 +232,7 @@ function findPathRaw(world: World, startX: number, startY: number, endX: number,
     if (bestG !== undefined && current.g > bestG) continue;
 
     if (current.x === target.x && current.y === target.y) {
-      return reconstruct(current);
+      return simplifyPath(reconstruct(current));
     }
 
     closed.add(ck);
@@ -281,6 +318,23 @@ function reconstruct(node: Node): { x: number; y: number }[] {
   return path;
 }
 
+// 路径简化（2026-08-16 架构优化）：去直线冗余中间点——三点共线时删中间点。
+// 减缓存体积（value 数组更短 → Map 更小）+ 减少 walk 每帧 pathIndex 遍历量。
+function simplifyPath(path: { x: number; y: number }[]): { x: number; y: number }[] {
+  if (path.length <= 2) return path;
+  const out: { x: number; y: number }[] = [path[0]!];
+  for (let i = 1; i < path.length - 1; i++) {
+    const a = out[out.length - 1]!;
+    const b = path[i]!;
+    const c = path[i + 1]!;
+    // 叉积 = 0 → 三点共线 → b 是冗余中间点，跳过
+    const cross = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+    if (cross !== 0) out.push(b);
+  }
+  out.push(path[path.length - 1]!);
+  return out;
+}
+
 // 终点不可走（如站在建筑上）→ 就近搜可走格：半径固定 3（常量），
 // 只处理"终点被占一格"的局部情况，代价可控；3 格内全不可走则放弃
 // 2026-08-14 z 感知：fromZ/climb 参与判定（目标须从起点可达——石丘顶目标落到可攀格）
@@ -295,4 +349,59 @@ function nearestPassable(world: World, x: number, y: number, fromZ: number, clim
     }
   }
   return null;
+}
+
+// 分段寻路（2026-08-16 HPA* 简化版：无限世界远距离支持）
+// 背景：A* 在远距离（>128 格跨多 chunk）下 maxIter 不够绕行大片水/山 → 返回空。
+// 方案：沿起→终直线方向，每隔 56 格（< chunk 64 宽）设一个中间点，每段做短距离
+// A*（maxIter 8000 够搜 56×56 = 3136 格），拼接所有段。某段失败 → 该段回退直线
+// （中间点直接放路径，walk 推进时遇障停下 → 下帧决策重试）。不保证最优但保证"能动"。
+function findPathSegmented(
+  world: World, sx: number, sy: number, ex: number, ey: number,
+  cfg: PathConfig | undefined, wpCache: WaypointCache | undefined, climb: number,
+): { x: number; y: number }[] {
+  const dx = ex - sx, dy = ey - sy;
+  const dist = Math.hypot(dx, dy);
+  const segLen = 56; // 每段长度（< chunk 64 宽，保证 A* 搜索范围可控）
+  const nSegs = Math.ceil(dist / segLen);
+  const segMaxIter = Math.min(cfg?.maxIter ?? 8000, 8000);
+  const sZ = world.getTileDef(sx, sy).z ?? 0;
+  const result: { x: number; y: number }[] = [{ x: sx, y: sy }];
+
+  for (let i = 1; i <= nSegs; i++) {
+    const frac = i / nSegs;
+    const mx = Math.round(sx + dx * frac);
+    const my = Math.round(sy + dy * frac);
+    const prevX = result[result.length - 1]!.x;
+    const prevY = result[result.length - 1]!.y;
+
+    // 段终点必须可走；不可走则就近找可走格
+    let tx = mx, ty = my;
+    if (!world.isPassable(tx, ty, sZ, climb)) {
+      const np = nearestPassable(world, mx, my, sZ, climb);
+      if (np) { tx = np.x; ty = np.y; }
+      else continue; // 跳过该段（直线回退时 walk 会原地停）
+    }
+
+    // 段 A*（短距离，maxIter 够搜）
+    const segPath = findPathRaw(world, prevX, prevY, tx, ty, segMaxIter, cfg, climb);
+    if (segPath.length > 0) {
+      // 拼接（去重连接点：segPath[0] == result 末尾）
+      result.push(...segPath.slice(1));
+    } else {
+      // 段 A* 失败 → 直线回退（放目标格，walk 推进遇障停 → 下帧重试）
+      result.push({ x: tx, y: ty });
+    }
+  }
+
+  // 确保终点在结果末尾
+  const last = result[result.length - 1]!;
+  if (last.x !== ex || last.y !== ey) {
+    // 最终段到终点
+    const finalPath = findPathRaw(world, last.x, last.y, ex, ey, segMaxIter, cfg, climb);
+    if (finalPath.length > 0) result.push(...finalPath.slice(1));
+    else result.push({ x: ex, y: ey });
+  }
+
+  return simplifyPath(result.length > 1 ? result : []);
 }
