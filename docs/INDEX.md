@@ -53,8 +53,8 @@
 
 ## 3. 当前状态快照
 
-- 测试：`npm test` 当前 **536 用例 / 57 文件** 全绿；`npx tsc --noEmit` 干净。
-- 默认装配：**28 系统 / 27 玩法包**。
+- 测试：`npm test` 当前 **625 用例 / 62 文件** 全绿；`npx tsc --noEmit` 干净。
+- 默认装配：**49 系统 / 60 玩法包**。
 - 入口：单机 `npm run dev`；联机 `npm run server -- 8080` + `?remote=ws://127.0.0.1:8080`。
 - 最新文档变更请优先看 `AGENTS.md` 末尾的“当前装配态快照”和 `docs/PROGRESS.md` 末尾。
 
@@ -134,3 +134,4 @@ docs/
   REIMPLEMENT_PROMPT.md 从零复刻规格书
   DEPLOY.md           部署
 ```
+- [DLC 添加指南](DLC_GUIDE.md) — 新增玩法包的完整流程（6 步 + 检查清单）
