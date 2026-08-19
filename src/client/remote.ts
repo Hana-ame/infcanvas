@@ -286,12 +286,13 @@ export class RemoteSim {
     let pawnListChanged = false;
     if (m.pawns) {
       // snap.pawns 随增量同步（M2：逐 eid 合并保全量形状，不整体替换）
-      this.snap.pawns = this.snap.pawns.map((p) => p);
+      // 2026-08-16 优化：用 Map 代替 findIndex 逐条扫描——delta 每帧多条时 O(n²)→O(n)
+      const snapById = new Map(this.snap.pawns.map((p) => [p.eid, p]));
       for (const pd of m.pawns) {
         if (pd.removed) {
           this.pawnCache.delete(pd.eid);
           this.pawnPositions.delete(pd.eid);
-          this.snap.pawns = this.snap.pawns.filter((p) => p.eid !== pd.eid);
+          snapById.delete(pd.eid);
           pawnListChanged = true;
           continue;
         }
@@ -325,13 +326,12 @@ export class RemoteSim {
         if (pd.commander !== undefined) merged.commander = pd.commander;
         if (pd.tactic !== undefined) merged.tactic = pd.tactic;
         this.pawnCache.set(pd.eid, merged);
-        // M2：同一条目合入 snap.pawns（新增 push；既有 = 替换为 merged 同源对象）
-        const idx = this.snap.pawns.findIndex((p) => p.eid === pd.eid);
-        if (idx >= 0) this.snap.pawns[idx] = merged;
-        else this.snap.pawns.push(merged);
+        snapById.set(pd.eid, merged);
         if (pd.x !== undefined && pd.y !== undefined) this.pawnPositions.set(pd.eid, { x: pd.x, y: pd.y });
         if (!old) pawnListChanged = true;
       }
+      // Map 保持原快照顺序（更新不换位，新增追加在尾），与旧 findIndex/push 语义一致
+      this.snap.pawns = [...snapById.values()];
     }
     if (m.pawnList) {
       this.pawns = m.pawnList;

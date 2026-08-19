@@ -31,14 +31,19 @@ export type { IntentExecutor, WorkExecutor } from './executors';
 
 // 拥挤统计格表（2026-08-16 热路径优化，配合 walk）：pawnPositions 按取整格聚合人数。
 // 字符串键 `${x},${y}`（x/y 取整整数化，字符串拼接免 Map 数组/双层 Map 的分配开销）
-const buildCrowdGrid = (c: SimContext): Map<string, number> => {
-  const g = new Map<string, number>();
+// 拥挤格表（2026-08-16 性能优化：原 Map<string,number> → 数字 key Map<number,number>，
+// 消除 40 pawn × 3000 tick = 120k 次字符串分配 `${x},${y}` + GC 压力）
+const buildCrowdGrid = (c: SimContext): Map<number, number> => {
+  const g = new Map<number, number>();
   for (const [, p] of c.pawnPositions) {
-    const k = `${Math.round(p.x)},${Math.round(p.y)}`;
+    const k = (Math.round(p.x) & 0xFFFF) | (Math.round(p.y) << 16);
     g.set(k, (g.get(k) ?? 0) + 1);
   }
   return g;
 };
+
+// 数字 key helper（与 buildCrowdGrid 同编码：x 低 16 位 + y 高 16 位）
+const crowdKey = (x: number, y: number): number => (Math.round(x) & 0xFFFF) | (Math.round(y) << 16);
 
 export class BehaviorSystem implements GameSystem {
   id = 'behavior';
@@ -303,10 +308,10 @@ export class BehaviorSystem implements GameSystem {
   //（2026-08-16 热路径优化：原拥挤统计与占位检查=每走一步全表遍历 pawnPositions
   //（40 人 → 每帧 1600 次距离检查，profiler 定位行为系统占 step 50% 的主因之一）；
   // 改由 update 每帧先按格聚合一次（buildCrowdGrid），此处查 3×3 邻域/目标格即 O(1)）
-  private walk(eid: number, st: PawnState, pos: { x: number; y: number }, dt: number, crowdGrid: Map<string, number>): void {
+  private walk(eid: number, st: PawnState, pos: { x: number; y: number }, dt: number, crowdGrid: Map<number, number>): void {
     // 本帧起始格（walk 末尾会增量更新 crowdGrid——占位检查维持帧内顺序可见性：
     // 先到者被后到者看到（与原逐人检查语义一致）；只改同格计数，O(1)）
-    const fromKey = `${Math.round(pos.x)},${Math.round(pos.y)}`;
+    const fromKey = crowdKey(pos.x, pos.y);
     const target = st.path![st.pathIndex!];
     const dx = target.x - pos.x;
     const dy = target.y - pos.y;
@@ -324,7 +329,7 @@ export class BehaviorSystem implements GameSystem {
       const ry = Math.round(pos.y);
       for (let ox = rx - 1; ox <= rx + 1; ox++) {
         for (let oy = ry - 1; oy <= ry + 1; oy++) {
-          d += crowdGrid.get(`${ox},${oy}`) ?? 0;
+          d += crowdGrid.get(crowdKey(ox, oy)) ?? 0;
         }
       }
       d -= 1; // 自己（必在表中）
@@ -338,7 +343,7 @@ export class BehaviorSystem implements GameSystem {
       const hasWork = !!(st.chopTarget ?? st.mineTarget ?? st.caveTarget ?? st.healTarget ?? st.prayTarget ?? st.onArriveWork);
       // 占位检查（同格聚合近似）：目标格聚集人数 - 自己（若同格）= 占用他人数；
       // 原逐人 hypot<0.5 判定 → 格聚合半径 1 格，含 0.5 边界外的临界误报（排队语义不敏感）
-      const tk = `${Math.round(target.x)},${Math.round(target.y)}`;
+      const tk = crowdKey(target.x, target.y);
       const selfOnTarget = Math.round(pos.x) === Math.round(target.x) && Math.round(pos.y) === Math.round(target.y);
       const occupied = (crowdGrid.get(tk) ?? 0) - (selfOnTarget ? 1 : 0) > 0;
       if (occupied && !hasWork && dist > pw.crowdStopGap) {
@@ -362,7 +367,7 @@ export class BehaviorSystem implements GameSystem {
     this.ctx.setPosition(eid, pos);
     this.ctx.pawnPositions.set(eid, { x: pos.x, y: pos.y });
     // 增量更新格表（从 fromKey 移到新格；同格不动零开销）——见 walk 头注释
-    const toKey = `${Math.round(pos.x)},${Math.round(pos.y)}`;
+    const toKey = crowdKey(pos.x, pos.y);
     if (toKey !== fromKey) {
       const from = (crowdGrid.get(fromKey) ?? 0) - 1;
       if (from <= 0) crowdGrid.delete(fromKey); else crowdGrid.set(fromKey, from);

@@ -134,7 +134,13 @@ export class SanSystem implements GameSystem {
         st.crazyFleeTarget = best ?? undefined;
       }
       if (st.crazyFleeTarget) {
-        this.ctx.moveTo(eid, st.crazyFleeTarget.x, st.crazyFleeTarget.y);
+        // 2026-08-16 优化：逃向篝火按 pathCd 节流重寻路——原每 tick 直接 moveTo
+        // 会反复 A* 到同一目标（多人崩溃时 san max 28ms 尖峰）。pathCd 由
+        // BehaviorSystem 每帧递减，复用同一套寻路节流语义。
+        if ((st.pathCd ?? 0) <= 0) {
+          this.ctx.moveTo(eid, st.crazyFleeTarget.x, st.crazyFleeTarget.y);
+          st.pathCd = this.ctx.tuning.path.pathCd;
+        }
         return;
       }
     }
@@ -149,6 +155,7 @@ export class SanSystem implements GameSystem {
       const ty = Math.round(pos.y) + this.ctx.rng.int(-s.crazyWanderRange, s.crazyWanderRange);
       if (w.inBounds(tx, ty) && w.isPassable(tx, ty)) {
         this.ctx.moveTo(eid, tx, ty);
+        st.pathCd = this.ctx.tuning.path.pathCd; // 乱跑也节流重寻路（防每帧 A* 风暴）
         st.crazyCooldown = s.crazyCooldownMin + this.ctx.rng.next() * (s.crazyCooldownMax - s.crazyCooldownMin);
         return;
       }

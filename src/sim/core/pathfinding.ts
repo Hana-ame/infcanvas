@@ -152,8 +152,7 @@ export function findPath(world: World, startX: number, startY: number, endX: num
   // 某段失败 → 该段回退直线（目标格直接放路径，walk 推进时遇障停下 → 下次决策重试）。
   // 注意：显式 maxIter 钳制时不走分段（测试用小 maxIter 验证"远路返回空"语义）
   const dist = Math.sqrt(distSq);
-  const explicitMax = cfg?.maxIter;
-  if (dist > 128 && explicitMax === undefined) {
+  if (dist > 128 && !(cfg?.maxIter !== undefined && cfg.maxIter < 8000)) {
     return findPathSegmented(world, startX, startY, endX, endY, cfg, wpCache, climb);
   }
   const anchors = collectAnchors(world, startX, startY, cfg);
@@ -161,6 +160,7 @@ export function findPath(world: World, startX: number, startY: number, endX: num
   const waypointsEnabled = cfg?.waypoints ?? hasWp;
   // 显式 maxIter = 策略钳制（数据驱动：传小值即钳制，任何路径都不能超过它）
   // 缺省：无篝火 → 小上限防爆；有篝火 → waypointMaxIter 放宽
+  const explicitMax = cfg?.maxIter;
   const baseMaxIter = explicitMax ?? (hasWp ? cfg?.waypointMaxIter ?? 40000 : 15000);
   const wpMaxIter = explicitMax ?? cfg?.waypointMaxIter ?? Math.max(baseMaxIter, 40000);
   if (!waypointsEnabled || !hasWp) {
