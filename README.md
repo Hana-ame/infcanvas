@@ -4,7 +4,7 @@ RimWorld-like 殖民地游戏 · web / infinite canvas · 可联机 · 支持 LL
 
 - **sim**：纯逻辑仿真核心，零渲染依赖，双端（server/client）共用（Node 直跑已验证）
 - **client**：Pixi 渲染 + DOM UI（本地单机 / `?remote=` 连 server 两种模式）
-- **server**：WSS + 权威模拟 + tick 循环（P1 骨架已落地，见 docs/DESIGN.md §9）
+- **server**：WSS + 权威模拟 + tick 循环（P1 骨架已落地，tick delta/断线重连/可选鉴权已提前落地，见 docs/DESIGN.md §9）
 
 详见 [docs/DESIGN.md](docs/DESIGN.md)。
 

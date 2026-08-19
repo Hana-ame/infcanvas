@@ -716,9 +716,9 @@ overrideTuning(patch: DeepPartial<TuningConfig>): this  // 覆盖平衡参数（
 - `tuning.combat.predatorReactionMul = 0.25`：非征召鼠对捕食者（predator 标记）的近身反击伤害倍率（自动反击只拖不杀——90hp 捕食者被非征召反击击杀需 45s，玩家有充足窗口驯化/指挥）；征召鼠（K_DRAFTED）恒全伤（1.0）。语义 = 自动防御只拖延、玩家指挥才能高效击杀——给战场指挥（征召/冲锋）与驯兽守卫（重伤窗口）真实介入价值。
 - 适用点：仅 raidSystem 捕食者分支的近身反击（nearestPawnInRange 自动选取，非玩家操作）；carried 逃跑途中被追砍保持全伤（叼着鼠的猫本该被全力截杀）。
 
-## 当前装配态快照（2026-08-16 战斗平衡终版，前列数字为历史演进记录请勿改动——以本条为最新）
+## 当前装配态快照（2026-08-16 终版，前列数字为历史演进记录请勿改动——以本条为最新）
 
-- `SYSTEM_DEFS` = **28 系统**（内核 1 = behavior 决策引擎，内联 ctor；余 27 由玩法包 registerSystemDef 回填）；`KERNEL_SYSTEM_IDS = ['behavior']`；`DEFAULT_PLAYSTYLE_PACKS` = **27 包**（含 field-command / beast-taming）。
+- `SYSTEM_DEFS` 表 = **27 系统**（内核 1 = behavior 决策引擎，内联 ctor；表内插件 26 + field-command）；默认装配 = **28 系统**（另有 beastTaming 表外插件）；`KERNEL_SYSTEM_IDS = ['behavior']`；`DEFAULT_PLAYSTYLE_PACKS` = **27 包**（含 field-command / beast-taming）。
 - 测试 = **536 用例 / 57 文件**（全量 `npm test` + `npx tsc --noEmit` 干净）。
 - `tuning.combat.predatorReactionMul = 0.25`：非征召鼠对捕食者自动近身反击倍率；征召鼠（K_DRAFTED）全伤。语义见上节捕食者近身反击倍率。
 - 战斗数值（2026-08-16 终版）：`pawnDmg = 5`（鼠近战）、`meleeRange = 3`（反击圈）、`captureRange = 1.5`（捕食者叼鼠距离）。
