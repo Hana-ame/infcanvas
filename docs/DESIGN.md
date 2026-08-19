@@ -1,6 +1,7 @@
 # infcanvas 设计文档
 
 > 2026-08-03 · 从 gsap-framework 拆出的独立项目
+> 历史实现/追加记录见 `docs/CHANGELOG.md`；当前进度见 `docs/PROGRESS.md`。
 
 ## 0. 北极星（north star）
 
