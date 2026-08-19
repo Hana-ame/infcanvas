@@ -1,16 +1,17 @@
 # infcanvas 文档索引
 
-> 本文档是仓库所有文档的导航/索引。
-> 作用：快速找到“我想了解什么应该读哪篇”，以及“我改了代码应该同步哪篇”。
+> 本文档是仓库全部文档的导航。
+> 目标：知道“该读哪篇”“改了代码该同步哪篇”。
 
-## 1. 入口文档
+## 1. 入口与约定
 
 | 文档 | 定位 |
 | --- | --- |
 | `README.md` | 项目总入口：是什么、怎么跑、当前能力 |
+| `AGENTS.md` | 开发约定：文档纪律、代码注释纪律、插件化纪律、当前装配态 |
 | `docs/INDEX.md` | 本文档：全部文档导航 |
 
-## 2. 文档清单
+## 2. 文档地图
 
 ### 核心设计 / 架构
 
@@ -49,7 +50,14 @@
 | --- | --- | --- |
 | `docs/DEPLOY.md` | GitHub + Cloudflare Pages 部署配置、注意事项、发布流程 | 部署/推送/排查线上问题时读 |
 
-## 3. 推荐阅读顺序
+## 3. 当前状态快照
+
+- 测试：`npm test` 当前 **536 用例 / 57 文件** 全绿；`npx tsc --noEmit` 干净。
+- 默认装配：**28 系统 / 27 玩法包**。
+- 入口：单机 `npm run dev`；联机 `npm run server -- 8080` + `?remote=ws://127.0.0.1:8080`。
+- 最新文档变更请优先看 `AGENTS.md` 末尾的“当前装配态快照”和 `docs/PROGRESS.md` 末尾。
+
+## 4. 推荐阅读顺序
 
 ### 快速了解项目
 
@@ -64,7 +72,7 @@ README.md
 
 ```text
 docs/DATA_DRIVEN.md
-→ docs/AGENTS.md（仓库约定）
+→ AGENTS.md（仓库约定）
 → docs/DESIGN.md（相关系统章节）
 → docs/PROGRESS.md（当前进度）
 ```
@@ -92,9 +100,9 @@ docs/DLC_REFERENCE.md
 → docs/REIMPLEMENT_PROMPT.md（原则）
 ```
 
-## 4. 文档维护约定
+## 5. 文档维护约定
 
-仓库已有硬性约定（见 `AGENTS.md`）：
+仓库硬性约定见 `AGENTS.md`：
 
 - `docs/` 是设计蓝本，**只能追加，不能删改历史行**。
 - 改代码必须同步文档：
@@ -103,3 +111,24 @@ docs/DLC_REFERENCE.md
   - 架构/数据模型变化 → `docs/DESIGN.md` / `docs/DATA_DRIVEN.md`
 - 部署相关变更 → `docs/DEPLOY.md`
 - 新增文档后，记得更新 `docs/INDEX.md`。
+
+## 6. 当前文档树
+
+```text
+README.md             项目入口
+AGENTS.md             开发约定与当前装配态
+docs/
+  INDEX.md            本文档
+  DESIGN.md           核心设计
+  DATA_DRIVEN.md      数据驱动/数值/玩法包
+  PLAYING.md          玩家手册
+  PROGRESS.md         实现进度/待办
+  REPLAYS.md          趣味回放
+  RESEARCH.md         竞品研究
+  DLC_REFERENCE.md    DLC 种子库
+  COLAB.md            设计问答/决策记录
+  RW_SPRINT.md        RW-1 第一批
+  RW_SPRINT2.md       RW-1 修订
+  REIMPLEMENT_PROMPT.md 从零复刻规格书
+  DEPLOY.md           部署
+```
