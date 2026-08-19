@@ -6,7 +6,7 @@ RimWorld-like 殖民地游戏 · web / infinite canvas · 可联机 · 支持 LL
 - **client**：Pixi 渲染 + DOM UI（本地单机 / `?remote=` 连 server 两种模式）
 - **server**：WSS + 权威模拟 + tick 循环（P1 骨架已落地，tick delta/断线重连/可选鉴权已提前落地，见 docs/DESIGN.md §9）
 
-**文档导航**：[docs/INDEX.md](docs/INDEX.md) 是总索引；核心设计见 [docs/DESIGN.md](docs/DESIGN.md)，玩家手册见 [docs/PLAYING.md](docs/PLAYING.md)。
+**文档导航**：[docs/INDEX.md](docs/INDEX.md) 是总索引；核心设计见 [docs/DESIGN.md](docs/DESIGN.md)，玩家手册见 [docs/PLAYING.md](docs/PLAYING.md)，历史演进见 [docs/CHANGELOG.md](docs/CHANGELOG.md)。
 
 **快速体验**
 

@@ -43,6 +43,7 @@
 | `docs/PROGRESS.md` | 实现进度表、已完成项、待办/差距、技术栈 | 当前做到哪、下一步做什么时读 |
 | `docs/RW_SPRINT.md` | RW-1 第一批实施：工作优先级 + 征召战斗 | 了解 RW-1 M1/M2 落地细节时读 |
 | `docs/RW_SPRINT2.md` | RW-1 修订：神谕卡式工作引导 | 了解 RW-1 后续修订时读 |
+| `docs/CHANGELOG.md` | 从 DESIGN/DATA_DRIVEN 拆出的历史实现/数值/审查记录 | 想看演进历史、旧数值依据、原始追加记录时读 |
 
 ### 运维 / 部署
 
@@ -129,6 +130,7 @@ docs/
   COLAB.md            设计问答/决策记录
   RW_SPRINT.md        RW-1 第一批
   RW_SPRINT2.md       RW-1 修订
+  CHANGELOG.md        实现/数值演进记录
   REIMPLEMENT_PROMPT.md 从零复刻规格书
   DEPLOY.md           部署
 ```
