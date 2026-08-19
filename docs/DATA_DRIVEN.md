@@ -660,6 +660,7 @@ overrideTuning(patch: DeepPartial<TuningConfig>): this  // 覆盖平衡参数（
 | --- | --- | --- |
 | `predator` | `boolean` | 捕食者：袭击波固定 1 只（压力只放大 hp 强度）、目标 = 最近鼠实时位置、接触 ≤ `tuning.combat.captureRange`(1.5) 复用 DEX 闪避判定 → 未闪开即叼走（`pawn_died cause='captured'` + `Hostile.carried` 携带态）、逃跑方向 = 远离营地中心、跑离 ≥ `captureFleeDist`(32) 得手消失。不拆家、不原地磨血。 |
 | `carrySpeedMul` | `number` | 叼走后的逃跑移速倍率（缺省 1.5）。 |
+| `dash` | `{ range: number; cd: number } \| undefined` | 冲刺技能（2026-08-16）：捕食者周期性向目标方向瞬移 `range` 格，`cd` 秒冷却——越过近身反击圈突围；运行时 `hostile.dashCd` 递减。 |
 
 - 移动/捕获/得手数值在 `tuning.combat`（captureRange/captureFleeDist）,逃跑速度倍率在敌人表（同一敌人数据驱动,mod 可 overrideDef/registerEnemy 自定义捕食者）。
 - 捕猎期近身反击沿用 `meleeRange`(3) + `pawnDmg`(5)（近身反击拦截语义,非捕食者攻击不做特殊加成）;得手途中被击杀 = 共用 killHostile 掉落路径（food 私有进击杀者口袋）。
@@ -718,8 +719,8 @@ overrideTuning(patch: DeepPartial<TuningConfig>): this  // 覆盖平衡参数（
 ## 当前装配态快照（2026-08-16 战斗平衡终版，前列数字为历史演进记录请勿改动——以本条为最新）
 
 - `SYSTEM_DEFS` = **28 系统**（内核 1 = behavior 决策引擎，内联 ctor；余 27 由玩法包 registerSystemDef 回填）；`KERNEL_SYSTEM_IDS = ['behavior']`；`DEFAULT_PLAYSTYLE_PACKS` = **27 包**（含 field-command / beast-taming）。
-- 测试 = **511 用例 / 56 文件**（全量 `npm test` + `npx tsc --noEmit` 干净）。
+- 测试 = **536 用例 / 57 文件**（全量 `npm test` + `npx tsc --noEmit` 干净）。
 - `tuning.combat.predatorReactionMul = 0.25`：非征召鼠对捕食者自动近身反击倍率；征召鼠（K_DRAFTED）全伤。语义见上节捕食者近身反击倍率。
 - 战斗数值（2026-08-16 终版）：`pawnDmg = 5`（鼠近战）、`meleeRange = 3`（反击圈）、`captureRange = 1.5`（捕食者叼鼠距离）。
 - 决策节流（2026-08-16）：`tuning.pawn.decisionInterval = 2`——小人每 2 秒抽卡决策一次，冷却中保持上次意图；不阻塞紧急需求/走路/征召/工作。
-- 捕食者本体：`enemies.ts` 野猫 hp = **110**、speed = **8**（2026-08-16 战斗平衡第二轮延伸；PLAYING 已同步）。
+- 捕食者本体：`enemies.ts` 野猫 hp = **110**、speed = **8**、`dash = { range: 6, cd: 8 }`（2026-08-16 战斗平衡第二轮延伸；PLAYING 已同步）。
