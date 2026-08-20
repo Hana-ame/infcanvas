@@ -164,7 +164,7 @@ export function makeMinCtx(seed = 1, override?: Partial<MinCtx>): MinCtx {
       _health.set(eid, { hp: 100, maxHp: 100 });
       return eid;
     },
-    killPawn: (eid) => { _killed.push(eid); },
+    killPawn: (eid, cause) => { _killed.push(eid); bus.emit({ type: 'pawn_died', eid, x: 0, y: 0, cause: cause ?? 'unknown' } as never); },
     dnaOf: (eid) => _pawnStates.get(eid)?.dna ?? null,
     rollEvent: (eid, dc) => ({ success: rng.next() * 100 >= dc, roll: Math.floor(rng.next() * 100) }),
     rollEventSkill: (eid, dc, skill) => {

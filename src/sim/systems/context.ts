@@ -119,7 +119,7 @@ export interface SimContext {
   findNearest(pos: { x: number; y: number }, cond: (x: number, y: number) => boolean, allowNonPassable?: boolean, radius?: number): { x: number; y: number } | null;
   // 实体
   spawnPawn(x: number, y: number): number;
-  killPawn(eid: number): void;
+  killPawn(eid: number, cause?: string): void;
   // 属性（COC）
   dnaOf(eid: number): { str: number; con: number; int: number; siz: number; dex: number; app: number; pow: number; edu: number } | null;
   // 事件/骰子/日志

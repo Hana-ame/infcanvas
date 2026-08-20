@@ -81,9 +81,7 @@ export class NeedsSystem implements GameSystem {
           if (hp && hp.hp > 0) {
             this.ctx.setHealth(eid, { hp: hp.hp - t.starvationDmg * dt, maxHp: hp.maxHp });
             if (this.ctx.readHealth(eid)!.hp <= 0) {
-              const pos2 = this.ctx.readPosition(eid);
-              this.ctx.killPawn(eid);
-              this.ctx.bus.emit({ type: 'pawn_died', eid, x: pos2?.x ?? 0, y: pos2?.y ?? 0, cause: 'starvation' } as never);
+              this.ctx.killPawn(eid, 'starvation');
             }
           }
         }
@@ -138,8 +136,7 @@ export class NeedsSystem implements GameSystem {
           if (hp && hp.hp > 0) {
             this.ctx.setHealth(eid, { hp: hp.hp - t.starvationDmg * dt, maxHp: hp.maxHp });
             if (this.ctx.readHealth(eid)!.hp <= 0) {
-              this.ctx.killPawn(eid);
-              this.ctx.bus.emit({ type: 'pawn_died', eid, x: 0, y: 0, cause: 'starvation' } as never);
+              this.ctx.killPawn(eid, 'starvation');
             }
           }
         }

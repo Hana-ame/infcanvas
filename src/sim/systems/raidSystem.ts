@@ -213,8 +213,7 @@ export class RaidSystem implements GameSystem {
           const dodge = dna && this.ctx.rng.next() < dodgeChance;
           if (!dodge) {
             const pos = this.ctx.readPosition(prey);
-            this.ctx.bus.emit({ type: 'pawn_died', eid: prey, x: pos?.x ?? 0, y: pos?.y ?? 0, cause: 'captured' });
-            this.ctx.killPawn(prey);
+            this.ctx.killPawn(prey, 'captured');
             // 逃跑方向 = 从营地中心指向猫（远离营地）
             const dx = h.x - cx, dy = h.y - cy;
             const dl = Math.hypot(dx, dy) || 1;

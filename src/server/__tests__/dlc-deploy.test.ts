@@ -35,10 +35,10 @@ describe('DLC 自动部署（mods/ 目录扫描）', () => {
     expect(reg.strategyCards.some((c) => c.id === 'dlc:crusade')).toBe(true);
     expect(reg.strategyCards.some((c) => c.id === 'dlc:chrome-up')).toBe(true);
 
-    // 全量 mods/ 装配 = 51 默认 + demo-berry(berrySpoil) + 2077(dlc:cyber) = 30;
+    // 全量 mods/ 装配 = 52 默认 + demo-berry(berrySpoil) + 2077(dlc:cyber) = 30;
     // 其余 7 个 DLC 纯 defs 零系统——活的分界演示:内容声明不改装配,系统/命令必须 scripts
     const sim = new Sim({ seed: 8, pawnCount: 2, registry: reg });
-    expect(sim.systemIds).toHaveLength(53);
+    expect(sim.systemIds).toHaveLength(54);
     expect(sim.systemIds).toContain('dlc:cyber'); // 2077 scripts 系统(before:craft 锚点进 production 组)
     for (const absent of ['dlc:sail', 'dlc:ww1', 'dlc:radio', 'dlc:ww2', 'dlc:sky', 'dlc:empire', 'dlc:church']) {
       expect(sim.systemIds).not.toContain(absent); // 纯 defs DLC 零系统

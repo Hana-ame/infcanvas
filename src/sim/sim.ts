@@ -727,14 +727,17 @@ export class Sim implements SimContext {
     return eid;
   }
 
-  killPawn(eid: number): void {
+  killPawn(eid: number, cause?: string): void {
     if (this.batchConfig.enabled) advanceBatch(this._pawnList, this.batchConfig); // 推进轮转
     this._profileCache.clear();
     const idx = this._pawnList.indexOf(eid);
     if (idx >= 0) this._pawnList.splice(idx, 1);
+    const pos = this.pawnPositions.get(eid);
     this.pawnStates.delete(eid);
     this.pawnPositions.delete(eid);
     this.selected = this.selected.filter((s) => s !== eid);
+    // 2026-08-20 死亡机制统一事件（killPawn 是唯一死亡入口——所有死因发 pawn_died）
+    this.bus.emit({ type: 'pawn_died', eid, x: pos?.x ?? 0, y: pos?.y ?? 0, cause: cause ?? 'unknown' } as never);
   }
 
   // COC d100 检定：阈值 = dc + INT 加成（>50 的智力带来收益），roll <= 阈值即成功

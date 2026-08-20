@@ -12,6 +12,8 @@ const CFG = {
   loveThreshold: 30, // 2026-08-20 平衡：60→30（好感门槛降低, 早期可生育）      // 好感阈值：≥ 此值才可能怀孕
   pregnancyChance: 0.02, // 2026-08-20 平衡：0.01→0.02（提高怀孕概率）  // 每秒好感达标的伴侣怀孕概率
   pregnancyDuration: 60,  // 怀孕期（秒）
+  birthDanger: 0.08,      // 2026-08-20 难产概率（母亲年龄>300 天翻倍）
+  birthDangerAge: 300,    // 高龄产妇阈值（天）
   tickInterval: 5,        // 低频评估
   maxOffspring: 2,        // 单对最多同时孕育数（防人口爆炸）
 };
@@ -44,6 +46,14 @@ class BreedingSystem {
         const pos = this.ctx.pawnPositions.get(eid);
         if (pos) {
           const baby = this.ctx.spawnPawn(Math.round(pos.x) + 1, Math.round(pos.y));
+          // 2026-08-20 难产：母亲年龄大/体质差 → 死亡风险
+          const motherAge = (this.ctx.pawnStates.get(eid)?.age ?? 0) / 86400;
+          const dangerMul = motherAge > CFG.birthDangerAge ? 2 : 1;
+          if (this.ctx.rng.next() < CFG.birthDanger * dangerMul) {
+            this.ctx.killPawn(eid);
+            this.ctx.logEvent(`💀 #${eid} 难产去世`);
+            continue;
+          }
           if (baby !== -1) {
             this.ctx.logEvent(`👶 #${eid} 生了一个小宝宝 #${baby}！`);
             // 基因混合由 genetics 包处理（若挂载）
