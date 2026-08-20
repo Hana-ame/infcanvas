@@ -131,7 +131,7 @@ export class Renderer {
     this.lastCamTile = { x0: 0, y0: 0, x1: 0, y1: 0 }; // 强制 refreshViewportTerrain 重绘
     // 树/建筑重定位到新锚点，全部实体重排 z 顺序
     for (const t of this.treeSprites) this.placeEntity(t.g, t.x, t.y);
-    for (const b of this.buildingSprites) this.placeEntity(b.g, b.x, b.y);
+    for (const b of this.buildingSprites) this.placeEntityCenter(b.g, b.x, b.y); // 建筑居中锚（无脚，不应锚到格底）
     for (const [eid, g] of this.pawnSprites) {
       const pos = this.sim.pawnPositions.get(eid);
       if (pos) this.placeEntity(g, pos.x, pos.y);
