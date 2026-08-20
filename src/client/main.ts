@@ -99,7 +99,7 @@ async function main(): Promise<void> {
     } catch { /* 忽略写失败 */ }
   }, 30000);
 
-  // 单机模式也挂 LLM/规则慢决策层（feedback 印卡）：卡池影响项按局面调节工作权重并发策略卡（2026-08-16 更名,不再叫"神谕"）
+  // 单机模式也挂 LLM/规则慢决策层（feedback 印卡）：卡池影响项按局面调节工作权重并发策略卡（2026-08-20 更名,不再叫"神谕"）
   const planner = makeDummyCardPlanner(sim as unknown as SimContext, {
     mode: 'feedback', interval: 90,
     onPrint: (def) => hudApi?.notifyCard(def),
@@ -115,7 +115,7 @@ function attachScene(
   planner?: { tick(dt: number): void },
 ): void {
   let buildMode: string | null = null;
-  // 驯兽守卫 DLC（2026-08-16）：右键敌人设置目标敌人（供 HUD 显示驯化/放归按钮）
+  // 驯兽守卫 DLC（2026-08-20）：右键敌人设置目标敌人（供 HUD 显示驯化/放归按钮）
   let targetHostileIdx: number | null = null;
   const hud = createHud(sim, (id) => {
     buildMode = id;
@@ -257,7 +257,7 @@ function attachScene(
       hud.update(null);
       return;
     }
-    // 点空白：选中地面格 → 显示地形属性（2026-08-16 用户"点击地面能看到地面属性"）。
+    // 点空白：选中地面格 → 显示地形属性（2026-08-20 用户"点击地面能看到地面属性"）。
     // 与建筑/小人选中互斥;再点同一格 = 取消（回到无选中）
     if (hud.selectedTile.current?.x === world.x && hud.selectedTile.current?.y === world.y) {
       hud.selectedTile.current = null;
@@ -347,7 +347,7 @@ function attachScene(
     if (!act) return;
     e.preventDefault();
     switch (act) {
-      // 播放控制走命令面（2026-08-16 审计 H1 修复）：此前直改 sim.paused/speed——
+      // 播放控制走命令面（2026-08-20 审计 H1 修复）：此前直改 sim.paused/speed——
       // 远程模式下改的是本地壳，服务器权威不知情 → HUD 谎报暂停/时钟漂移。
       // pause/speed 是引擎内建命令（issueCommand 硬编码分支，与 move 同层），
       // 本地/远程同一条通道；显式传目标态（读当前权威值取反，不用依赖命令侧翻转）。
@@ -401,7 +401,7 @@ function attachScene(
       sim.step(tickMs / 1000);
       acc -= tickMs;
     }
-    // 策略卡慢决策层（单机模式,2026-08-16 更名）：按游戏时间推进印卡节奏
+    // 策略卡慢决策层（单机模式,2026-08-20 更名）：按游戏时间推进印卡节奏
     planner?.tick(dt / 1000);
     // 鼠标靠屏幕边缘时自动平移（PC 导航）
     if (mousePos && !isTouch) {

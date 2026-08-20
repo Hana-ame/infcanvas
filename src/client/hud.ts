@@ -25,17 +25,21 @@ function icon(id: string, size = 16): string {
   if (!src) return id;
   return `<img src="${svgDataUri(src)}" alt="" style="width:${size}px;height:${size}px;vertical-align:-3px;display:inline;">`;
 }
+// 建筑图标：有 emoji 用 emoji，否则用首字母占位
 function buildIcon(def: { id: string; emoji?: string }, size = 16): string {
   const src = BUILDING_SVG[def.id];
   if (src) return `<img src="${svgDataUri(src)}" alt="" style="width:${size}px;height:${size}px;vertical-align:-3px;display:inline;">`;
   return def.emoji ?? '🏗';
 }
+// 小人头像：按特质显示不同图标（懒惰/机灵等）
 function pawnIcon(traits: readonly string[] | undefined, size = 18): string {
   return `<img src="${svgDataUri(PAWN_SVG[pawnAssetIdFor(traits).replace('pawn:', '')])}" alt="" style="width:${size}px;height:${size}px;vertical-align:-3px;display:inline;border-radius:3px;">`;
 }
 
+// 数字格式化：undefined → '-'，否则取整
 const nf = (v: number | undefined): string => (v === undefined ? '-' : Math.round(v).toString());
 
+// 注入 HUD CSS 样式（运行时构建，无 .css 文件依赖）
 function injectStyle(): void {
   if (document.getElementById('hud-style')) return;
   const st = document.createElement('style');
@@ -46,7 +50,7 @@ function injectStyle(): void {
 .hud button:hover{background:#4a4a4a;border-color:#777;}
 .hud button.on{background:rgba(68,204,255,.25);border-color:#4cf;}
 .hud-panel{pointer-events:auto;background:rgba(0,0,0,.8);border:1px solid #444;border-radius:10px;}
-.hud-top{position:absolute;top:0;left:0;right:0;padding:8px 14px;background:rgba(0,0,0,.6);display:flex;gap:18px;align-items:center;font-weight:600;flex-wrap:nowrap;overflow-x:auto;min-height:42px;z-index:12;} /* 顶部资源条单行滚动(2026-08-16 用户反馈菜单重叠:多资源+窄窗换行会把下方 hud 元素顶进重叠区) */
+.hud-top{position:absolute;top:0;left:0;right:0;padding:8px 14px;background:rgba(0,0,0,.6);display:flex;gap:18px;align-items:center;font-weight:600;flex-wrap:nowrap;overflow-x:auto;min-height:42px;z-index:12;} /* 顶部资源条单行滚动(2026-08-20 用户反馈菜单重叠:多资源+窄窗换行会把下方 hud 元素顶进重叠区) */
 .hud-top .warn{color:#f66;font-weight:700;}
 @keyframes blink{0%,100%{opacity:1}50%{opacity:.4}}
 .hud-top .warn{animation:blink 1s infinite;}
@@ -79,6 +83,7 @@ function injectStyle(): void {
 
 // 建造菜单分组（按 def tags 归类，保证顺序）
 type BuildGroup = '基地' | '防护' | '生产' | '信仰' | '水路' | '其他';
+// 按 tag 分组建组（建造面板分组：社交/生产/防御等）
 function buildGroup(tags: string[] | undefined): BuildGroup {
   const t = tags ?? [];
   if (t.includes('anchor')) return '基地';
@@ -97,13 +102,14 @@ export interface HudApi {
   hint: HTMLElement;
   refreshHint(bm: string | null): void;
   selectedBuilding: { current: { x: number; y: number } | null };
-  selectedTile: { current: { x: number; y: number } | null }; // 点选地面(2026-08-16 用户"点击地面能看到地面属性")
+  selectedTile: { current: { x: number; y: number } | null }; // 点选地面(2026-08-20 用户"点击地面能看到地面属性")
   toggleViewMode(): void;
   toggleFold(): void;
   togglePanel(name: 'helpToggle' | 'historyToggle' | 'factionToggle' | 'techsToggle'): void;
   isCapturingKey(): boolean;
 }
 
+// 创建 HUD 实例（DOM 构建 + 事件绑定 + 渲染循环入口；本地/远程共用同一 HUD）
 export function createHud(
   sim: SimView,
   onSelectBuild: (id: string | null) => void,
@@ -216,7 +222,7 @@ export function createHud(
     b.textContent = sp === 0 ? '⏸' : `${sp}x`;
     b.dataset.speed = String(sp);
     b.addEventListener('click', () => {
-      // 播放控制走命令面（2026-08-16 审计 H1 修复）：此前直改 sim.paused/speed ——
+      // 播放控制走命令面（2026-08-20 审计 H1 修复）：此前直改 sim.paused/speed ——
       // 远程模式改的是本地壳，服务器权威不知情 → HUD 谎报暂停/时钟漂移。pause/speed
       // 是引擎内建命令（issueCommand 硬编码分支），本地/远程同一条通道；高亮以权威
       // 字段（远程 = snapshot 回显）为准，命令后 ~500ms diff 周期内可能轻微滞后。
@@ -343,7 +349,7 @@ export function createHud(
         }
       }
     } else if (act === 'fc-train') {
-      // 战场指挥 DLC（2026-08-16）：训练战术动作（选中集批量学习；冷却在包命令处理器）
+      // 战场指挥 DLC（2026-08-20）：训练战术动作（选中集批量学习；冷却在包命令处理器）
       const tactic = btn.dataset.tactic!;
       for (const seid of sim.selectedIds) {
         sim.issueCommand({ type: 'train', x: 0, y: 0, pawnId: seid, args: { tactic } });
@@ -528,7 +534,7 @@ export function createHud(
     // 事件 feed（内容变化时才重绘）
     updateFeed();
 
-    // 播放速度高亮（2026-08-16 审计 H1：按钮点击已改走命令面——本地同步生效，
+    // 播放速度高亮（2026-08-20 审计 H1：按钮点击已改走命令面——本地同步生效，
     // 远程 ~500ms diff 周期回显；每帧读权威字段刷新，杜绝按钮高亮与真实状态漂移）
     refreshSpeed();
 
@@ -583,7 +589,7 @@ export function createHud(
       return;
     }
 
-    // 点选地面:显示地形属性(2026-08-16 用户"地面需要有属性/点击地面能看到")——
+    // 点选地面:显示地形属性(2026-08-20 用户"地面需要有属性/点击地面能看到")——
     // TileDef 属性现成(id/name/z/passable/buildable/moveCost/mineral/growable/shelter/harvest),只缺展示
     if (selectedTileRef.current) {
       const { x, y } = selectedTileRef.current;
@@ -671,7 +677,7 @@ export function createHud(
         (lockedBuildings.length > 0 ? `<br><b>🔒 未解锁建造：</b>${lockedBuildings.join('、')}` : '');
     }
 
-    // 🎴 策略卡面板（RW-1 M1 修订；2026-08-16 更名：不叫神谕——它只是卡池影响项,调节权重不裁决）：生效目标 + 冷却 + 可发策略卡列表。
+    // 🎴 策略卡面板（RW-1 M1 修订；2026-08-20 更名：不叫神谕——它只是卡池影响项,调节权重不裁决）：生效目标 + 冷却 + 可发策略卡列表。
     // 卡片表 = sim.mods.strategyCards（本地注册表直读；远程无数据 → 按钮已隐藏，面板不渲染）。
     // 可用态 = evalStrategyCondition（SimView 字段组 slim ctx，见 StrategyCtx）。
     if (oraclePanel.style.display === 'block') {
@@ -748,10 +754,10 @@ export function createHud(
         const draftedNow = p.drafted === true;
         selDraft.innerHTML = `<button data-act="draft" style="${draftedNow ? 'border-color:#ffd24c;background:#5a4a16;' : ''}">${draftedNow ? '☮ 解除征召' : '⚔ 征召'}</button>` +
           (draftedNow ? '<span style="color:#ffd24c;font-size:11px;"> 征召中：不自主行事（右键敌人 = 攻击）</span>' : '');
-        // 战场指挥 DLC（2026-08-16）：指挥行——（a）选中集可册封指挥官（基准小人 + 其余选中
+        // 战场指挥 DLC（2026-08-20）：指挥行——（a）选中集可册封指挥官（基准小人 + 其余选中
         // = 编组，role 自动推导多层级别）；（b）指挥官：战术下发（冲锋/固守/集火/撤退/集结
         // → dispatch 级联整树）+ 收兵/解编；（c）任意小人可训练战术（冷却在包命令处理器）
-        // 驯兽守卫 DLC（2026-08-16）：目标敌人行（驯化/放归）
+        // 驯兽守卫 DLC（2026-08-20）：目标敌人行（驯化/放归）
         const th = onGetTargetHostile?.();
         selBeast.innerHTML = '';
         if (th) {

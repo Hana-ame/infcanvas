@@ -30,7 +30,7 @@ export interface ModManifest {
   author?: string;
   requires?: {
     coreVersion?: string;
-    // 跨文件依赖（2026-08-16 修复：此前仅 coreVersion，DLC 之间无依赖位——服务端按
+    // 跨文件依赖（2026-08-20 修复：此前仅 coreVersion，DLC 之间无依赖位——服务端按
     // 文件名序独立挂载，与 in-code ModPack 的 requires/topoSort DAG 不等价；DLC A 依赖
     // DLC B 的 def 时可能先挂 A 报"def 缺失"。挂载器按此列表拓扑喂序，缺失依赖 = 报错跳过）
     mods?: string[];
@@ -69,6 +69,7 @@ const CARD_FN_FIELDS = ['condition', 'extraUtility', 'decide'] as const;
 
 // ---- 解析与校验 ----
 
+// 解析 .mod.json 包描述文件（id/requires/defs → ModPackage 结构）
 export function parseModPackage(json: string): ModPackage {
   let raw: unknown;
   try {
@@ -122,6 +123,7 @@ export function parseModPackage(json: string): ModPackage {
   return { manifest: m, defs, scripts: scripts as string | undefined };
 }
 
+// 校验 defs JSON 形状（建筑/tile/item/enemy 定义格式正确性检查）
 function validateDefsJson(id: string, raw: unknown): ModDefsJson {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) throw new Error(`mod "${id}" defs 必须是对象`);
   const d = raw as Record<string, unknown>;
@@ -164,6 +166,7 @@ function validateDefsJson(id: string, raw: unknown): ModDefsJson {
 
 // ---- 挂载（defs 翻译 + scripts 沙箱执行）----
 
+// 构建 mount 函数（把 ModPackage 的 defs 注册到 registry；客户端 ?mods= 远程加载用）
 export function buildModMount(pkg: ModPackage): (m: ModRegistry) => void {
   return (m: ModRegistry) => {
     // scripts 先（谓词/系统/意图等机制注册，供 defs 引用），defs 后（内容声明）
@@ -262,6 +265,7 @@ export function mountModPackage(pkg: ModPackage, m: ModRegistry): { ok: true } |
 
 // ---- 打包 ----
 
+// 序列化 ModPackage → .mod.json 字符串（导出/分享 mod 用）
 export function packModPackage(pkg: ModPackage): string {
   return JSON.stringify(pkg, null, 2);
 }

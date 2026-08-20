@@ -5,6 +5,7 @@ import type { SimContext } from './context';
 import type { EventBus } from '../core/events';
 import { World } from '../core/world';
 
+// 建造系统：建造队列推进（小人 walkAndWork 到点 → 推进进度 → 建筑落成）
 export class BuildSystem implements GameSystem {
   id = 'build';
 
@@ -30,7 +31,7 @@ export class BuildSystem implements GameSystem {
           q.splice(i, 1);
           continue;
         }
-        // 升级落点校验（2026-08-16 审查修复）：升级扩展 footprint（篝火 1×1 → 教堂 2×2），
+        // 升级落点校验（2026-08-20 审查修复）：升级扩展 footprint（篝火 1×1 → 教堂 2×2），
         // 新格被相邻建筑占用 → 放弃升级（此前跳过校验 → upgradeBuilding 无条件覆盖
         // gridToBuilding，相邻建筑归属错乱）。旧格豁免由 canUpgradeAt 内部处理。
         if (isUpgrade && !this.ctx.world.canUpgradeAt(b.x, b.y, def)) {

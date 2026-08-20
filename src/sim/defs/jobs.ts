@@ -12,4 +12,5 @@ export const JOB_CARD: Record<string, string> = Object.fromEntries(
   Object.entries(JOBS).map(([id, j]) => [id, j.cardId]),
 );
 
+// 职业中文名查询（fisher→渔民/hunter→猎人 等；UI 显示用）
 export const jobLabelOf = (job: string): string => JOBS[job]?.label ?? job;

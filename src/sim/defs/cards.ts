@@ -50,9 +50,9 @@ export const BASE_CARD_DEFS: BehaviorCardDef[] = [
     satisfies: [{ desire: 'greed', amount: 2 }],
   },
   {
-    id: 'fish', name: '捕鱼', series: 'work', weight: 5,
-    utilityFixed: 26,
-    when: ['hasRaft'],  // hasRaft 谓词：无竹筏（raft 建筑）时捕鱼卡不可用，竹筏需 raftTech 科技解锁
+    id: 'fish', name: '捕鱼', series: 'work', weight: 10, // 2026-08-20: 5→10 提高钓鱼权重（原与伐木同级, 但水少 → 被压制）
+    utilityFixed: 32, // 2026-08-20: 26→32 高于伐木(30) → 指派渔民后优先钓鱼
+    when: [], // 2026-08-20 平衡：移除 hasRaft 门槛 → 早期可在水边直接钓鱼（原需竹筏太晚才解锁）
     action: 'walkAndWork', workType: 'fish', label: '捕鱼',
     satisfies: [{ desire: 'greed', amount: 2 }],
   },

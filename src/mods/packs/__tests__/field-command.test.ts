@@ -1,4 +1,4 @@
-// 战场指挥 DLC（field-command 玩法包）测试（2026-08-16）
+// 战场指挥 DLC（field-command 玩法包）测试（2026-08-20）
 // 覆盖：装配（系统+命令+战术表）/ 册封编队与自动晋升 / 训练（掌握+去重+冷却）/ 级联下发
 // 与收兵 / 集火需目标+全队指定 / 固守不动（含 drafting 不追击）/ 冲锋先敌接敌 / 撤退远离 /
 // 集结靠拢 / 指挥官死亡级联解除 / 玩家解除征召 = 战术失效 / 编制死亡清理 / 存档往返 /
@@ -39,7 +39,7 @@ function addRaider(sim: Sim, x: number, y: number, hp = 500, dmg = 0.01): void {
   });
 }
 
-describe('战场指挥 DLC（field-command 玩法包，2026-08-16）', () => {
+describe('战场指挥 DLC（field-command 玩法包，2026-08-20）', () => {
   it("① 装配：系统 'field-command' 在场 + 3 命令注册 + 战术表 5 项（数据驱动）", () => {
     const sim = makeSim();
     expect(sim.systemIds).toContain('field-command');
@@ -214,17 +214,17 @@ it('⑤b 编排槽 active：commander 命令写入持久预设；临战下达覆
     expect(draftedOf(sim.pawnStates.get(s))).toBe(true);
     // 先跑几帧让系统建立树快照（死亡级联读上帧快照——killPawn 同步删 extra，死后
     // 编制表读不到了；真实游戏每帧都在刷快照，这里模拟"作战中阵亡"的时序）
-    stepN(sim, 0.5);
+    stepN(sim, 2);
     // 军团长阵亡 → 队长与兵全解除（命令链断裂）
     sim.killPawn(g);
-    stepN(sim, 1);
+    stepN(sim, 2);
     expect(draftedOf(sim.pawnStates.get(o))).toBe(false);
     expect(tacticsOf(sim.pawnStates.get(o))?.underOrder).toBeNull();
     expect(draftedOf(sim.pawnStates.get(s))).toBe(false);
     // 单独一队（o 自己当队长带 s）：兵死亡 → 编制摘除
     sim.issueCommand({ type: 'commander', x: 0, y: 0, pawnId: o, args: { subordinates: [s] } });
     sim.killPawn(s);
-    stepN(sim, 1);
+    stepN(sim, 2);
     expect(commanderOf(sim.pawnStates.get(o))?.subordinates).toEqual([]);
   });
 

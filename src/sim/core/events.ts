@@ -23,6 +23,7 @@ export type GameEvent =
 
 export type GameEventHandler = (ev: GameEvent) => void;
 
+// 事件总线（发布-订阅；onAny 全局监听 → history.record 自动记录所有事件）
 export class EventBus {
   private handlers = new Map<string, Set<GameEventHandler>>();
   private anyHandlers = new Set<GameEventHandler>();

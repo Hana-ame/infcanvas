@@ -68,7 +68,7 @@ describe('thermo 玩法包（温度场）', () => {
     const { ctx, sys } = coldDay(23, -8);
     const eid = ctx.spawnPawn(5, 5);
     const h = place(ctx, 'heater');
-    // 审计中①（2026-08-16）暖炉开始烧木后：预置燃料保证本用例测的是"有燃料的暖炉"
+    // 审计中①（2026-08-20）暖炉开始烧木后：预置燃料保证本用例测的是"有燃料的暖炉"
     ctx.addProductionNear(h.x, h.y, 'wood', 5);
     // 半径 6 内（d=5 → boost = 8×(1-5/6) ≈ 1.33）
     const inRange = evalAt(ctx, sys, eid, h.x + 5, h.y)!;

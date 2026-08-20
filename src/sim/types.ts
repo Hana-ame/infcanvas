@@ -1,4 +1,4 @@
-// 引擎公开类型（2026-08-16 大文件拆分：自 sim.ts 迁出）
+// 引擎公开类型（2026-08-20 大文件拆分：自 sim.ts 迁出）
 // 背景：Sim 类 ~1120 行里近 200 行是纯类型声明（数据接口/存档格式/命令协议），
 // 与实现混在一起增大阅读面。迁出后 sim.ts 只留实现，类型权威在此——
 // sim.ts 以 re-export 保持既有 import 路径（'../sim'）不变，本文件零运行时依赖
@@ -45,7 +45,7 @@ export interface PawnState {
   healTarget?: { x: number; y: number }; // 疗伤点
   healing?: { progress: number };
   commandCooldown?: number; // 玩家命令后的一段时间不自动决策
-  decisionCd?: number; // 决策节流冷却（2026-08-16：非零时不抽卡，保持上次意图——降 CPU）
+  decisionCd?: number; // 决策节流冷却（2026-08-20：非零时不抽卡，保持上次意图——降 CPU）
   faith?: number; // 信仰度（祈祷积累，影响违抗与心情）
   defyCd?: number; // 违抗后的冷却时间（秒）
   crazyCooldown?: number; // 狂乱乱跑冷却
@@ -112,7 +112,7 @@ export interface Command {
 }
 
 export interface SaveData {
-  // 存档格式版本（2026-08-16 架构优化：版本化 + 迁移注册表）。缺省 0 = 旧档（2026-08-16
+  // 存档格式版本（2026-08-20 架构优化：版本化 + 迁移注册表）。缺省 0 = 旧档（2026-08-20
   // 前的所有档）。load 拒载 saveVersion > SAVE_VERSION 的档（防新版本格式被旧版读损坏），
   // 并依次跑 SAVE_MIGRATIONS[from..SAVE_VERSION-1] 迁移后按新版本语义读。
   saveVersion?: number;
@@ -123,7 +123,7 @@ export interface SaveData {
   buildings: { key: number; defId: string; hp: number; faction: string; extra?: Record<string, unknown> }[];
   techs?: string[]; // 已解锁科技（旧档缺省空）
   techFragments?: Record<string, number>; // 科技碎片进度（2026-08-14 碎片制；旧档缺省空）
-  // 科技解锁时间（2026-08-16 修复：此前不随档 → 读档后 techBuildWeight 恒 0，
+  // 科技解锁时间（2026-08-20 修复：此前不随档 → 读档后 techBuildWeight 恒 0，
   // "解锁时长渐进"机制读档即失效——已解锁科技建筑的自动建造权重永不爬升）
   techUnlockedAt?: Record<string, number>;
   pawns: {

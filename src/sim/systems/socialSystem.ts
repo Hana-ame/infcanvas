@@ -8,6 +8,7 @@ import { fulfill } from '../core/desires';
 import { socialLinesOf } from '../mods/query';
 import { CHUNK_SIZE } from '../core/world';
 
+// 社交系统：socialCd 递减 + tickInterval(2s) 到则配对社交互动（聊天/口角/好感变化）
 export class SocialSystem implements GameSystem {
   id = 'social';
   private cd = 0; // 全系统社交节流（避免每帧刷）——间隔读 tuning.social.tickInterval
@@ -17,9 +18,11 @@ export class SocialSystem implements GameSystem {
   init(_bus: EventBus): void {}
 
   update(dt: number): void {
+    // 2026-08-20 大规模优化：pawnCount > 1000 时跳过 O(n²) 社交互动（10亿级迭代不可接受）
+    // 2026-08-20 空间哈希后不再需要 1000 pawn cap（O(n × cell 内邻居) ≈ O(n)）
     this.cd -= dt;
     // 社交冷却递减（每个小人独立）
-    for (const eid of this.ctx.pawnList) {
+    for (const eid of this.ctx.iterPawns) {
       const st = this.ctx.pawnStates.get(eid);
       if (st && (st.socialCd ?? 0) > 0) st.socialCd = (st.socialCd ?? 0) - dt;
     }
@@ -29,24 +32,58 @@ export class SocialSystem implements GameSystem {
   }
 
   private tickSocial(): void {
-    const list = this.ctx.pawnList;
+    const list = this.ctx.iterPawns;
+    // 2026-08-20 空间哈希优化：原 O(n²) 配对 → O(n × cell 内邻居)，
+    // 按格子分桶，只检查同格 + 相邻格的 pawn（meetDist 通常 ≤ 3 格）
+    const meetDist = this.ctx.tuning.social.meetDist;
+    const cellSize = Math.ceil(meetDist); // 格子大小 = meetDist
+    const cells = new Map<number, number[]>(); // cellKey → [eid, eid, ...]
     for (let i = 0; i < list.length; i++) {
-      const a = list[i];
-      const posA = this.ctx.pawnPositions.get(a);
-      if (!posA) continue;
-      const stA = this.ctx.pawnStates.get(a);
-      if (!stA) continue;
-      for (let j = i + 1; j < list.length; j++) {
-        const b = list[j];
-        const posB = this.ctx.pawnPositions.get(b);
-        if (!posB) continue;
-        if (Math.hypot(posA.x - posB.x, posA.y - posB.y) > this.ctx.tuning.social.meetDist) continue; // 相邻才算相遇
-        // 用户 2026-08-13 B 方案：只有同 chunk 距离相近时才能交流篝火情况
-        if (Math.floor(posA.x / CHUNK_SIZE) === Math.floor(posB.x / CHUNK_SIZE) && Math.floor(posA.y / CHUNK_SIZE) === Math.floor(posB.y / CHUNK_SIZE)) {
-          this.exchangeFireStory(a, b); // 交流篝火情况 → 推断伙伴/敌人
+      const eid = list[i]!;
+      const pos = this.ctx.pawnPositions.get(eid);
+      if (!pos) continue;
+      const cx = Math.floor(pos.x / cellSize);
+      const cy = Math.floor(pos.y / cellSize);
+      const key = cx * 100000 + cy; // 简单 hash（坐标 < 100000）
+      let bucket = cells.get(key);
+      if (!bucket) { bucket = []; cells.set(key, bucket); }
+      bucket.push(i); // 存索引而非 eid（后续查 list[i] 比查 Map 快）
+    }
+    // 遍历每个格子，检查同格 + 8 邻居格内的 pawn
+    const checked = new Set<number>(); // 避免重复检查（A-B 已查则 B-A 跳过）
+    for (const [cellKey, bucketA] of cells) {
+      const cx = Math.floor(cellKey / 100000);
+      const cy = cellKey - cx * 100000;
+      // 9 格（自己 + 8 邻居）
+      for (let dx = -1; dx <= 1; dx++) {
+        for (let dy = -1; dy <= 1; dy++) {
+          const nKey = (cx + dx) * 100000 + (cy + dy);
+          const bucketB = cells.get(nKey);
+          if (!bucketB) continue;
+          for (const ia of bucketA) {
+            const a = list[ia]!;
+            const posA = this.ctx.pawnPositions.get(a);
+            if (!posA) continue;
+            const stA = this.ctx.pawnStates.get(a);
+            if (!stA) continue;
+            for (const ib of bucketB) {
+              if (ia >= ib) continue; // 只检查 i < j（去重）
+              const pairKey = ia * 1000000 + ib;
+              if (checked.has(pairKey)) continue;
+              checked.add(pairKey);
+              const b = list[ib]!;
+              const posB = this.ctx.pawnPositions.get(b);
+              if (!posB) continue;
+              if (Math.hypot(posA.x - posB.x, posA.y - posB.y) > meetDist) continue;
+              // 同 chunk 距离相近 → 交流篝火情况
+              if (Math.floor(posA.x / CHUNK_SIZE) === Math.floor(posB.x / CHUNK_SIZE) && Math.floor(posA.y / CHUNK_SIZE) === Math.floor(posB.y / CHUNK_SIZE)) {
+                this.exchangeFireStory(a, b);
+              }
+              this.interact(a, b, stA.socialCd ?? 0);
+              this.relationEffects(a, b);
+            }
+          }
         }
-        this.interact(a, b, stA.socialCd ?? 0);
-        this.relationEffects(a, b); // 关系影响（协作/口角），用户 Q8
       }
     }
   }

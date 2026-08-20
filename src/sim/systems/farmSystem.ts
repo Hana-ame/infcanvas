@@ -5,6 +5,7 @@ import type { GameSystem } from './registry';
 import type { SimContext } from './context';
 import { World } from '../core/world';
 
+// 农场系统：passive 配方结算（水渠产水/水车产动力/竹筏钓鱼等；按 building.recipe 查配方表）
 export class FarmSystem implements GameSystem {
   id = 'farm';
 

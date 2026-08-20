@@ -1,4 +1,4 @@
-// 热路径优化语义等价回归（2026-08-16 profile 第二轮：总 step 耗时 -42% 的三处改动）
+// 热路径优化语义等价回归（2026-08-20 profile 第二轮：总 step 耗时 -42% 的三处改动）
 // 1) sim.findNearest 环剪枝（原全扫半径后返回最近；剪枝后仍必须返回严格最近命中）
 // 2) world.nearestBuildingWithTag（专供 campfireDist；必须与 queryBuildingsNear+过滤完全等价）
 // 3) history.record 批量容量裁剪（原每次超限 splice 整表；裁剪后 count ≤ cap、recent 语义不变）
@@ -22,7 +22,7 @@ function placeFireAt(sim: Sim, tx: number, ty: number): void {
   throw new Error('找不到 campfire 可建点');
 }
 
-describe('热路径等价回归（2026-08-16）', () => {
+describe('热路径等价回归（2026-08-20）', () => {
   it('findNearest 环剪枝后仍返回严格最近命中（全扫对拍）', () => {
     const sim = new Sim({ seed: 7, pawnCount: 1 });
     const eid = sim.pawns[0];

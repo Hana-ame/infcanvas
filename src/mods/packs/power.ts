@@ -28,6 +28,7 @@ const CFG = {
 // meta.power 语义：gen=发电量/s；storage=蓄电容量；use=耗电量/s（def 自由字段，无 schema 校验）
 interface PowerMeta { gen?: number; storage?: number; use?: number }
 
+// 读取建筑动力配置（meta.power = 每秒产动力量；蒸汽机/水车用）
 const powerOf = (b: BuildingData): PowerMeta | undefined => b.def.meta?.power as PowerMeta | undefined;
 
 export const powerPack: ModPack = {
@@ -67,7 +68,7 @@ export const powerPack: ModPack = {
     id: 'power', label: '电力', category: 'production',
     ctor: (sim) => new PowerSystem(sim),
     // 表内系统不设 before：执行序 = 类别序 × 组内注册序推导（SYSTEM_DEFS 表位置定序；
-    // before 锚点仅第三方表外系统专用——2026-08-16 审计 L7 清理死锚点）
+    // before 锚点仅第三方表外系统专用——2026-08-20 审计 L7 清理死锚点）
   });
   },
 };
@@ -76,7 +77,7 @@ export const powerPack: ModPack = {
 // 电荷持久在 battery.extra.charge（随存档），电网组是运行时概念（每帧从建筑布局重建）
 export class PowerSystem {
   id = 'power';
-  // forge 生产冷却表（2026-08-16 审查修复）：forge 建筑 key → 剩余冷却秒。
+  // forge 生产冷却表（2026-08-20 审查修复）：forge 建筑 key → 剩余冷却秒。
   // 此前 CFG.interval 是死参数（每帧量产）；冷却跨帧持久，每台 forge 独立节奏
   private forgeCooldowns = new Map<number, number>();
   constructor(private ctx: SimContext) {}
@@ -148,7 +149,7 @@ export class PowerSystem {
     }
 
     // ③ 耗电生产：forge 按 interval 节奏抽电（电荷不足 → 停产不扣料）
-    // 2026-08-16 审查修复：此前 CFG.interval 是死参数——电荷够就每帧量产；且组内多 forge
+    // 2026-08-20 审查修复：此前 CFG.interval 是死参数——电荷够就每帧量产；且组内多 forge
     // 每帧只产一次（第二台 forge 同组永无产出）。修复：①每台 forge 独立冷却节奏（forgeCooldowns）；
     // ②组电荷记账递减——多 forge 本帧并行生产时，靠帧首快照判断会"超抽电/重复扣木"
     //（第二台 forge 看到的 charge 还是第一台抽走前的旧值），必须逐台扣减记账

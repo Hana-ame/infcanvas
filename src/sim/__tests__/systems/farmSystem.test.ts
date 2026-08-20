@@ -29,7 +29,7 @@ describe('FarmSystem 独立测试（最小 ctx，无 Sim）', () => {
     expect(ctx.stockpile.food ?? 0).toBe(foodBefore);
   });
 
-  // ---- 2026-08-16 扩展覆盖 ----
+  // ---- 2026-08-20 扩展覆盖 ----
 
   it('水井（passive recipe）持续产水', () => {
     const sys = attach(ctx, new FarmSystem(ctx));

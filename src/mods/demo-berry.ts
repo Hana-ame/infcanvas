@@ -14,7 +14,7 @@ import type { ModPack } from './pack';
 
 export const demoBerryPack: ModPack = {
   id: 'demo-berry',
-  // 依赖（2026-08-16 审计中②）：gathering——浆果丛接入采集管线（可通行灌木 growable+harvest）；
+  // 依赖（2026-08-20 审计中②）：gathering——浆果丛接入采集管线（可通行灌木 growable+harvest）；
   // farming——浆果摊 passive 配方由 farm 系统（systems/farmSystem.ts）结算，缺装时
   // "静默不产出"（此前 requires 只写 gathering——没种田包就没有被动产粮结算者）
   requires: ['gathering', 'farming'],
@@ -68,7 +68,7 @@ export const demoBerryPack: ModPack = {
     // 5. 逻辑组件层：系统装配表插入（浆果保质：每 60s 库存减半，before autobuild）
     m.registerSystemDef({
       id: 'berrySpoil', label: '浆果变质', category: 'production', before: 'autobuild',
-      // 系统闭包只用 SimContext（2026-08-16 审计中④：此前直用 sim——绕过 ctx 面无法最小
+      // 系统闭包只用 SimContext（2026-08-20 审计中④：此前直用 sim——绕过 ctx 面无法最小
       // ctx 单测；stockpile/logEvent 均在 SimContext 接口内）
       ctor: (ctx) => {
         let acc = 0;

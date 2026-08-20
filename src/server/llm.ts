@@ -60,6 +60,8 @@ const SYSTEM_PROMPT = [
   `效果要克制：resource 每项 ±${TUNING.event.llmResourceBound} 内；mood/hp 每项 ±${TUNING.event.llmMoodBound} 内；可组合最多 2 个效果。事件要符合世界现状，不要凭空大规模改变。`,
 ].join('\n');
 
+// LLM 慢决策层：周期性调 LLM API → JSON 解析 → 白名单校验 → 脚本事件注入
+// 用于 AI 生成剧情事件（可选增强，无 LLM_ENDPOINT 时跳过）
 export function makeLlmProvider(cfg: LlmConfig, worldSummary: () => SimContext | null): { provider: EventProvider; status(): string } {
   const timeoutMs = cfg.timeoutMs ?? 15000;
   const backoffMs = cfg.backoffMs ?? 30000;
@@ -180,11 +182,13 @@ export function runLlmEffects(ctx: SimContext, effects: LlmEffect[]): void {
   }
 }
 
+// 从 LLM 返回的候选 eid 中选一个有效的（防 LLM 幻觉返回不存在的 eid）
 function pickOne(ctx: SimContext): number[] | null {
   if (ctx.pawnList.length === 0) return null;
   return [ctx.pawnList[ctx.rng.int(0, ctx.pawnList.length - 1)]];
 }
 
+// 招募小人（LLM 事件效果之一：在营地旁生成新小人）
 function recruitPawn(ctx: SimContext): void {
   const cx = Math.floor(ctx.world.width / 2);
   const cy = Math.floor(ctx.world.height / 2);
@@ -204,6 +208,7 @@ function recruitPawn(ctx: SimContext): void {
   }
 }
 
+// LLM JSON → 脚本事件（白名单校验 + seq 序号注入）
 function toScriptedEvent(json: LlmEventJson, seq: number): ScriptedEvent {
   return {
     id: `llm_${seq}`,

@@ -1,4 +1,4 @@
-// 驯兽守卫 DLC（2026-08-16，用户「继续开发」自主设计，战斗主线延续战场指挥）：
+// 驯兽守卫 DLC（2026-08-20，用户「继续开发」自主设计，战斗主线延续战场指挥）：
 // 把重伤的野猫/哈基米（捕食者）驯化成营地守卫——"以鼠之矛守鼠之城"，
 // 与袭击世界观形成张力：野猫叼走鼠，驯服后替营地叼走敌人。
 // 机制：
@@ -32,6 +32,7 @@ const CFG = {
 
 // ---- 读面 helper（hostile 是运行时对象，直接读写字段，读面=写面）----
 const tamingOf = (h: Hostile) => h.taming;
+// 判断敌人是否已驯服（faction='player' = 玩方守卫）
 const isTamed = (h: Hostile) => h.faction === 'player';
 
 export const beastTamingPack: ModPack = {
@@ -88,6 +89,8 @@ export const beastTamingPack: ModPack = {
   },
 };
 
+// 驯兽守卫系统：驯化进度（投喂消耗 food 节流）→ 转正后守卫行为（扑咬/跟随/游荡）
+// 2026-08-20：节流 1s（驯化进度 + 守卫 AI 不需要每帧评估）
 export class BeastTamingSystem {
   id = 'beastTaming';
 
@@ -95,7 +98,12 @@ export class BeastTamingSystem {
 
   init(): void {}
 
+  private _throttle = 0;
   update(dt: number): void {
+    this._throttle += dt;
+    if (this._throttle < 1) return;
+    this._throttle = 0;
+    // 节流：驯化/守卫行为 1s 评估一次
     // ---- 驯化推进（先于守卫段——新驯服的猫本帧起按守卫跑）----
     for (const h of this.ctx.hostiles) {
       const t = tamingOf(h);
@@ -140,7 +148,7 @@ export class BeastTamingSystem {
           h.y += ((target.y - h.y) / d) * step;
         } else {
           target.hp -= CFG.guardDps * dt;
-          // 2026-08-16 修复守卫猫无敌：被咬的敌方猫反击守卫猫（此前 raidSystem 跳过
+          // 2026-08-20 修复守卫猫无敌：被咬的敌方猫反击守卫猫（此前 raidSystem 跳过
           // player faction → 无路径对守卫猫造成伤害 → 守卫猫永不被杀。这里补：目标
           // 活着且近身时，以敌方猫的 dmgPerSec 反击守卫猫。守卫猫 hp 归零 → 移除）
           if (target.hp > 0 && (target.dmgPerSec ?? 0) > 0) {

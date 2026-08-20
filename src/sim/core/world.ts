@@ -45,6 +45,8 @@ export interface ChunkData {
   tiles: string[];
 }
 
+// World = 无限地图引擎（chunk 64x64 按需生成 + 负坐标 + ±2^21 边界）
+// 包含：tile 生成/缓存、建筑管理、寻路通行判定(z/climb)、光照图、chunk 序列化
 export class World {
   readonly gen: WorldGenTuning;
   readonly chunkCols: number;
@@ -304,7 +306,7 @@ export class World {
   // 瓦片变更监听（采集/事件改地形 → server 推送增量；null = 不监听）
   onTileChange: ((x: number, y: number, tileId: string) => void) | null = null;
 
-  // 建筑摧毁监听（2026-08-16 审查修复：清算/袭击/怒砸摧毁锚点 → sim 需清航点段缓存；
+  // 建筑摧毁监听（2026-08-20 审查修复：清算/袭击/怒砸摧毁锚点 → sim 需清航点段缓存；
   // 此前仅"建成"清缓存（buildSystem），"摧毁"路径不触发 → 被拆篝火/教堂的锚点对路由
   // 仍被 trailCache 复用（小人借道已消失的锚点）。tile 变更不覆盖此处：拆建筑不改瓦片。）
   onBuildingDestroyed: ((key: number) => void) | null = null;
@@ -542,7 +544,7 @@ export class World {
       this.unindexBuilding(main);
       this.buildingVersion++;
       this.recomputeLight();
-      // 通知 sim 清航点缓存（锚点销毁后旧路由不可用；2026-08-16 审查修复）
+      // 通知 sim 清航点缓存（锚点销毁后旧路由不可用；2026-08-20 审查修复）
       this.onBuildingDestroyed?.(main);
       return { destroyed: true, building: b };
     }
@@ -630,7 +632,7 @@ export class World {
     return out;
   }
 
-  // 半径内带 tag 建筑的**最近一栋**（2026-08-16 热路径优化：决策谓词 campfireDist 等
+  // 半径内带 tag 建筑的**最近一栋**（2026-08-20 热路径优化：决策谓词 campfireDist 等
   // 原用 queryBuildingsNear(…, 64) 每小人每帧构建全部近邻建筑数组（对象分配 + 排序
   // 遍历），profiler 采样 world 查询为热点前列——专用查询免数组分配、共享 chunk 遍历、
   // 命中即可比较早退；返回 null = 半径内无该 tag 建筑）
@@ -747,7 +749,7 @@ export class World {
     return true;
   }
 
-  // 升级落点校验（2026-08-16 审查修复）：升级会扩展 footprint（如 1×1 篝火 → 2×2 教堂），
+  // 升级落点校验（2026-08-20 审查修复）：升级会扩展 footprint（如 1×1 篝火 → 2×2 教堂），
   // 新 footprint 中超出旧 footprint 的格子必须可建且未被其他建筑占用。此前 upgradeBuilding
   // 无条件覆盖 gridToBuilding → 相邻建筑的格子归属被后升级者顶掉（建筑索引错乱：两座相邻
   // 篝火各升教堂，后者的 2×2 覆盖前者格）。旧 footprint 格豁免（本来就是自己的）。
@@ -772,7 +774,7 @@ export class World {
     if (!this.buildings.has(main)) return false;
     const def = this.buildingsDefs[defId];
     if (!def) return false;
-    // 落点校验（2026-08-16 审查修复）：新 footprint 超出旧 footprint 的格子被占/不可建
+    // 落点校验（2026-08-20 审查修复）：新 footprint 超出旧 footprint 的格子被占/不可建
     // → 拒绝升级（此前无条件覆盖 gridToBuilding，相邻建筑归属错乱）
     if (!this.canUpgradeAt(x, y, def)) return false;
     // 旧 footprint 释放

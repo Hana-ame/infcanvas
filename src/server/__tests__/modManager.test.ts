@@ -57,7 +57,7 @@ describe('服务端 mod 管理器（loadModsFromDir）', () => {
     expect(r).toEqual({ ok: true, mods: [], errors: [] });
   });
 
-  // ---- 2026-08-16 修复回归：跨文件依赖（requires.mods 拓扑挂载）+ DLC 契约校验补跑 ----
+  // ---- 2026-08-20 修复回归：跨文件依赖（requires.mods 拓扑挂载）+ DLC 契约校验补跑 ----
 
   it('跨文件依赖：依赖方后于被依赖方挂载（按拓扑序，非文件名序）', () => {
     // alpha 依赖 beta：文件名序 alpha 在前（若按文件名序挂载 → alpha 先挂会因缺 beta 失败）

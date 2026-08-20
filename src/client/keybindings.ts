@@ -47,10 +47,12 @@ export function normalizeKey(k: string): string {
   return k;
 }
 
+// 键盘事件 → 快捷键字符串（如 "Ctrl+S" "F1"）；用于快捷键绑定
 export function keyOfEvent(e: KeyboardEvent): string {
   return normalizeKey(e.key);
 }
 
+// 快捷键管理（注册/查询/冲突检测；Ctrl+S 存档、F1 调试面板等）
 export class Keybindings {
   private map: Record<string, string[]>;
   private onChangeCbs: (() => void)[] = [];

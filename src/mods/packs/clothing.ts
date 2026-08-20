@@ -48,7 +48,9 @@ const TECH_OF: Record<string, string> = {
   leatherCoat: 'craft:coat',
 };
 
+// 染料配方科技门控（dye_ 前缀 → 需 'craft:dye' 科技）
 const dyeTechOf = (rid: string): string | undefined => (rid.startsWith('dye_') ? 'craft:dye' : undefined);
+// 配方科技门控查询（先查显式表 TECH_OF，再查染料前缀）
 const techOf = (rid: string): string | undefined => TECH_OF[rid] ?? dyeTechOf(rid);
 
 // 衣物物品（材质 → 保暖/散热；meta.warmth 由 thermo 包读取调节有效温度）
@@ -156,7 +158,7 @@ export const clothingPack: ModPack = {
       if (!itemId) {
         if (old) {
           ctx.stockpile[old] = (ctx.stockpile[old] ?? 0) + 1;
-          // 写侧与读侧同一常量（2026-08-16 审查修复：此处曾是裸串 'worn'——契约纪律
+          // 写侧与读侧同一常量（2026-08-20 审查修复：此处曾是裸串 'worn'——契约纪律
           // 要求跨包键一律引用 K_*，裸串拼错 = 编译期无提示的静默失效）
           st.extra = { ...st.extra, [K_WORN]: {} };
           ctx.logEvent(`🧵 #${eid} 脱下 ${itemName(ctx, old)}`);
@@ -170,7 +172,7 @@ export const clothingPack: ModPack = {
       if ((ctx.stockpile[itemId!] ?? 0) < 1) { ctx.logEvent(`📛 没有 ${item.name} 可穿（库存 0）`); return; }
       ctx.stockpile[itemId!] -= 1;
       if (old) ctx.stockpile[old] = (ctx.stockpile[old] ?? 0) + 1; // 换装：旧衣回库存
-      // 写侧与读侧同一常量（2026-08-16 审查修复：此处曾是裸串 'worn'，同上）
+      // 写侧与读侧同一常量（2026-08-20 审查修复：此处曾是裸串 'worn'，同上）
       st.extra = { ...st.extra, [K_WORN]: { body: itemId } };
       // 染色款心情加成（悦目——染色的价值）；日志区分 🧵（素衣）/🎨（染色）
       const dyed = Boolean(item.meta[K_DYE]);
@@ -183,6 +185,7 @@ export const clothingPack: ModPack = {
   },
 };
 
+// 物品中文名查询（UI 显示用；未注册则返回 id 本身）
 const itemName = (ctx: SimContext, id: string): string => ctx.mods.items[id]?.name ?? id;
 
 // 制衣系统：遍历全图裁缝台（def.meta.tailor 配方表），每配方独立节奏批量生产

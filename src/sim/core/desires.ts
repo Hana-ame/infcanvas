@@ -44,10 +44,12 @@ export function tickDesires(
   }
 }
 
+// 满足欲望（减少欲望值；工作完成/社交互动后调用）
 export function fulfill(d: Record<DesireId, number>, id: DesireId, amount: number): void {
   d[id] = clamp(d[id] + amount);
 }
 
+// 钳制到 [0, 100]（欲望值范围）
 function clamp(v: number): number {
   return Math.max(0, Math.min(100, v));
 }

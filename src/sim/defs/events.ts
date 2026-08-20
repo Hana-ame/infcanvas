@@ -37,6 +37,7 @@ export const EVENT_PREDICATES: Record<string, (ctx: SimContext) => boolean> = {
   populationAtLeast4: (ctx) => ctx.pawnList.length >= 4,
 };
 
+// 事件条件谓词工厂：按 event id 返回判定函数（when 条件 AND 组合 → 是否触发）
 export function eventPredicateOf(id: string): (ctx: SimContext) => boolean {
   const fn = EVENT_PREDICATES[id];
   if (!fn) throw new Error(`事件谓词 "${id}" 未注册（registerEventPredicate 或内置表）`);

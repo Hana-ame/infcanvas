@@ -42,7 +42,8 @@ import type { Command } from '../sim';
 import type { SimContext } from '../systems/context';
 // 默认装配的第一个插件 = 管理器（2026-08-15）：默认玩法清单校验/组 DAG 都在
 // playstyleManager.apply 里——本文件不再 import 任何玩法包（框架与玩法解耦）。
-import { playstyleManager } from '../../mods/packs/playstyle';
+import { playstyleManager, PLAYSTYLE_PACKS, DEFAULT_PLAYSTYLE_PACKS } from '../../mods/packs/playstyle';
+import { validateContracts } from './contracts';
 
 // 生命周期钩子上下文（step:before / step:after，见 sim.step）
 export interface HookContext {
@@ -88,16 +89,65 @@ export class ModRegistry {
 
   // 默认装配（Sim 构造与服务端 mod 管理器共用：先建注册表、挂载管理器，再交给 Sim）
   // 2026-08-15 第一个插件 = 管理器：默认装配不再由框架内置——策略卡/内置科技登记后，
-  // 只 mount playstyleManager（清单校验 + 组 DAG 拉齐玩法包都在管理器 apply 里）。
-  static default(): ModRegistry {
+  // 2026-08-20 DLC 插拔支持：default(excludePacks?) 允许跳过指定包
+  // → 游戏开始前用户可选择不挂某 DLC（如不要季节/不要飞行单位）
+  static default(excludePacks?: string[]): ModRegistry {
+    // 如果有排除项：构建自定义 pack 清单 → 自定义 manager
+    if (excludePacks && excludePacks.length > 0) {
+      return ModRegistry.defaultCustom(excludePacks);
+    }
     const r = new ModRegistry({
       tiles: TILES, buildings: BUILDINGS, items: ITEMS, enemies: ENEMIES,
       cards: BASE_CARDS, recipes: RECIPES, tuning: TUNING, intents: [], works: [],
     });
-    for (const c of STRATEGY_CARDS) r.registerStrategyCard(c); // 内置策略卡表（神谕降旨全数据化）
-    // 内置科技统一走 registerTech（含探索卡生成）——mod 追加科技走同一入口 = DLC 科技
+    for (const c of STRATEGY_CARDS) r.registerStrategyCard(c);
     for (const techId of Object.keys(TECHS)) r.registerTech(TECHS[techId]);
     r.mount(playstyleManager);
+    return r;
+  }
+
+  // 自定义排除包的 registry（创建临时 manager 跳过指定包）
+  private static defaultCustom(excludePacks: string[]): ModRegistry {
+    const r = new ModRegistry({
+      tiles: TILES, buildings: BUILDINGS, items: ITEMS, enemies: ENEMIES,
+      cards: BASE_CARDS, recipes: RECIPES, tuning: TUNING, intents: [], works: [],
+    });
+    for (const c of STRATEGY_CARDS) r.registerStrategyCard(c);
+    for (const techId of Object.keys(TECHS)) r.registerTech(TECHS[techId]);
+    // 自定义 manager：遍历 DEFAULT_PLAYSTYLE_PACKS 但跳过 excludePacks
+    const excluded = new Set(excludePacks);
+    const customManager: ModPack = {
+      id: 'playstyle-manager',
+      name: '自定义玩法管理器',
+      requires: [],
+      apply(m: ModRegistry): void {
+        for (const id of DEFAULT_PLAYSTYLE_PACKS) {
+          if (excluded.has(id)) continue; // 跳过被排除的包
+          // 级联排除：如果该包 requires 里有被排除的包，也跳过（依赖断裂）
+          const dep = PLAYSTYLE_PACKS[id];
+          if (dep?.requires?.some(r => excluded.has(r))) continue;
+          const pack = PLAYSTYLE_PACKS[id];
+          if (!pack) throw new Error(`mod: 默认玩法清单引用了未登记的包 "${id}"`);
+          m.registerPack(pack);
+        }
+        // 聚合包 requires = 过滤后的清单 → topoSort 自动组 DAG
+        // filteredList: 排除直接排除的包 + 级联排除（requires 里有被排除包的）
+        const filteredList = DEFAULT_PLAYSTYLE_PACKS.filter(id => {
+          if (excluded.has(id)) return false;
+          const dep = PLAYSTYLE_PACKS[id];
+          if (dep?.requires?.some(r => excluded.has(r))) return false;
+          return true;
+        });
+        const customAgg: ModPack = {
+          id: 'default', name: '自定义玩法', requires: filteredList,
+          apply(): void {},
+        };
+        m.mount(customAgg);
+        const violations = validateContracts(m);
+        if (violations.length > 0) throw new Error(violations.join('\n'));
+      },
+    };
+    r.mount(customManager);
     return r;
   }
 
@@ -570,10 +620,12 @@ export class ModRegistry {
 
 type DeepPartial<T> = T extends object ? { [K in keyof T]?: DeepPartial<T[K]> } : T;
 
+// 类型守卫：判断是否为纯对象（overrideTuning 深合并用）
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
+// 深合并（overrideTuning 用：mod 覆盖 tuning 配置，递归合并嵌套对象）
 function deepMerge<T>(target: T, patch: DeepPartial<T>): T {
   if (isPlainObject(target) && isPlainObject(patch)) {
     const out: Record<string, unknown> = { ...target };

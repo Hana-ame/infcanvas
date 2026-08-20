@@ -34,6 +34,7 @@ const CFG = {
 // meta.prison 语义：capacity = 笼子关押上限（默认 1）
 interface PrisonMeta { capacity?: number }
 
+// 读取建筑囚笼配置（meta.prison = 俘获容量/喂食间隔等）
 const prisonOf = (b: BuildingData): PrisonMeta | undefined => b.def.meta?.prison as PrisonMeta | undefined;
 
 export const prisonPack: ModPack = {
@@ -51,7 +52,7 @@ export const prisonPack: ModPack = {
     id: 'prison', label: '囚笼', category: 'production',
     ctor: (sim) => new PrisonSystem(sim),
     // 表内系统不设 before：执行序 = 类别序 × 组内注册序推导（SYSTEM_DEFS 表位置定序；
-    // before 锚点仅第三方表外系统专用——2026-08-16 审计 L7 清理死锚点）
+    // before 锚点仅第三方表外系统专用——2026-08-20 审计 L7 清理死锚点）
   });
   },
 };
@@ -144,7 +145,7 @@ export class PrisonSystem {
         // 感化主体 = 营地 social 技能最高的鼠鼠（说服力最强的人去劝降）
         let persuader = -1;
         let bestSkill = -1;
-        for (const eid of this.ctx.pawnList) {
+        for (const eid of this.ctx.iterPawns) {
           const s = this.ctx.skillOf(eid, 'social');
           if (s > bestSkill) { bestSkill = s; persuader = eid; }
         }

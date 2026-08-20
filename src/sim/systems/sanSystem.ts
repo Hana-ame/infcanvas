@@ -5,14 +5,17 @@ import type { SimContext } from './context';
 import type { EventBus, GameEvent } from '../core/events';
 import type { PawnState, NeedsData } from '../sim';
 import type { SanTuning } from '../defs/tuning';
-import { World } from '../core/world';
+import { buildTagIndex, hasTaggedInRange, findNearestTagged } from './building-cache';
 
+// 理智系统：篝火旁恢复 + 远离掉理智 + 崩溃者 handleCrazy（发呆/逃向篝火）
+// 2026-08-20：用共享 building-cache（tagIndex version-check）+ batch 模式只查 batch 内崩溃
 export class SanSystem implements GameSystem {
   id = 'san';
-  // 架构优化（2026-08-16）：每 tick 缓存篝火列表，nearCampfire/fireRecoverAt 改遍历缓存
+  private _bldVer = -1;
+  private tagIndex: Map<string, import('./building-cache').CachedBuilding[]> = new Map();
+  // 架构优化（2026-08-20）：每 tick 缓存篝火列表，nearCampfire/fireRecoverAt 改遍历缓存
   // 而非 queryBuildingsNear——后者每次查空间分区，40 pawn × 2 次/tick = 80 次查询；
   // 篝火通常只有 1-3 个，直接距离比较 O(n_fires) 更快。max 109ms 尖峰的主因消除。
-  private warmthBuildings: { x: number; y: number; aura: number | undefined }[] = [];
 
   constructor(private ctx: SimContext) {}
 
@@ -22,7 +25,10 @@ export class SanSystem implements GameSystem {
       const died = ev as Extract<GameEvent, { type: 'pawn_died' }>;
       if (died.cause === 'starvation' || died.cause === 'combat') {
         const s = this.ctx.tuning.san;
-        for (const eid of this.ctx.pawnList) {
+        // 2026-08-20 大规模优化：篝火恢复全体（快路径），handleCrazy 只查 batch
+    const batchArr = this.ctx.iterPawns;
+    const batchSet = new Set(batchArr);
+    for (const eid of this.ctx.iterPawns) {
           const pos = this.ctx.pawnPositions.get(eid);
           if (!pos) continue;
           const d = Math.hypot(pos.x - died.x, pos.y - died.y);
@@ -47,15 +53,12 @@ export class SanSystem implements GameSystem {
 
   update(dt: number): void {
     const s = this.ctx.tuning.san;
-    // 每 tick 刷新篝火缓存（建筑变化时自动跟上——低频操作，篝火数量少）
-    this.warmthBuildings = [];
-    for (const [key, b] of this.ctx.world.buildings) {
-      if (b.def.tags?.includes('warmth')) {
-        const { x, y } = World.keyToXY(key);
-        this.warmthBuildings.push({ x, y, aura: b.def.aura?.sanPerSec });
-      }
-    }
-    for (const eid of this.ctx.pawnList) {
+    // tagIndex 由 Sim.step 统一构建（minCtx 无 step → 此处自动构建）
+    if (this._bldVer !== this.ctx.world.buildingVersion) { this._bldVer = this.ctx.world.buildingVersion; this.tagIndex = buildTagIndex(this.ctx); } // 共享建筑缓存（本地构建，san/needs/repair 复用同一模块）
+    // 2026-08-20 大规模优化：篝火恢复全体（快路径），handleCrazy 只查 batch
+    const batchArr = this.ctx.iterPawns;
+    const batchSet = new Set(batchArr);
+    for (const eid of this.ctx.iterPawns) {
       const st = this.ctx.pawnStates.get(eid);
       if (!st) continue;
       const n = this.ctx.readNeeds(eid);
@@ -64,15 +67,14 @@ export class SanSystem implements GameSystem {
       if (!pos) continue;
 
       // 单次遍历篝火缓存：同时判定 nearCampfire + fireRecover（合并两次 queryBuildingsNear）
-      let nearFire = false;
+      // 2026-08-20 架构优化：用共享 building-cache 查 warmth tag
+      const warmthList = this.tagIndex.get('warmth');
+      const nearFire = hasTaggedInRange(pos, warmthList, s.fireComfortRadius);
       let fireRecover = s.fireRecover;
-      const r2 = s.fireComfortRadius * s.fireComfortRadius;
-      for (const w of this.warmthBuildings) {
-        const ddx = w.x - pos.x, ddy = w.y - pos.y;
-        if (ddx * ddx + ddy * ddy <= r2) {
-          nearFire = true;
-          if (w.aura !== undefined) fireRecover = w.aura;
-        }
+      if (nearFire) {
+        // 查最近 warmth 建筑的 aura（sanPerSec 优先）
+        const nearest = findNearestTagged(pos, warmthList, s.fireComfortRadius);
+        if (nearest?.def.aura?.sanPerSec !== undefined) fireRecover = nearest.def.aura.sanPerSec;
       }
 
       // 黑夜 + 远离篝火 → 黑暗恐惧，理智流失（POW 高更镇定）
@@ -109,11 +111,7 @@ export class SanSystem implements GameSystem {
     //（采集狩猎局 30 分钟 8/11 人永久崩溃，人在火边 4-13 格 san 恒 0）。
     if (pos) {
       // 用篝火缓存判定（与 update 同源，避免再查 queryBuildingsNear）
-      const r2 = s.fireComfortRadius * s.fireComfortRadius;
-      const nearFire = this.warmthBuildings.some((w) => {
-        const ddx = w.x - pos.x, ddy = w.y - pos.y;
-        return ddx * ddx + ddy * ddy <= r2;
-      });
+      const nearFire = hasTaggedInRange(pos, this.tagIndex.get('warmth'), s.fireComfortRadius);
       if (nearFire) {
         st.crazyTime = 0;
         return;
@@ -123,18 +121,14 @@ export class SanSystem implements GameSystem {
     // 逃向篝火模式：寻路到最近 warmth 建筑（到达后 SAN 恢复自然解除）
     if ((st.crazyTime ?? 0) > s.crazyFleeAfter) {
       if (!st.crazyFleeTarget) {
-        // 2026-08-16 优化：用 update 的 warmthBuildings 缓存（原遍历全建筑表——
+        // 2026-08-20 优化：用 update 的 warmthBuildings 缓存（原遍历全建筑表——
         // 每个崩溃者每帧遍历 = 多人崩溃时 max 29ms 尖峰）
-        let best: { x: number; y: number } | null = null;
-        let bestD = Infinity;
-        for (const w of this.warmthBuildings) {
-          const d = (w.x - (pos?.x ?? 0)) ** 2 + (w.y - (pos?.y ?? 0)) ** 2;
-          if (d < bestD) { bestD = d; best = { x: w.x, y: w.y }; }
-        }
+        const nearest = findNearestTagged({ x: pos?.x ?? 0, y: pos?.y ?? 0 }, this.tagIndex.get('warmth'), 9999);
+        const best = nearest ? { x: nearest.x, y: nearest.y } : null;
         st.crazyFleeTarget = best ?? undefined;
       }
       if (st.crazyFleeTarget) {
-        // 2026-08-16 优化：逃向篝火按 pathCd 节流重寻路——原每 tick 直接 moveTo
+        // 2026-08-20 优化：逃向篝火按 pathCd 节流重寻路——原每 tick 直接 moveTo
         // 会反复 A* 到同一目标（多人崩溃时 san max 28ms 尖峰）。pathCd 由
         // BehaviorSystem 每帧递减，复用同一套寻路节流语义。
         if ((st.pathCd ?? 0) <= 0) {

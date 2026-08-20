@@ -33,6 +33,7 @@ interface PackEntry {
 // 后续包可依赖它。同一包在多个 registry 上挂载 = 幂等跳过（apply 只跑一次）。
 const packDirectory = new Map<string, PackEntry>();
 
+// 注册包到全局目录（幂等：同对象重复注册安全，不同定义抛错）
 export function registerPack(pack: ModPack, source = 'local'): void {
   const old = packDirectory.get(pack.id);
   if (old) {
@@ -49,10 +50,12 @@ export function registerPack(pack: ModPack, source = 'local'): void {
   packDirectory.set(pack.id, { pack, source });
 }
 
+// 检查包是否已注册
 export function packExists(id: string): boolean {
   return packDirectory.has(id);
 }
 
+// 查询已注册的包（topoSort 依赖解析用）
 export function getPack(id: string): PackEntry | undefined {
   return packDirectory.get(id);
 }

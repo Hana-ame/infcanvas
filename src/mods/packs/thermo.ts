@@ -38,6 +38,7 @@ const CFG = {
 // meta.heat 语义：radius=加热半径；power=单位半径上的加热强度（有效温度 = power×(1-d/r)）
 interface HeatMeta { radius: number; power: number }
 
+// 读取建筑热力配置（meta.heat = { radius, power, fuelItem, fuelInterval }）
 const heatOf = (b: BuildingData): HeatMeta | undefined => b.def.meta?.heat as HeatMeta | undefined;
 
 export const thermoPack: ModPack = {
@@ -59,7 +60,7 @@ export const thermoPack: ModPack = {
     id: 'thermo', label: '温度场', category: 'production',
     ctor: (sim) => new ThermoSystem(sim),
     // 表内系统不设 before：执行序 = 类别序 × 组内注册序推导（SYSTEM_DEFS 表位置定序；
-    // before 锚点仅第三方表外系统专用——2026-08-16 审计 L7 清理死锚点）
+    // before 锚点仅第三方表外系统专用——2026-08-20 审计 L7 清理死锚点）
   });
   },
 };
@@ -85,7 +86,7 @@ export class ThermoSystem {
   }
 
   update(dt: number): void {
-    // 燃料结算（2026-08-16 审计中①）：头注承诺"暖炉每 10s 烧 1 木维持热度"此前未实现
+    // 燃料结算（2026-08-20 审计中①）：头注承诺"暖炉每 10s 烧 1 木维持热度"此前未实现
     //（免费无限热源）——现在发热有代价：全局 wood ≥ 1 才续供（扣 1 + 记 economy 支出，
     // 烧木也是消耗），无木 → 该暖炉进 offline 断电。结算必须在热源评估前完成，
     // 断供当周期即失效。篝火/教堂是基础暖源不烧木（内核免费取暖语义不动）。
@@ -108,13 +109,13 @@ export class ThermoSystem {
     this.timer = CFG.evalInterval;
     this.refreshHeaters();
 
-    // 低项 L 顺带修复（2026-08-16）：原"无热源早退"跳过整个评估 → 无热源时
+    // 低项 L 顺带修复（2026-08-20）：原"无热源早退"跳过整个评估 → 无热源时
     // 极端温差惩罚失效（模拟里火场外冻伤逻辑全靠这段）。早退改为只跳过热源叠加，
     // 有效温度计算与极端温差惩罚对全体常跑（2s 一拍，成本可控）。
     const haveHeat = this.heaters.size > 0
 
     const envT = this.ctx.env.temperature;
-    for (const eid of this.ctx.pawnList) {
+    for (const eid of this.ctx.iterPawns) {
       const pos = this.ctx.pawnPositions.get(eid);
       if (!pos) continue;
       // 热源叠加（距离衰减）

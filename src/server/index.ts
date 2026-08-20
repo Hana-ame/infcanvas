@@ -24,7 +24,7 @@ const TICK_HZ = 20;
 const MODS_DIR = process.env.MODS_DIR ?? 'mods'; // 根目录 mods/*.mod.json 包自动挂载
 const DELTA_MS = 500;        // 增量轮询
 const RECONCILE_MS = 5000;   // 全量对账间隔
-const HEARTBEAT_MS = 2000;   // 显式心跳间隔（2026-08-16 审计 M1：静默期保活，见下方广播循环）
+const HEARTBEAT_MS = 2000;   // 显式心跳间隔（2026-08-20 审计 M1：静默期保活，见下方广播循环）
 
 // 神谕慢决策层：完全可由随机抽卡替代（默认即启用，零成本零 API）
 //  - 默认：feedback 随机抽卡（策略卡 + 科技卡），LLM 组件的完整替代
@@ -47,7 +47,7 @@ if (!modRes.ok) {
   console.error(`[server] mod 加载失败：\n${modRes.errors.join('\n')}`);
   process.exit(1);
 }
-// DLC 契约校验补跑（2026-08-16 修复：validateContracts 唯一入口在 playstyleManager.apply
+// DLC 契约校验补跑（2026-08-20 修复：validateContracts 唯一入口在 playstyleManager.apply
 // —— ModRegistry.default() 内部，先于 loadModsFromDir 执行 → DLC 注册的 def/命令从未过
 // 契约表（meta.warmth 漏写/衣物无 wearable/处理器缺失等静默放行）。此处补跑 = DLC 与
 // in-code 包同一条校验防线，违例 fail-stop（与 mod 加载失败同策略）
@@ -65,7 +65,7 @@ sim = new Sim({
 const dummyPlanner = makeDummyCardPlanner(sim, { mode: dummyMode });
 console.log(`[server] seed=${SEED} pawns=${PAWNS} ws://0.0.0.0:${PORT} 神谕抽卡=${dummyMode}${llmCfg ? ` llm=${llmCfg.endpoint}（可选增强）` : '（LLM 已由随机抽卡替代）'}${modRes.mods.length ? ` mods=[${modRes.mods.join(', ')}]` : '（无 mod）'}`);
 
-// 可选鉴权（2026-08-16 审计低项 L1）：SERVER_TOKEN 未设 = 完全开放（dev 默认，向后兼容）；
+// 可选鉴权（2026-08-20 审计低项 L1）：SERVER_TOKEN 未设 = 完全开放（dev 默认，向后兼容）；
 // 设置后 connection 回调校验 req.url 的 ?token=，不符立即 close 1008（应用层拒绝，不拉黑）。
 const SERVER_TOKEN = process.env.SERVER_TOKEN;
 console.log(`[server] 鉴权=${SERVER_TOKEN ? 'on（客户端 remote URL 需带 ?token=…）' : 'off（未设 SERVER_TOKEN，开放连接）'}`);
@@ -73,11 +73,15 @@ const wss = new WebSocketServer({ port: PORT });
 
 let nextClient = 1;
 const clients = new Map<number, WebSocket>();
+// 2026-08-20 AOI: 每客户端视口中心 + 范围（只推送视口内实体）
+const viewports = new Map<number, { cx: number; cy: number; range: number }>();
 
+// 发消息给单个客户端（JSON 序列化 + try-catch 防断线崩溃）
 function sendTo(ws: WebSocket, msg: ServerMsg): void {
   if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
 }
 
+// 广播给所有已认证客户端（snapshot/delta 推送用）
 function broadcast(msg: ServerMsg): void {
   for (const ws of clients.values()) sendTo(ws, msg);
 }
@@ -95,6 +99,7 @@ sim.addTileListener((x, y, tileId) => {
   broadcast(msg);
 });
 
+// 构建欢迎包（新连接首条消息：clientId + 当前 sim 快照）
 function buildWelcome(clientId: number): WelcomeMsg {
   const w = sim.world;
   const tiles: WelcomeMsg['tiles'] = {};
@@ -125,6 +130,7 @@ function buildWelcome(clientId: number): WelcomeMsg {
   };
 }
 
+// 构建全量快照（每 5s 一次对账 + 新连接首发；含全部 pawn/building/stockpile/hostile 状态）
 function buildSnapshot(): SnapshotMsg {
   const w = sim.world;
   const pawns: SnapshotMsg['pawns'] = [];
@@ -157,7 +163,7 @@ function buildSnapshot(): SnapshotMsg {
       // 读取；缺省 undefined = 未征召（旧客户端/旧档安全——协议字段全可选）。工作优先级
       // M1 已撤回，无 workPriorities 字段。
       drafted: sim.pawnStates.get(eid)?.extra?.[K_DRAFTED] === true || undefined,
-      // 战场指挥 DLC（field-command 包 2026-08-16）：编制树/生效战术回显——从 extra 序列化
+      // 战场指挥 DLC（field-command 包 2026-08-20）：编制树/生效战术回显——从 extra 序列化
       //（缺省 undefined = 非指挥官/无战术；协议字段全可选，旧客户端安全）。tactic 有效值 =
       // 临战命令（underOrder，覆盖编排位）优先，其次玩家编排的 active。
       commander: (() => {
@@ -176,7 +182,7 @@ function buildSnapshot(): SnapshotMsg {
   }
   const hostiles: SnapshotMsg['hostiles'] = sim.hostiles.map((h, i) => ({
     i, enemyId: h.enemyId, x: h.x, y: h.y, hp: h.hp, maxHp: h.maxHp, faction: h.faction,
-    // 2026-08-16 协议一致性：透传驯化/守卫/冲刺状态（此前远程看不到驯化进度 → HUD 失真）
+    // 2026-08-20 协议一致性：透传驯化/守卫/冲刺状态（此前远程看不到驯化进度 → HUD 失真）
     taming: h.taming, owner: h.owner, dashCd: h.dashCd,
   }));
   const buildings: SnapshotMsg['buildings'] = [];
@@ -281,7 +287,7 @@ setInterval(() => {
     lastReconcile = now;
     broadcastSnapshot();
   }
-  // 显式心跳（2026-08-16 审计 M1）：暂停/无事件时增量停发、对账 5s 才来一次——
+  // 显式心跳（2026-08-20 审计 M1）：暂停/无事件时增量停发、对账 5s 才来一次——
   // 客户端看门狗（原 5s）在静默窗内无法区分"活着没消息"与"断了"，网络抖动即误断
   // 重连。心跳 2s 一发恒定流量（即使 paused 也发），t = 权威时间（暂停时不变，无损）。
   if (now - lastPing >= HEARTBEAT_MS) {

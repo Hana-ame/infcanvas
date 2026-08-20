@@ -17,7 +17,7 @@ export const craftingPack: ModPack = {
     id: 'craft', label: '手作', category: 'production',
     ctor: (s: Sim) => new CraftSystem(s),
     // 表内系统不设 before：执行序 = 类别序 × 组内注册序推导（SYSTEM_DEFS 表位置定序；
-    // before 锚点仅第三方表外系统专用——2026-08-16 审计 L7 清理死锚点）
+    // before 锚点仅第三方表外系统专用——2026-08-20 审计 L7 清理死锚点）
   });
   }
 };

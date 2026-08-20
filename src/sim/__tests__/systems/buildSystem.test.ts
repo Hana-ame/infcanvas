@@ -31,7 +31,7 @@ describe('BuildSystem 独立测试（最小 ctx，无 Sim）', () => {
   it('升级语义：原地已有"会升级成目标"的建筑 → 原地升级（upgradeBuilding）', () => {
     const sys = attach(ctx, new BuildSystem(ctx));
     // 找 campfire 升级到 church 的路径：先建 campfire，再加 church 蓝图（def.upgradesTo === 'church'）
-    // 注：升级落点校验（2026-08-16 修复）要求 church 2×2 的新格可建——需找"2×2 全可建"位置
+    // 注：升级落点校验（2026-08-20 修复）要求 church 2×2 的新格可建——需找"2×2 全可建"位置
     let x = -1, y = -1;
     for (let sx = 1; sx < ctx.world.width - 1; sx++) for (let sy = 1; sy < ctx.world.height - 1; sy++) {
       const cd = ctx.buildingDef('campfire')!;
@@ -75,7 +75,7 @@ describe('BuildSystem 独立测试（最小 ctx，无 Sim）', () => {
     expect(ctx.stockpile.wood).toBe(50);
   });
 
-  // 2026-08-16 审查修复回归：升级扩展 footprint（1×1 → 2×2）时，新格被相邻建筑占用
+  // 2026-08-20 审查修复回归：升级扩展 footprint（1×1 → 2×2）时，新格被相邻建筑占用
   // → 升级必须被拒绝且不破坏相邻建筑的 gridToBuilding 归属（此前 upgradeBuilding 无条件
   // 覆盖 gridToBuilding，后升级者把前者的格子归属顶掉）
   it('升级 footprint 冲突：相邻篝火各升教堂 → 后升级者被拒，两建筑归属完好', () => {

@@ -62,7 +62,7 @@ describe('CardSystem 独立测试（最小 ctx，无 Sim）', () => {
     expect(ctx._pawnStates.get(b)!.lastDecision!.time).toBeGreaterThan(0);
   });
 
-  // ---- 2026-08-16 决策节流回归 ----
+  // ---- 2026-08-20 决策节流回归 ----
 
   it('决策节流：decisionCd > 0 时不抽卡决策（保持上次 job）', () => {
     const sys = new BehaviorSystem(ctx);

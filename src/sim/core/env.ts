@@ -10,6 +10,7 @@ export interface EnvState {
   temperature: number;    // 摄氏度
 }
 
+// 初始化环境状态（温度/降雨/光照；baseTemp 读 tuning）
 export function initEnv(t: { baseTemp: number }): EnvState {
   return { raining: false, rainLeft: 0, temperature: t.baseTemp };
 }
@@ -31,6 +32,7 @@ export function tickEnv(env: EnvState, dt: number, dayTime: number, rng: { next(
   }
 }
 
+// 天气标签（晴/雨/热/冷 → UI 显示用）
 export const weatherLabel = (env: EnvState, t?: EnvTuning): string => {
   const temp = Math.round(env.temperature);
   // 兜底阈值 32/0°C 与 tuning.env 默认一致（显示用；调用方通常传 tuning 快照，未传时用默认）

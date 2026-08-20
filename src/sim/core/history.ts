@@ -13,7 +13,7 @@ export interface HistoryEntry {
   x?: number; y?: number; // 地点
   cause?: string;      // 原因（死亡/事件）
   data?: Record<string, unknown>; // 附加事实（数量/目标等）
-  level?: 'minor';     // 日常状态流（eat/rest/mood_changed）：recent 视图降噪（2026-08-16 用户
+  level?: 'minor';     // 日常状态流（eat/rest/mood_changed）：recent 视图降噪（2026-08-20 用户
                        // "历史被 mood 淹没"——20 条 recent 被高频吃饭/休息/心情刷屏,大事沉底。
                        // 完整事实仍全部保留在 entries（可 query/导出），只影响 recent 概览视图）
 }
@@ -21,6 +21,7 @@ export interface HistoryEntry {
 // 日常状态流事件类型：recent 概览降噪（完整日志保留不删）
 const MINOR_TYPES = new Set<string>(['eat', 'rest', 'mood_changed']);
 
+// 历史日志（事件存储 + 查询；cap 软上限 + 批量裁剪防高频分配；record 是采样热点）
 export class HistoryLog {
   private entries: HistoryEntry[] = [];
   private nextId = 1;
@@ -39,7 +40,7 @@ export class HistoryLog {
       type: ev.type,
     };
     // 日常状态流判 minor：吃饭/休息/心情变化属生理节律,高频低信息,不给 recent 概览占位
-    //（2026-08-16 热路径优化：原用 spread 条件展开 level 字段 = 每次记录多一个临时对象，
+    //（2026-08-20 热路径优化：原用 spread 条件展开 level 字段 = 每次记录多一个临时对象，
     // record 是采样最大单点（6%+）；直接赋值无分配差异、语义相同）
     if (MINOR_TYPES.has(ev.type)) base.level = 'minor';
     switch (ev.type) {
@@ -92,7 +93,7 @@ export class HistoryLog {
         break;
     }
     this.entries.push(base);
-    // 容量裁剪（2026-08-16 热路径优化：原每次超限即 splice 头部 = 事件持续流入时
+    // 容量裁剪（2026-08-20 热路径优化：原每次超限即 splice 头部 = 事件持续流入时
     // 每 tick 整表复制（5000 条引用），profiler 采样 record 为单点最大热点；
     // 改批量裁剪：超限一次裁到 cap 的 3/4 留缓冲，裁剪频率降约 4 倍——cap 语义 =
     // 软上限（entries 在 3/4cap ~ cap 间振荡），query/recent/toJSON 只读不受影响）

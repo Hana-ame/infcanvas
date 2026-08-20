@@ -44,7 +44,7 @@ describe('RepairSystem 独立测试（最小 ctx，无 Sim）', () => {
     expect(st.job).toBe('闲逛');
   });
 
-  // ---- 2026-08-16 扩展 ----
+  // ---- 2026-08-20 扩展 ----
   it('满血建筑不修（无开销）', () => {
     const sys = attach(ctx, new RepairSystem(ctx));
     let fx = 0, fy = 0;

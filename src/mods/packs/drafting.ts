@@ -50,17 +50,20 @@ export function attackTargetOf(st: { extra?: Record<string, unknown> } | undefin
   return { hostileIndex: o.hostileIndex, x: o.x, y: o.y };
 }
 
+// 设置征召状态（K_DRAFTED 键 → drafted=true 表示被征召，不自主决策）
 export function setDrafted(st: { extra?: Record<string, unknown> }, on: boolean): void {
   st.extra = st.extra ?? {};
   if (on) st.extra[K_DRAFTED] = true;
   else delete st.extra[K_DRAFTED];
 }
 
+// 设置攻击目标（K_ATTACK 键 → 存 hostileIndex + 坐标，征召追击用）
 export function setAttackTarget(st: { extra?: Record<string, unknown> }, hostileIndex: number, x: number, y: number): void {
   st.extra = st.extra ?? {};
   st.extra[K_ATTACK] = { hostileIndex, x, y };
 }
 
+// 清除攻击目标（目标消失/解除征召时调用）
 export function clearAttackTarget(st: { extra?: Record<string, unknown> }): void {
   delete st.extra?.[K_ATTACK];
 }
@@ -76,11 +79,18 @@ export class DraftSystem implements GameSystem {
 
   init(): void {}
 
+  private _throttle = 0;
+  private _hbIdx = 0;
   update(dt: number): void {
-    for (const eid of this.ctx.pawnList) {
+    this._throttle += dt;
+    if (this._throttle < 0.5) return;
+    const _dt = this._throttle; // eslint-disable-line
+    this._throttle = 0;
+    // 节流：征召追击 0.5s 评估一次
+    for (const eid of (this.ctx.iterPawns ?? this.ctx.iterPawns)) {
       const st = this.ctx.pawnStates.get(eid);
       if (!st || !draftedOf(st)) continue;
-      // 战场指挥 DLC（2026-08-16 field-command 包）：受命小人的'固守/撤退/集结'战术
+      // 战场指挥 DLC（2026-08-20 field-command 包）：受命小人的'固守/撤退/集结'战术
       // 优先级高于自动接敌——追击会顶掉战术移动（固守被拉走/撤退被拉回），由战术系统
       // 驱动移动；冲锋/集火经 attackTarget 走本条追击逻辑（指定目标优先于自动接敌）。
       // 跨包读 K_TACTICS（契约登记 reader drafting，见 contracts.ts）。
@@ -100,7 +110,7 @@ export class DraftSystem implements GameSystem {
       const last = this.lastRepath.get(eid) ?? 0;
       if (this.ctx.time - last < CFG.repathInterval) continue;
       this.lastRepath.set(eid, this.ctx.time);
-      // markCommand:false = 系统行为移动，不标记玩家命令（2026-08-16 修复：此前 moveTo
+      // markCommand:false = 系统行为移动，不标记玩家命令（2026-08-20 修复：此前 moveTo
       // 无条件设 commandCooldown=3，追击一次后自锁 3s；配合 cardSystem 征召门内递减，
       // 现在玩家手动命令仍受尊重，系统追击不再自锁）
       this.ctx.moveTo(eid, Math.round(target.x), Math.round(target.y), { markCommand: false });
@@ -117,7 +127,14 @@ export class DraftSystem implements GameSystem {
     // 自动接敌：无指定目标（或指定目标已消失）→ 半径内最近的敌人（任务 M2）
     let best: HostileLike | null = null;
     let bestD = CFG.autoEngageRadius * CFG.autoEngageRadius;
-    for (const h of this.ctx.hostiles) {
+    // 2026-08-20 万人战争优化：敌人分批处理（与 raid 同策略）
+    const HB = Math.max(500, Math.floor(this.ctx.hostiles.length / 20));
+    this._hbIdx = (this._hbIdx ?? 0);
+    const hStart = this._hbIdx;
+    const hEnd = Math.min(hStart + HB, this.ctx.hostiles.length);
+    this._hbIdx = hEnd >= this.ctx.hostiles.length ? 0 : hEnd;
+    for (let hi = hStart; hi < hEnd; hi++) {
+      const h = this.ctx.hostiles[hi];
       const d = (h.x - pos.x) ** 2 + (h.y - pos.y) ** 2;
       if (d < bestD) { bestD = d; best = h; }
     }
@@ -125,7 +142,7 @@ export class DraftSystem implements GameSystem {
   }
 
   // 刷新指定目标：敌人每 tick 在动，且击杀会 splice 数组（下标错位）。
-  // 修复 2026-08-16 审查问题 ①：此前 attackTargetOf 每 tick 从 extra 新建快照对象，
+  // 修复 2026-08-20 审查问题 ①：此前 attackTargetOf 每 tick 从 extra 新建快照对象，
   // resolveTarget 只改局部对象、从不写回 → 找回的新下标永不落盘；且 splice 后
   // hs[staleIndex] 指向"别的敌人"时无条件返回其坐标 → 追错目标。
   // 现在：命中即 setAttackTarget 写回（快照刷新 + 下标修正），并用位置距离校验

@@ -47,7 +47,7 @@ describe('AutonomousBuildSystem 独立测试（最小 ctx，无 Sim）', () => {
     expect(ctx2.buildQueue.length).toBe(0);
   });
 });
-  it('营地(篝火)不在地图中心 → 扩展以营地为中心(2026-08-16 用户⑬ AI自动扩展领地)', () => {
+  it('营地(篝火)不在地图中心 → 扩展以营地为中心(2026-08-20 用户⑬ AI自动扩展领地)', () => {
     // 篝火放 (4,4)（16×16 地图中心是 (8,8)）;食物为 0 → 触发 farm 计划
     const ctx2 = makeMinCtx(16, { rng: { next: () => 0.01, int: () => 0 } as never });
     // 篝火定点放 (1,1):远离地图中心 (8,8)。注意不能循环嵌套找位(break 只跳内层

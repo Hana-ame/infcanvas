@@ -59,7 +59,7 @@ describe('存档扩展点：mod 自定义字段随档', () => {
     }
   });
 
-  // ---- 2026-08-16 审查修复回归 ----
+  // ---- 2026-08-20 审查修复回归 ----
 
   it('读档：pawn 在原坐标不可走（越界/水上/被建筑覆盖）→ 就近可走格安置，不静默失踪', () => {
     // 发现背景：load() 里 spawnPawn 返 -1 直接 continue——存档坐标漂移（站在水上/
@@ -105,7 +105,7 @@ describe('存档扩展点：mod 自定义字段随档', () => {
     expect(sim2.events.some((e) => e.text.includes('无处安置'))).toBe(true);
   });
 
-  // ---- 2026-08-16 架构优化：存档版本化回归 ----
+  // ---- 2026-08-20 架构优化：存档版本化回归 ----
 
   it('存档版本：save 写入 SAVE_VERSION，load 往返保留', () => {
     const sim = new Sim({ registry: ModRegistry.default(), pawnCount: 2, seed: 10 });
@@ -123,7 +123,7 @@ describe('存档扩展点：mod 自定义字段随档', () => {
     const sim = new Sim({ registry: ModRegistry.default(), pawnCount: 1, seed: 11 });
     sim.step(1);
     const data = sim.save() as { saveVersion?: number } & ReturnType<Sim['save']>;
-    delete data.saveVersion; // 模拟 2026-08-16 前的旧档（无版本字段）
+    delete data.saveVersion; // 模拟 2026-08-20 前的旧档（无版本字段）
     const sim2 = new Sim({ registry: ModRegistry.default(), pawnCount: 1, seed: 93 });
     // 旧档不崩、小人照常还原（兼容逻辑 = 缺省语义处理，见 SAVE_MIGRATIONS 注释）
     expect(() => sim2.load(data)).not.toThrow();

@@ -1,4 +1,4 @@
-// 跨模块组合测试（2026-08-16）：验证多个模块协同工作时的行为正确性。
+// 跨模块组合测试（2026-08-20）：验证多个模块协同工作时的行为正确性。
 // 场景：① 战场指挥 + 驯兽守卫协同（指挥官征召 → 守卫猫参战）
 //       ② 寻路缓存跨决策周期存活（decisionCd 不清 trailCache）
 //       ③ 暖炉烧木 + 温度场 + 决策节流（节流期间不重新决策但仍受温度惩罚）
@@ -15,7 +15,7 @@ const makeSim = (seed = 100, pawns = 5) => {
   return new Sim({ seed, pawnCount: pawns, registry: mods });
 };
 
-describe('跨模块组合测试（2026-08-16）', () => {
+describe('跨模块组合测试（2026-08-20）', () => {
   it('① 战场指挥 + 驯兽守卫协同：册封指挥官 → 征召 → 同时驯化重伤猫 → 守卫参战', () => {
     const sim = makeSim(101, 4);
     const cx = Math.floor(sim.world.width / 2);

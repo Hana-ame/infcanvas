@@ -4,8 +4,10 @@
 // hostiles 数量少整体覆盖；buildQueue/stockpile 小对象整体覆盖。
 import type { SnapshotMsg, DeltaMsg } from '../shared/protocol';
 
+// 数值比较（含 undefined/NaN 兜底；协议层归一：undefined === undefined 为 true）
 const sameNum = (a: number | undefined, b: number | undefined): boolean => a === b || (a === undefined && b === undefined) || (Number.isNaN(a) && Number.isNaN(b));
 
+// 增量 delta 构建（prev→cur 的差异；500ms 一轮推送，只发变化字段；无变化返回 null）
 export function buildDelta(prev: SnapshotMsg | null, cur: SnapshotMsg): DeltaMsg | null {
   if (!prev) return fullDelta(cur);
   const d: DeltaMsg = { type: 'delta', t: cur.t };
@@ -49,9 +51,11 @@ export function buildDelta(prev: SnapshotMsg | null, cur: SnapshotMsg): DeltaMsg
     // RW-1（2026-08-15）：征召（drafted 标量）。缺省 undefined 与未征召视为等同——
     // 只在值实际变化时下发（带宽 + 旧客户端兼容）。工作优先级 M1 已撤回，无 workPriorities diff。
     if ((old.drafted ?? false) !== (p.drafted ?? false)) { pd.drafted = p.drafted ?? false; ch = true; }
-    // 战场指挥 DLC（field-command 包 2026-08-16）：编制的低频字段用 JSON 比较（命令/册封
+    // 战场指挥 DLC（field-command 包 2026-08-20）：编制的低频字段用 JSON 比较（命令/册封
     // 才变化，40 人 × 2/s 的 stringify 开销可忽略）；tactic 标量 diff（同 drafted 模式）
-    if ((old.commander ? JSON.stringify(old.commander) : '') !== (p.commander ? JSON.stringify(p.commander) : '')) { pd.commander = p.commander; ch = true; }
+    // 2026-08-20 优化：commander 低频字段——逐字段比较替代 JSON.stringify（避免每次 delta 生成时为每个 pawn 做 2 次 JSON 序列化+比较）
+      const oc = old.commander, nc = p.commander;
+      if ((oc?.role ?? '') !== (nc?.role ?? '') || JSON.stringify(oc?.subordinates) !== JSON.stringify(nc?.subordinates)) { pd.commander = p.commander; ch = true; }
     if ((old.tactic ?? '') !== (p.tactic ?? '')) { pd.tactic = p.tactic ?? ''; ch = true; }
     if (ch) { pawns.push(pd); any = true; }
   }
@@ -102,6 +106,7 @@ function fullDelta(s: SnapshotMsg): DeltaMsg {
   return d;
 }
 
+// 深比较对象（commander 等嵌套字段；先比 JSON 字符串，快速路径短路）
 function sameObj(a: unknown, b: unknown): boolean {
   if (a === b) return true;
   if (!a || !b) return false;
@@ -110,6 +115,7 @@ function sameObj(a: unknown, b: unknown): boolean {
   if (ka.length !== kb.length) return false;
   return ka.every((k) => (a as Record<string, unknown>)[k] === (b as Record<string, unknown>)[k]);
 }
+// 深比较数组（subordinates 等数组字段；逐元素 JSON 比）
 function sameArr(a: unknown, b: unknown): boolean {
   if (a === b) return true;
   if (!a || !b) return false;
@@ -118,6 +124,7 @@ function sameArr(a: unknown, b: unknown): boolean {
   if (A.length !== B.length) return false;
   return A.every((v, i) => sameObj(v, B[i]));
 }
+// 深比较数组键（用于 keyed array 比较）
 function sameArrKey(a: unknown, b: unknown): boolean {
   if (a === b) return true;
   if (!a || !b) return false;

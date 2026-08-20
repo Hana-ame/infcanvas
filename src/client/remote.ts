@@ -59,7 +59,7 @@ export class RemoteSim {
   private lastMessageAt = 0;
   private watchdogTimer: ReturnType<typeof setInterval> | null = null;
   // 心跳阈值：超过此时长没收到任何 server 消息 → 判定断线（server 假死/网络黑洞），主动重连
-  // 看门狗超时（2026-08-16 审计 M1）：5000 默认值 == 服务器全量对账间隔，静默期
+  // 看门狗超时（2026-08-20 审计 M1）：5000 默认值 == 服务器全量对账间隔，静默期
   //（暂停/无事件）唯一消息源 5s 一发，零抖动余量 + 后台标签页定时器节流即误断重连。
   // 服务器现每 2s 显式心跳（PingMsg），15s 窗口 = 7 倍余量（仍远小于重连退避）。
   watchdogMs = 15000;
@@ -186,7 +186,7 @@ export class RemoteSim {
 
   private onMessage(raw: string): void {
     const m = JSON.parse(raw) as ServerMsg;
-    // 任何消息都算心跳（2026-08-16 审计 M1 根修：此前 lastMessageAt 只在连接/看门狗
+    // 任何消息都算心跳（2026-08-20 审计 M1 根修：此前 lastMessageAt 只在连接/看门狗
     // 启动时更新——消息收到也从不刷新，看门狗在静默期竟会"有消息也断线"）
     this.lastMessageAt = Date.now();
     // 权威时间锚定（welcome 无 t；快照/增量/事件/心跳都有）
@@ -259,7 +259,7 @@ export class RemoteSim {
 
   // tick delta：把变化量合并进本地缓存（身份对齐：pawn eid / 建筑 key）
   private applyDelta(m: DeltaMsg): void {
-    // 权威快照基线（M2 修复，2026-08-16 审计）：此前整对象 spread delta 进 this.snap——
+    // 权威快照基线（M2 修复，2026-08-20 审计）：此前整对象 spread delta 进 this.snap——
     // delta 是增量形状（pawns = 逐 pawn 部分字段、顶层字段不全），spread 后 this.snap 变
     // 成"半残快照"：pawns 数组被增量整体替换 → 其余 pawn 从 snap 蒸发；字段缺失 → 读面
     //（isNight/buildCount/buildQueueItems 及未来的对账点）误读 undefined。
@@ -286,7 +286,7 @@ export class RemoteSim {
     let pawnListChanged = false;
     if (m.pawns) {
       // snap.pawns 随增量同步（M2：逐 eid 合并保全量形状，不整体替换）
-      // 2026-08-16 优化：用 Map 代替 findIndex 逐条扫描——delta 每帧多条时 O(n²)→O(n)
+      // 2026-08-20 优化：用 Map 代替 findIndex 逐条扫描——delta 每帧多条时 O(n²)→O(n)
       const snapById = new Map(this.snap.pawns.map((p) => [p.eid, p]));
       for (const pd of m.pawns) {
         if (pd.removed) {
@@ -297,7 +297,7 @@ export class RemoteSim {
           continue;
         }
         const old = this.pawnCache.get(pd.eid);
-        // eid 显式拷贝（2026-08-16 审计 M2/L3 补漏）：新 pawn 增量 old=undefined 时 merged
+        // eid 显式拷贝（2026-08-20 审计 M2/L3 补漏）：新 pawn 增量 old=undefined 时 merged
         // 只有变化字段；snap.pawns 直接存 merged，条目缺 eid → pawns 权威序推导出 undefined
         const merged = { ...old, eid: pd.eid } as SnapshotMsg['pawns'][number];
         if (pd.x !== undefined) merged.x = pd.x;
@@ -321,7 +321,7 @@ export class RemoteSim {
         if (pd.worn !== undefined) merged.worn = pd.worn || undefined;
         // RW-1（2026-08-15）：征召 delta 合并（drafted 标量）。工作优先级 M1 已撤回。
         if (pd.drafted !== undefined) merged.drafted = pd.drafted;
-        // 战场指挥 DLC（field-command 包 2026-08-16）：编制树/生效战术 delta 合并（低频
+        // 战场指挥 DLC（field-command 包 2026-08-20）：编制树/生效战术 delta 合并（低频
         // 字段，命令/册封才变化——与 worn 同模式；缺省 undefined = 非指挥官/无战术）
         if (pd.commander !== undefined) merged.commander = pd.commander;
         if (pd.tactic !== undefined) merged.tactic = pd.tactic;
@@ -418,7 +418,7 @@ export class RemoteSim {
       desires: p.desires,
       lastDecision: p.lastDecision,
       drafted: p.drafted === true, // 归一 boolean（协议缺省 = 未征召）
-      // 战场指挥 DLC（field-command 包 2026-08-16）：编制树/生效战术回显（协议透传字段直通）
+      // 战场指挥 DLC（field-command 包 2026-08-20）：编制树/生效战术回显（协议透传字段直通）
       commander: p.commander,
       tactic: p.tactic,
     };

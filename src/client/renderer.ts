@@ -23,6 +23,7 @@ const TILE = 32;
 
 // 敌人种类 → 稳定染色（内置两个暖色，mod 新敌人自动散列取值，可辨）
 const ENEMY_TINTS: Record<string, number> = { cat: 0xff5555, raider: 0xff6688, boar: 0xcc8855 };
+// 敌人染色：不同敌人类型用不同 tint 色（猫=橙/鹰=灰/狼=白等）
 function hostileTint(enemyId: string): number {
   const fixed = ENEMY_TINTS[enemyId];
   if (fixed) return fixed;
@@ -31,6 +32,7 @@ function hostileTint(enemyId: string): number {
   return 0xff0000 | ((Math.abs(h) % 256) << 8) | (Math.abs(h >> 3) % 256);
 }
 
+// Canvas 渲染器（tile 绘制 + 建筑精灵 + 小人头像 + 敌人 tint + 光照覆盖 + 篝火光圈）
 export class Renderer {
   app: Application;
   worldContainer: Container;
@@ -55,7 +57,7 @@ export class Renderer {
   private ghost: Graphics;
   private ghostPos: { x: number; y: number } | null = null;
   private ghostColor = 0x4cf;
-  private ghostDefId: string | null = null; // 2026-08-16 用户⑬自由建造设计:多格建筑按 footprint 整块预览
+  private ghostDefId: string | null = null; // 2026-08-20 用户⑬自由建造设计:多格建筑按 footprint 整块预览
   // 蓝图层（排队中的建造）
   private blueprintLayer: Graphics;
   private lastBuildQueueVersion = -1;
@@ -421,7 +423,7 @@ export class Renderer {
     }
   }
 
-  // 建筑/静态物锚点：始终居中于格（2026-08-16 修复"建筑偏了"——建筑图标此前走 placeEntity,
+  // 建筑/静态物锚点：始终居中于格（2026-08-20 修复"建筑偏了"——建筑图标此前走 placeEntity,
   // iso 模式被锚到格底,单格/多格建筑整体偏下半格;建筑无"脚",应居中于 footprint）
   private placeEntityCenter(g: Graphics, x: number, y: number): void {
     g.pivot.set(16, 16);
@@ -667,7 +669,7 @@ export class Renderer {
     return { x: a.x0 + (a.x1 - a.x0) * k, y: a.y0 + (a.y1 - a.y0) * k };
   }
 
-  // 渲染入侵者（红色敌对）—— 用宿主敌对剪影(2026-08-16 修复:此前复用 pawn:strong 仅 tint,
+  // 渲染入侵者（红色敌对）—— 用宿主敌对剪影(2026-08-20 修复:此前复用 pawn:strong 仅 tint,
   // 猫/鼠剪影相同;enemyId 专属剪影(cat=尖耳长尾) + mod 新敌人兜底 generic + hostileTint 色阶)
   private renderHostiles(): void {
     let idx = 0;
@@ -805,7 +807,7 @@ export class Renderer {
   }
 
   setCamera(dx: number, dy: number): void {
-    // 拖拽平移 = 抓着地图跟手（2026-08-16 修复"鼠标拖动正好都反了"：
+    // 拖拽平移 = 抓着地图跟手（2026-08-20 修复"鼠标拖动正好都反了"：
     // 原 `-=` 是"滚动窗口"惯例——拖右看左；与 screenToWorld(屏幕右=世界 x 增) 自洽的跟手版本是 `+=`。
     // 鼠标左键拖拽与触摸双指平移都走这里,一并修正）
     this.camera.x += dx / (TILE * this.camera.zoom);

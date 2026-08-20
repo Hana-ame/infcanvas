@@ -88,7 +88,7 @@ describe('SanSystem 独立测试（最小 ctx，无 Sim）', () => {
     expect(ctx._needs.get(eid)!.san).toBeGreaterThan(t.crazyAt);
   });
 
-  // ---- 2026-08-16 架构优化回归：篝火缓存 ----
+  // ---- 2026-08-20 架构优化回归：篝火缓存 ----
 
   it('篝火缓存：warmth 建筑在 fireComfortRadius 内恢复理智，远离不恢复', () => {
     const sys = attach(ctx, new SanSystem(ctx));

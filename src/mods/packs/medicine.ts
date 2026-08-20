@@ -133,7 +133,7 @@ export const medicinePack: ModPack = {
     if (!pos) return;
     if (woundsOf(st).length === 0) { st.job = '闲逛'; return; }
     // 走到篝火（heal tag）旁治疗；无篝火原地休养——与内核 heal 卡共用 beginHeal
-    //（2026-08-16 收敛：此前两处同构复制，行为语义漂移会静默分叉，见 systems/heal.ts）
+    //（2026-08-20 收敛：此前两处同构复制，行为语义漂移会静默分叉，见 systems/heal.ts）
     beginHeal(c, eid, st);
     st.job = '疗伤养伤';
   });
@@ -148,6 +148,7 @@ export class MedicineSystem {
   private prevHp = new Map<number, number>(); // 上帧 HP（检测受伤差量）
   private treatTimer = new Map<number, number>(); // 每个小人治疗检定计时
   private infectTimer = 0; // 感染触发检定轮询（低频 60s，防每帧 roll rng 序列漂移）
+  private woundEvalTimer = 0; // 2026-08-20 优化：伤口心情/san 评估 2s 一次（原每帧每人）
 
   constructor(private ctx: SimContext) {}
 
@@ -155,7 +156,7 @@ export class MedicineSystem {
 
   update(dt: number): void {
     // ① 受伤检测：HP 下降累计 → 生成伤口（战斗直伤已扣血，伤口是"后遗症"，不再额外扣血）
-    for (const eid of this.ctx.pawnList) {
+    for (const eid of this.ctx.iterPawns) {
       const st = this.ctx.pawnStates.get(eid);
       const hp = this.ctx.readHealth(eid);
       if (!st || !hp) { this.prevHp.delete(eid); continue; }
@@ -185,9 +186,12 @@ export class MedicineSystem {
         st.extra.hurtAcc = acc;
       }
 
-      // ② 伤口演化：愈合 / 疼痛 / 出血失血 / 自然凝血 / 感染赛跑
+      // ② 伤口演化（2026-08-20 优化：2s 一次评估替代每帧——伤口是慢变量，
+      // 但用累计 dt 保证进度正确，不跳帧丢失愈合/失血进度）
+      this.woundEvalTimer -= dt;
       const wounds = woundsOf(st);
-      if (wounds.length > 0) {
+      if (wounds.length > 0 && this.woundEvalTimer <= 0) {
+        const evalDt = 2; // 累计 2s 的进度
         // mood/san 收口：原实现每伤口每帧各调 adjustMood（readNeeds+setNeeds+bus.emit 往返）
         // 和出血/感染分支的独立 readNeeds/setNeeds——伤口多时一帧 6 次往返，是 medicine 系统
         // 42% 耗时主因（profiler 定位）。收口后每 pawn 每帧至多 1 次 mood + 1 次 san 写回。
@@ -247,7 +251,7 @@ export class MedicineSystem {
     }
 
     // ③ 治疗推进：'treat' 工作的小人在篝火旁持续检定（walkAndWork 已把小人带到 healTarget）
-    for (const eid of this.ctx.pawnList) {
+    for (const eid of this.ctx.iterPawns) {
       const st = this.ctx.pawnStates.get(eid);
       if (!st || st.job !== '疗伤养伤') { this.treatTimer.delete(eid); continue; }
       const wounds = woundsOf(st);
@@ -256,7 +260,7 @@ export class MedicineSystem {
       if (!pos) continue;
       // 未到达治疗点（在脚步声里）不算治疗
       if (st.healTarget) {
-        // 篝火被毁清理（2026-08-16 审查修复）：healTarget 指的建筑已不存在（raids 拆家/
+        // 篝火被毁清理（2026-08-20 审查修复）：healTarget 指的建筑已不存在（raids 拆家/
         // 怒砸/清剿）→ 清理目标、退出疗伤态交给决策层重新规划。此前残留的目标坐标让
         // 距离判定恒 > 2.2 → 本分支永久 continue，小人卡在"疗伤养伤"等一座不存在的火
         const b = this.ctx.world.getBuilding(Math.round(st.healTarget.x), Math.round(st.healTarget.y));
@@ -294,7 +298,7 @@ export class MedicineSystem {
     this.infectTimer -= dt;
     if (this.infectTimer <= 0) {
       this.infectTimer = 60;
-      for (const eid of this.ctx.pawnList) {
+      for (const eid of this.ctx.iterPawns) {
         const st = this.ctx.pawnStates.get(eid);
         if (!st || !st.extra) continue; // 无伤者跳过（extra 只在受过伤时创建）
         const wounds = woundsOf(st);

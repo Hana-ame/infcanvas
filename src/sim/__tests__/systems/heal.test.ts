@@ -1,4 +1,4 @@
-// beginHeal 公共疗伤动作独立测试（2026-08-16 架构优化：双疗伤路径收敛）
+// beginHeal 公共疗伤动作独立测试（2026-08-20 架构优化：双疗伤路径收敛）
 // 背景：cardSystem 内核 heal 卡与 medicine treat 卡执行器原为同构复制，收敛为单一
 // 实现（systems/heal.ts）。本测试锁定 helper 语义（有篝火/无篝火两分支）——
 // 两调用方的行为一致性由各自现有套件回归（sim.test heal 卡路径、medicine.test treat 路径）。
@@ -53,7 +53,7 @@ describe('beginHeal（共享疗伤动作，双路径唯一实现）', () => {
     expect(st.healing).toBeUndefined();
   });
 
-  // ---- 2026-08-16 扩展 ----
+  // ---- 2026-08-20 扩展 ----
   it('无火源时不崩 + 不设 healTarget（beginHeal 安全降级）', () => {
     const ctx = makeMinCtx(77);
     const eid = ctx.spawnPawn(50, 50);

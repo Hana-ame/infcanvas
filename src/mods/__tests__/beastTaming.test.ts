@@ -1,4 +1,4 @@
-// 驯兽守卫 DLC 测试（2026-08-16）：命令测试用完整 Sim（捉 registry 命令注册），
+// 驯兽守卫 DLC 测试（2026-08-20）：命令测试用完整 Sim（捉 registry 命令注册），
 // 系统推进用最小 ctx（手动设 taming 状态，跳过命令层）
 import { describe, it, expect, beforeEach } from 'vitest';
 import { Sim } from '../../sim/sim';
@@ -16,7 +16,7 @@ const makeSim = (seed = 41, pawns = 2) => {
   return new Sim({ seed, pawnCount: pawns, registry: mods });
 };
 
-describe('驯兽守卫 DLC（beast-taming，2026-08-16）', () => {
+describe('驯兽守卫 DLC（beast-taming，2026-08-20）', () => {
   it('① 装配 + validateContracts 契约校验通过', () => {
     const mods = ModRegistry.default();
     mods.mount(beastTamingPack);
@@ -123,7 +123,7 @@ describe('驯兽守卫 DLC（beast-taming，2026-08-16）', () => {
     sim.issueCommand({ type: 'tame', x: 0, y: 0, args: { hostileIndex: 0 } });
   });
 
-  // ---- 2026-08-16 修复回归 ----
+  // ---- 2026-08-20 修复回归 ----
 
   it('⑨ 守卫猫可被敌方猫反击致死（不再无敌）', () => {
     const sim = makeSim(60);

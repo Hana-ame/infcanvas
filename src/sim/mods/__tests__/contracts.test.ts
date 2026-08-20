@@ -65,7 +65,7 @@ describe('跨包契约校验（contracts.ts）', () => {
     expect(all).toEqual(expect.arrayContaining(['protocol.pawns.worn', 'protocol.items.w', '命令 wear']));
   });
 
-  it('字段级登记：pawn.healTarget / pawn.healing 跨包瞬时工作态字段在契约表（2026-08-16 架构优化）', () => {
+  it('字段级登记：pawn.healTarget / pawn.healing 跨包瞬时工作态字段在契约表（2026-08-20 架构优化）', () => {
     // 背景：healTarget/healing 跨 4 处/3 包读写（cardSystem 内核 heal 卡 / medicine treat 卡 /
     // gatherSystem 回血推进 / drafting 解除征召清理）却无契约登记——改 PawnState 字段时不知
     // 谁在读。登记条目 = 跨包读写清单 + 值语义 + "瞬时工作态不随档"（sim.save 白名单排除，

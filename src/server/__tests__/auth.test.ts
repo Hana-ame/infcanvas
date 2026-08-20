@@ -1,9 +1,9 @@
-// 联机可选鉴权测试（2026-08-16 审计低项 L1）：wsTokenOk 是纯函数（无 ws 依赖），
+// 联机可选鉴权测试（2026-08-20 审计低项 L1）：wsTokenOk 是纯函数（无 ws 依赖），
 // 直接单测值域——URL 查询参数 token 匹配；未配置 token = 全开放。
 import { describe, it, expect } from 'vitest';
 import { wsTokenOk } from '../auth';
 
-describe('server 可选 token 鉴权（L1，2026-08-16）', () => {
+describe('server 可选 token 鉴权（L1，2026-08-20）', () => {
   it('未配置 token（SERVER_TOKEN 缺省）→ 任何连接放行（向后兼容开放）', () => {
     expect(wsTokenOk('/?token=xxx', undefined)).toBe(true);
     expect(wsTokenOk('/', undefined)).toBe(true);

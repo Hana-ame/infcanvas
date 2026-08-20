@@ -1,4 +1,4 @@
-// pushHostile 共享敌人生成入口测试（2026-08-16 审计 L6）：
+// pushHostile 共享敌人生成入口测试（2026-08-20 审计 L6）：
 // raid/wildmouse/hg 原各自手工快照 EnemyDef 字段 → 增字段静默漂移；
 // 收口后 = 一处构造透传全字段。本测试守护 helper 语义。
 import { describe, it, expect } from 'vitest';
@@ -11,7 +11,7 @@ const cat: EnemyDef = {
   faction: 'wild', loot: { item: 'ore', amount: 2 },
 };
 
-describe('pushHostile（共享敌人生成入口，审计 L6，2026-08-16）', () => {
+describe('pushHostile（共享敌人生成入口，审计 L6，2026-08-20）', () => {
   it('默认：字段全部来自 enemy 快照，target 缺省 = 出生点', () => {
     const ctx = makeMinCtx(1);
     pushHostile(ctx, cat, 10, 20);

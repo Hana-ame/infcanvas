@@ -1,4 +1,4 @@
-// 存档/读档逻辑（2026-08-16 文件结构拆分：从 sim.ts 抽出，~140 行 → 独立维护）
+// 存档/读档逻辑（2026-08-20 文件结构拆分：从 sim.ts 抽出，~140 行 → 独立维护）
 // 设计：saveSim 返回全量序列化状态；loadSim 按版本迁移+还原。版本化（SAVE_VERSION=1 +
 // SAVE_MIGRATIONS 迁移表）保证旧档兼容 + 新格式防旧版误读。
 import type { Sim } from './sim';
@@ -25,6 +25,7 @@ export const SAVE_MIGRATIONS: ((d: SaveData) => void)[] = [
   () => {},
 ];
 
+// 存档序列化（ECS 状态 → SaveData JSON；版本化 + 迁移 + fireMemory 重建）
 export function saveSim(sim: Sim): SaveData {
   return {
     saveVersion: SAVE_VERSION,
@@ -59,6 +60,7 @@ export function saveSim(sim: Sim): SaveData {
   };
 }
 
+// 存档反序列化（SaveData JSON → ECS 状态；版本迁移 + 救援安置 + 事件重建）
 export function loadSim(sim: Sim, data: SaveData): void {
   const loadVersion = data.saveVersion ?? 0;
   if (loadVersion > SAVE_VERSION) {
@@ -99,7 +101,7 @@ export function loadSim(sim: Sim, data: SaveData): void {
   if (data.pawns) {
     for (const p of data.pawns) {
       let eid = sim.spawnPawn(Math.round(p.x), Math.round(p.y));
-      // 救援：原坐标不可走 → 就近可走格安置（2026-08-16 审查修复：此前 spawnPawn 返 -1
+      // 救援：原坐标不可走 → 就近可走格安置（2026-08-20 审查修复：此前 spawnPawn 返 -1
       // 直接 continue → 存档坐标漂移的小人静默失踪，玩家无任何提示）
       if (eid === -1) {
         const rescue = sim.findNearest({ x: Math.round(p.x), y: Math.round(p.y) }, (x, y) =>

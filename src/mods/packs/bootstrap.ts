@@ -19,6 +19,7 @@ export interface BootstrapCap {
   ensureCamp(): void;
 }
 
+// 引导系统：出生刷人（表尾执行，晚于全体系统 init）；初始篝火放置
 export class BootstrapSystem implements GameSystem {
   id = 'bootstrap';
 
@@ -61,7 +62,7 @@ export class BootstrapSystem implements GameSystem {
       // = 双触发（assignPawn 全员重算跑两遍；fireMemory 有守卫掩盖）。统一走事件单入口。
       this.ctx.bus.emit({ type: 'building_built', x: cx, y: cy + 2, defId: starter });
     }
-    for (const eid of this.ctx.pawnList) this.ctx.socialUnits.assignPawn(eid);
+    for (const eid of this.ctx.iterPawns) this.ctx.socialUnits.assignPawn(eid);
   }
 
   // 若出生点没有篝火则重建（空世界重开用）
@@ -71,13 +72,13 @@ export class BootstrapSystem implements GameSystem {
     if (!this.ctx.world.getBuilding(cx, cy + 2)) {
       this.ensureInitialCamp();
     } else {
-      for (const eid of this.ctx.pawnList) this.ctx.socialUnits.assignPawn(eid);
+      for (const eid of this.ctx.iterPawns) this.ctx.socialUnits.assignPawn(eid);
     }
   }
 
   // 空世界（旧档全灭/坏档）重开：重建出生点小人 + 初始营地
   private respawn(count: number): void {
-    for (const eid of [...this.ctx.pawnList]) this.ctx.killPawn(eid);
+    for (const eid of [...this.ctx.iterPawns]) this.ctx.killPawn(eid);
     const cx = Math.floor(this.ctx.world.width / 2);
     const cy = Math.floor(this.ctx.world.height / 2);
     for (let i = 0; i < count; i++) {

@@ -4,6 +4,7 @@
 const W = 32;
 const H = 32;
 
+// SVG 模板工具：包成 data URL（复用 hud.ts 同款）
 function svg(body: string): string {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${body}</svg>`;
 }
@@ -325,7 +326,7 @@ export function pawnAssetIdFor(traits: readonly string[] | undefined): string {
   return 'pawn:mouse';
 }
 
-// 敌对单位 SVG（2026-08-16 用户反馈"鼠鼠和猫怎么长一样"——此前敌人复用 pawn:strong 仅 tint 改色,
+// 敌对单位 SVG（2026-08-20 用户反馈"鼠鼠和猫怎么长一样"——此前敌人复用 pawn:strong 仅 tint 改色,
 // 剪影完全相同无法区分）。cat = 尖耳 + 长尾 + 匍匐身形(与正面圆耳鼠剪影相反);
 // generic = 通用敌对剪影(细长人形暗影 + 斜纹,未单独建模的敌人兜底)。两表都受 hostileTint 着色。
 export const HOSTILE_SVG: Record<string, string> = {

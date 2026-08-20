@@ -63,7 +63,7 @@ export const SYSTEM_DEFS: Record<string, SystemDef> = {
   // RW-1 征召（2026-08-15，drafting 玩法包）：category 'raid'——接敌驱动与战斗结算同类别
   //（先结算接敌再续追）。占位条目仅声明类别归属（ctor 由 drafting 包 registerSystemDef 回填）。
   drafting:   { id: 'drafting',    label: '征召',     category: 'raid' },
-  // 战场指挥 DLC（2026-08-16，field-command 玩法包）：category 'raid'——战术驱动与
+  // 战场指挥 DLC（2026-08-20，field-command 玩法包）：category 'raid'——战术驱动与
   // 征召追击同类别同组（注册序 = drafting 之后：先征召追击结算再战术修正）。占位条目仅
   // 声明类别归属（ctor 由 field-command 包 registerSystemDef 回填）。
   'field-command': { id: 'field-command', label: '战场指挥', category: 'raid' },

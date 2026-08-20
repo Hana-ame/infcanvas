@@ -10,6 +10,7 @@ export interface Needs {
   san: number;  // 0-100，理智（SAN）：目睹死亡/恐怖事件 ↓，篝火/休息恢复
 }
 
+// 出生需求初始化（food/rest/mood/san 读 tuning 初始值）
 export function initNeeds(t: NeedsTuning): Needs {
   return { food: t.initFood, rest: t.initRest, mood: t.initMood, san: t.initSan };
 }
@@ -31,6 +32,7 @@ export function tickNeeds(n: Needs, dt: number, t: NeedsTuning): void {
   n.san = clamp(n.san);
 }
 
+// 钳制到 [0, 100]（需求值范围）
 function clamp(v: number): number {
   return Math.max(0, Math.min(100, v));
 }

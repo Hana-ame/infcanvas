@@ -21,6 +21,7 @@ export interface SysStat {
   lastMs: number;   // 最近一次
 }
 
+// 系统注册表（管理 GameSystem 实例 + 执行序 + profiling 统计）
 export class SystemRegistry {
   private systems: GameSystem[] = [];
   // 内置性能分析（默认关；开启后 updateAll 对每个系统计时，仅采集不改行为）

@@ -4,6 +4,7 @@
 import { SimRng } from './rng';
 import type { TileDef } from '../defs';
 
+// 哈希函数（确定性伪随机：相同 x/y/seed → 相同值；用于 chunk tile 生成）
 function hash(x: number, y: number, seed: number): number {
   // 整数哈希（确定性）
   let h = (x * 374761393 + y * 668265263 + seed * 974634511) | 0;
@@ -59,6 +60,7 @@ export function fbm(x: number, y: number, seed: number, octaves = 4, baseScale =
 // 声明 + buildSparsePatches 派生轴种子）——内核 BiomeSeeds 只留引擎自身的地形骨架轴
 export interface BiomeSeeds { elev: number; moist: number; detail: number; sparse: number }
 
+// 从主种子派生子种子（各生物群系独立 noise 种子，避免沙漠和雪原用同一 noise）
 export function deriveBiomeSeeds(seed: number): BiomeSeeds {
   const rng = new SimRng(seed);
   return {

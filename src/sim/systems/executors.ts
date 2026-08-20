@@ -1,4 +1,4 @@
-// 意图/工作执行器实现（2026-08-16 大文件拆分：自 cardSystem.ts 迁出）
+// 意图/工作执行器实现（2026-08-20 大文件拆分：自 cardSystem.ts 迁出）
 // 背景：BehaviorSystem 660 行中约 300 行是执行器——除 walkAndWork 需查 mod 注册的
 // 工作执行器表外全部只依赖 SimContext（零系统内部状态，原以类方法 + defs/executors.ts
 // 的 handler 名字符串反射装配）。迁出后 = 实现表（与声明表同源数据驱动），BehaviorSystem
@@ -29,6 +29,7 @@ export type WorkImpl = (c: SimContext, eid: number, st: PawnState) => void;
 
 // ---- 意图实现 ----
 
+// 闲逛意图：无工作可做时的小人行为（发呆/随机走动/探索）
 const execIdle: IntentImpl = (_c, _eid, st) => {
   st.job = '闲逛';
 };
@@ -126,7 +127,7 @@ const logHelp = (c: SimContext, eid: number, target: number, text: string): void
 
 // 互助目标探测（2026-08-14 互助卡）：相邻距离内的邻人，满足"弱势（缺食/受伤/低落）"且
 // 我对 TA 好感 ≥ helpFriendAt（亲密才帮）。返回最优目标 eid 或 null。
-//（2026-08-16 拆分：原为 BehaviorSystem 类方法，与 execHelp 一并迁出；decide 的
+//（2026-08-20 拆分：原为 BehaviorSystem 类方法，与 execHelp 一并迁出；decide 的
 // CardView.helpTargetOf 谓词仍借用——见 cardSystem.ts decide）
 export const findHelpTarget = (c: SimContext, eid: number): number | null => {
   const s = c.tuning.social;
@@ -154,6 +155,7 @@ export const findHelpTarget = (c: SimContext, eid: number): number | null => {
   return best;
 };
 
+// 进食意图：找篝火旁食物 → 走过去 → 吃（food 恢复；消耗库存 food）
 const execEat: IntentImpl = (c, eid, st) => {
   const n = c.readNeeds(eid);
   if (!n) return;
@@ -185,6 +187,7 @@ export const consumeFood = (c: SimContext, eid: number, st: PawnState, cost: num
   return false;
 };
 
+// 休息意图：找篝火旁休息 → 走过去 → 睡（rest 恢复；篝火 aura 加成）
 const execRest: IntentImpl = (c, eid, st) => {
   const n = c.readNeeds(eid);
   if (n) {
@@ -196,12 +199,13 @@ const execRest: IntentImpl = (c, eid, st) => {
   }
 };
 
-// 疗伤：去篝火旁休息回血。实现收敛到共享 beginHeal（2026-08-16 双疗伤路径统一：
+// 疗伤：去篝火旁休息回血。实现收敛到共享 beginHeal（2026-08-20 双疗伤路径统一：
 // medicine treat 卡执行器与此处同构，两处漂移会静默分叉——见 systems/heal.ts 头注释）
 const execHeal: IntentImpl = (c, eid, st) => {
   beginHeal(c, eid, st);
 };
 
+// 祈祷意图：找篝火（pray tag）→ 走过去 → 祈祷（faith 增长 + mood 加成）
 const execPray: IntentImpl = (c, eid, st) => {
   const pos = c.readPosition(eid);
   if (!pos) return;
@@ -212,7 +216,7 @@ const execPray: IntentImpl = (c, eid, st) => {
   } else st.job = '闲逛';
 };
 
-// 内置意图实现表（键 = defs/executors.ts BUILTIN_INTENTS 的 handler 字段值，全名对应）
+
 export const INTENT_IMPL: Record<string, IntentImpl> = {
   execWalkAndWork: execWalkAndWork,
   execEat: execEat,
@@ -226,6 +230,7 @@ export const INTENT_IMPL: Record<string, IntentImpl> = {
 
 // ---- 工作实现 ----
 
+// 伐木工作：findNearFar 找树 → moveAdjacent → chopProgress 推进 → 产出 wood
 const workChop: WorkImpl = (c, eid, st) => {
   const pos = c.readPosition(eid);
   if (!pos) return;
@@ -240,6 +245,7 @@ const workChop: WorkImpl = (c, eid, st) => {
   else st.job = '闲逛';
 };
 
+// 采矿工作：findNearFar 找矿脉 → moveAdjacent → mineProgress 推进 → 产出 ore
 const workMine: WorkImpl = (c, eid, st) => {
   const pos = c.readPosition(eid);
   if (!pos) return;
@@ -252,6 +258,7 @@ const workMine: WorkImpl = (c, eid, st) => {
   else st.job = '闲逛';
 };
 
+// 矿洞采掘：找 mine tag 建筑 → moveAdjacent → caveWork 推进 → 产出 ore（深度采掘）
 const workCaveMine: WorkImpl = (c, eid, st) => {
   const pos = c.readPosition(eid);
   if (!pos) return;
@@ -261,12 +268,26 @@ const workCaveMine: WorkImpl = (c, eid, st) => {
 };
 
 // 捕鱼：找竹筏（站上筏 → 钓水格；产出走筏的 recipe 'fishing'）
+// 钓鱼（2026-08-20 改进：原只找竹筏 → 改为优先找竹筏，无竹筏则找水边直接钓）
 const workFish: WorkImpl = (c, eid, st) => {
   const pos = c.readPosition(eid);
   if (!pos) return;
+  // 优先找竹筏（竹筏上钓 = 产出更高）
   const raft = findNearFar(c, st, pos, (x, y) => c.world.getBuilding(x, y)?.def.tags?.includes('raft') ?? false);
-  if (raft) { st.caveTarget = raft; c.moveAdjacent(eid, raft.x, raft.y); }
-  else st.job = '闲逛';
+  if (raft) { st.caveTarget = raft; c.moveAdjacent(eid, raft.x, raft.y); return; }
+  // 无竹筏 → 找最近的水格（站在岸边直接钓）
+  const water = c.findNearest(pos, (x, y) => c.world.getTileDef(x, y).id === 'water', true);
+  if (water) {
+    // 站在水旁（非水上——找水格旁的可走格）
+    const shore = c.findNearest(pos, (x, y) => {
+      if (!c.world.isPassable(x, y)) return false;
+      // 该格旁有水
+      return c.world.getTileDef(x + 1, y).id === 'water' || c.world.getTileDef(x - 1, y).id === 'water'
+        || c.world.getTileDef(x, y + 1).id === 'water' || c.world.getTileDef(x, y - 1).id === 'water';
+    });
+    if (shore) { st.caveTarget = shore; c.moveAdjacent(eid, shore.x, shore.y); return; }
+  }
+  st.job = '闲逛';
 };
 
 // 近距快扫 miss → 远距回扫（营地周边资源采空后仍能远行工作，防长期停产）
@@ -274,6 +295,7 @@ const workFish: WorkImpl = (c, eid, st) => {
 // 15 半径环扫（706 格）是长局行为系统 10 倍退化的主因（profiler 火焰图定位）
 const findNearFar = (c: SimContext, st: PawnState, pos: PositionData, cond: (x: number, y: number) => boolean): { x: number; y: number } | null => {
   if ((st.farScanCd ?? 0) > 0) return null;
+  // 2026-08-20 空间索引：优先用索引查（O(命中数)），回退到 findNearest（O(半径²)）
   const near = c.findNearest(pos, cond, true);
   if (near) return near;
   const far = c.findNearest(pos, cond, true, c.tuning.pawn.farScanRadius);
@@ -333,6 +355,7 @@ const techBuildChance = (c: SimContext, eid: number, st: PawnState): void => {
   st.job = '闲逛';
 };
 
+// 建造工作：从建造队列取蓝困 → moveAdjacent → 推进建造进度 → 建筑落成
 const workBuild: WorkImpl = (c, eid, st) => {
   if (c.buildQueue.length === 0) {
     // 无队列 → 科技建筑渐进权重接管（解锁初期概率低，权重满后稳定自动建）
@@ -372,4 +395,5 @@ export const intentImplOf = (handler: string, deps: ExecutorDeps): IntentExecuto
   if (!fn) return null;
   return (c, eid, st, intent) => fn(c, eid, st, intent, deps);
 };
+// 按 handler 名查工作实现（mod 注册的新 work type 通过此表分派）
 export const workImplOf = (handler: string): WorkImpl | null => WORK_IMPL[handler] ?? null;

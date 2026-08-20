@@ -1,4 +1,4 @@
-// 疗伤动作（2026-08-16 架构优化：双疗伤路径收敛）
+// 疗伤动作（2026-08-20 架构优化：双疗伤路径收敛）
 // 背景：cardSystem 内核 heal 卡（execHeal）与 medicine 玩法包 treat 卡执行器原为同构
 // 复制——找 heal tag 篝火 → 设 healTarget + moveAdjacent 走过去；无篝火 → healing 原地
 // 休养会话。行为语义在两处漂移会静默分叉（改一处另一处不变，测试只护各自路径），
@@ -8,6 +8,8 @@
 import type { SimContext } from './context';
 import type { PawnState } from '../sim';
 
+// 开始疗伤：找最近篝火（heal tag）→ moveAdjacent → 设 healTarget/healing 状态
+// medicine treat 卡执行器与此同构（两路径统一收口，防漂移分叉）
 export const beginHeal = (c: SimContext, eid: number, st: PawnState): void => {
   const pos = c.readPosition(eid);
   if (!pos) return;

@@ -900,5 +900,67 @@ registerHook('beforeRoll', (prob, ctx) => ...);          // check 流程阶段�
 
 ## 实现记录与演进
 
-- **P0 落地实现记录**、**2026-08-16 审查/玩法包/性能/协议追加**已统一移至 `docs/CHANGELOG.md`。
+- **P0 落地实现记录**、**2026-08-20 审查/玩法包/性能/协议追加**已统一移至 `docs/CHANGELOG.md`。
 - 当前架构与设计以本文档前半部分 + `docs/DATA_DRIVEN.md` 为准。
+
+## 新增 DLC 架构设计（2026-08-20 追加）
+
+### zone 系统（区域）
+- 玩家划定矩形区域 + tag（work/home/storage/forbid）
+- 其他系统通过 `ctx.getCap('zone')?.inZone(x, y, type)` 查询
+- `zone` 命令：add/remove 区域
+- 设计：纯查询服务，不驱动行为——行为系统读 zone 过滤目标
+
+### hot-cold 系统（热区/冷区/前线/后方）
+- 热区（front）：检测 15 格内敌人 → active → 自动征召 + 建筑损坏
+- 冷区（rear）：安全区域 → 自动解除征召（指挥官除外）
+- 3s 节流检测，`hotcold` 命令划定/删除
+- 设计：复用 K_DRAFTED 征召键，零新机制
+
+### work-priority 系统（职业优先级）
+- 指派职业 utility +10（影响抽卡权重）
+- `ctx.getCap('workPriority')?.getBonus(eid)` 查询
+- 5s 节流（优先级不频繁变化）
+
+### diplomacy 系统（派系外交）
+- 多营地间关系 -100~+100（对称存储）
+- >50 自动贸易（+资源+关系），<-50 可宣战
+- 关系自然漂移向 0，10s 节流
+- `ctx.getCap('diplomacy')` 提供 getRelation/adjustRelation
+
+### belt 系统（传送带物流）
+- 4 方向传送带（上下左右）+ 通用版
+- 链式搬运（产出点→传送带→仓库），每秒 0.5 单位
+- 2s 节流，cellSize=8 空间哈希查下游
+
+### masterpiece 系统（工匠杰作）
+- 高熟练(skill≥80)产出时 5% 概率 → 带名字+制造者的杰作
+- 监听 work_completed 事件 → roll → 写篝火记忆 + 发事件
+- 种子原则：零品质评估链
+
+### gossip-facts 系统（传闻事实）
+- 所有事件 → 事实文本 → 篝火记忆 → 社交系统自然引用
+- bus.onAny 监听（跳过内部事件防噪声）
+- 种子原则：零新系统逻辑
+
+### ruins 系统（旧世界遗迹）
+- 世界生成时放置废墟（hp=0 + meta.ruin）
+- 小人走近 2 格 → 发现 → logEvent + addMemory
+- 5s 节流检测，3-6 个遗迹随机分布
+
+### story 包（故事模板）
+- 20 个 ScriptedEvent：自然/社交/灾难/机遇/传奇 5 类
+- 每个事件 = condition + run → 事件系统自然 roll 触发
+- adjustMoodAll 能力通过 step:before hook 挂载
+
+### extra-needs 包（数据驱动需求）
+- DLC 可注册新需求类型（hygiene/entertainment 等）
+- need-defs.ts 注册表 + NeedsComp.custom Map
+- tickNeedsBatch 自动衰减 + setNeedField/adjustNeedField 支持
+
+### 新增群系/敌人/事件/建筑/服饰
+- biomes-2：丛林/草原/苔原 + 黑豹/狼/猛犸
+- enemies-2：狼群/巨熊/掠夺者/虫群/石巨人
+- events-2：瘟疫/丰收/迁徙/火山/商队
+- buildings-3：陷阱/医院/学校/市场/竞技场/信号塔
+- clothing-3：鞋/手套/面具/披肩（4 部位 × 2 材质 = 8 新穿戴物）

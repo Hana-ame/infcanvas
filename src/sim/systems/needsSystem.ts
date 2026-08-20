@@ -3,14 +3,19 @@
 import type { GameSystem } from './registry';
 import type { SimContext } from './context';
 import type { EventBus } from '../core/events';
-import { tickNeeds, urgentNeedAction } from '../core/needs';
+import { urgentNeedAction } from '../core/needs';
 import { World } from '../core/world';
+import { buildTagIndex, findNearestTagged, getTaggedInRange } from './building-cache';
 
+// 需求系统：食物/精力/心情/理智 衰减+恢复（tickNeedsBatch 直写 ECS 数组）+ aura 建筑
+// 2026-08-20：batch 模式下只对 currentBatch 做 aura 检查（全体衰减仍 O(n) 直接数组写）
 export class NeedsSystem implements GameSystem {
   id = 'needs';
   private wonderVersion = -1;
   private wonderCache = false;
-  // 2026-08-16 优化：缓存 aura 建筑列表（原每 pawn 每帧 queryBuildingsNear = 287ms 热点）
+  private _bldVer = -1;
+  private tagIndex: Map<string, import('./building-cache').CachedBuilding[]> = new Map();
+  // 2026-08-20 优化：aura 建筑专用小缓存（~3-5 条，不走通用 tagIndex）
   private auraBuildings: { x: number; y: number; radius: number; moodPerSec?: number; restPerSec?: number }[] = [];
 
   constructor(private ctx: SimContext) {}
@@ -39,66 +44,110 @@ export class NeedsSystem implements GameSystem {
   // 每帧：需求衰减 + 环境/光环修正 + 饥饿死亡 + 紧急需求标记
   update(dt: number): void {
     const t = this.ctx.tuning.needs;
-    // 2026-08-16 优化：每 tick 刷新 aura 建筑缓存（替代每 pawn queryBuildingsNear）
-    this.auraBuildings = [];
-    const R = t.auraScanRadius;
-    for (const [k, b] of this.ctx.world.buildings) {
-      if (!b.def.aura) continue;
-      const { x, y } = World.keyToXY(k);
-      this.auraBuildings.push({ x, y, radius: b.def.aura.radius ?? R, moodPerSec: b.def.aura.moodPerSec, restPerSec: b.def.aura.restPerSec });
-    }
-    for (const eid of this.ctx.pawnList) {
-      const st = this.ctx.pawnStates.get(eid);
-      if (!st) continue;
-      const n = this.ctx.readNeeds(eid);
-      if (!n) continue;
-      tickNeeds(n, dt, t);
-      // 夜晚精力消耗加快（读 tuning.needs）
-      if (this.ctx.isNight()) n.rest -= t.nightRestDrain * dt;
-      // 篝火光环（饥荒式社会锚点）：火边心情回暖、夜晚不易困（读 BuildingDef.aura）
-      const aura = this.nearAura(eid);
-      if (aura) {
-        if (aura.moodPerSec) n.mood = Math.min(100, n.mood + aura.moodPerSec * dt);
-        if (aura.restPerSec) n.rest = Math.min(100, n.rest + aura.restPerSec * dt);
-      }
-      // 天然庇护（洞穴 tile shelter）：洞穴里休息恢复（未改造也有房屋属性——用户设计）
-      // 数据驱动：TileDef.shelter；改造后的洞穴居所走建筑 aura（更强）
-      const pos = this.ctx.pawnPositions.get(eid);
-      if (pos && this.ctx.world.getTileDef(Math.round(pos.x), Math.round(pos.y)).shelter) {
-        n.rest = Math.min(100, n.rest + this.ctx.tuning.needs.shelterRestPerSec * dt);
-        n.mood = Math.min(100, n.mood + this.ctx.tuning.needs.shelterMoodPerSec * dt);
-      }
-      // 神谕祝福（buff 持续期间心情加成）
-      if (st.oracleBuff && st.oracleBuff.until > this.ctx.time) {
-        n.mood = Math.min(100, n.mood + st.oracleBuff.mood * dt);
-      }
-      // 奇观光环（Q10）：纪念碑建成 → 全营地敬畏（心情+信仰）
-      if (this.hasWonder) {
-        const wonderAura = this.wonderAura;
-        if (wonderAura?.moodPerSec) n.mood = Math.min(100, n.mood + wonderAura.moodPerSec * dt);
-      }
-      this.ctx.setNeeds(eid, n);
-      // 需求写篝火历史（2026-08-14 用户设计："篝火记载需求"）：
-      // 小人极度饥饿/受伤/低落时，把需求记入附近篝火的区域记忆 → 交流传播 → 好友得知后送食/疗伤。
-      // 节流防刷屏：只在该个体"首次达到危急"或"跨过新阈值"时写一次。
-      this.recordNeed(eid, st, n);
-      // 饿死
-      if (n.food <= 0) {
-        const h = this.ctx.readHealth(eid);
-        if (h) {
-          h.hp -= t.starvationDmg * dt;
-          if (h.hp <= 0) {
-            this.ctx.setHealth(eid, { hp: 0, maxHp: h.maxHp });
-            const pos = this.ctx.readPosition(eid);
-            this.ctx.bus.emit({ type: 'pawn_died', eid, x: pos?.x ?? 0, y: pos?.y ?? 0, cause: 'starvation' });
-            this.ctx.killPawn(eid);
-            continue;
-          }
-          this.ctx.setHealth(eid, h);
+    // 2026-08-20 架构优化：aura 建筑用专用小缓存（~3-5 条），不走通用 tagIndex（后者遍历全部 tag × 全部建筑 = O(n²)）
+    if (this._bldVer !== this.ctx.world.buildingVersion) { this._bldVer = this.ctx.world.buildingVersion; this.tagIndex = buildTagIndex(this.ctx); }
+    this.auraBuildings = this.buildAuraCache();
+    // 2026-08-20 大规模优化：aura 只对 batch 内 pawn 检查
+    // 2026-08-20 十万级优化：批量 needs 衰减（直接写 ECS 数组，无对象分配）
+    if (this.ctx.tickNeedsBatch) {
+      this.ctx.tickNeedsBatch(this.ctx.iterPawns, dt); // needs decay 全体（O(n) 直接数组写 = 快）
+      // aura 只对 batch 内 pawn 检查
+      const batchArr = this.ctx.iterPawns;
+      for (const eid of batchArr) {
+        const n = this.ctx.readNeeds(eid);
+        if (!n) continue;
+        const aura = this.nearAura(eid);
+        if (aura) {
+          if (aura.moodPerSec) n.mood = Math.min(100, n.mood + aura.moodPerSec * dt);
+          if (aura.restPerSec) n.rest = Math.min(100, n.rest + aura.restPerSec * dt);
         }
+        const pos = this.ctx.pawnPositions.get(eid);
+        if (pos) {
+          const tile = this.ctx.world.getTileDef(Math.round(pos.x), Math.round(pos.y));
+          if (tile.shelter) {
+            n.rest = Math.min(100, n.rest + t.shelterRestPerSec * dt);
+            n.mood = Math.min(100, n.mood + t.shelterMoodPerSec * dt);
+          }
+        }
+        const st = this.ctx.pawnStates.get(eid);
+        if (st?.oracleBuff && st.oracleBuff.until > this.ctx.time) {
+          n.mood = Math.min(100, n.mood + st.oracleBuff.mood * dt);
+        }
+        this.ctx.setNeedField(eid, 'mood', n.mood);
+        this.ctx.setNeedField(eid, 'rest', n.rest);
+        // 饥饿死亡
+        if (n.food <= 0) {
+          const hp = this.ctx.readHealth(eid);
+          if (hp && hp.hp > 0) {
+            this.ctx.setHealth(eid, { hp: hp.hp - t.starvationDmg * dt, maxHp: hp.maxHp });
+            if (this.ctx.readHealth(eid)!.hp <= 0) {
+              const pos2 = this.ctx.readPosition(eid);
+              this.ctx.killPawn(eid);
+              this.ctx.bus.emit({ type: 'pawn_died', eid, x: pos2?.x ?? 0, y: pos2?.y ?? 0, cause: 'starvation' } as never);
+            }
+          }
+        }
+        // 紧急需求标记
+        if (n.food < t.hungerAt) { (st as { urgent?: string }).urgent = 'eat'; }
+        else if (n.rest < t.sleepyAt) { (st as { urgent?: string }).urgent = 'rest'; }
+        else { (st as { urgent?: string }).urgent = undefined; }
+        this.recordNeed(eid, st!, n);
       }
-      const urgent = urgentNeedAction(n, this.ctx.tuning.needs);
-      if (urgent) st.urgent = urgent;
+    } else {
+      // 回退路径（minCtx 无 tickNeedsBatch）
+      const batchArr = this.ctx.iterPawns;
+      const batchSet = new Set(batchArr);
+      for (const eid of this.ctx.iterPawns) {
+        const st = this.ctx.pawnStates.get(eid);
+        if (!st) continue;
+        const n = this.ctx.readNeeds(eid);
+        if (!n) continue;
+        n.food -= t.foodDecay * dt;
+        n.rest -= t.restDecay * dt;
+        if (this.ctx.isNight()) n.rest -= t.nightRestDrain * dt;
+        if (n.food < t.foodMoodLow) n.mood -= t.moodDriftDown * dt;
+        else if (n.food > t.foodMoodHigh) n.mood += t.moodDriftUp * dt;
+        n.san += t.sanRecover * dt;
+        if (n.food < t.sanTraumaThreshold || n.mood < t.sanTraumaThreshold) n.san -= t.sanTraumaDrain * dt;
+        n.food = Math.max(0, Math.min(100, n.food));
+        n.rest = Math.max(0, Math.min(100, n.rest));
+        n.mood = Math.max(0, Math.min(100, n.mood));
+        n.san = Math.max(0, Math.min(100, n.san));
+        this.ctx.setNeedField(eid, 'food', n.food);
+        this.ctx.setNeedField(eid, 'rest', n.rest);
+        this.ctx.setNeedField(eid, 'mood', n.mood);
+        this.ctx.setNeedField(eid, 'san', n.san);
+        if (!batchSet.has(eid)) continue;
+        const aura = this.nearAura(eid);
+        if (aura) {
+          if (aura.moodPerSec) n.mood = Math.min(100, n.mood + aura.moodPerSec * dt);
+          if (aura.restPerSec) n.rest = Math.min(100, n.rest + aura.restPerSec * dt);
+        }
+        const pos = this.ctx.pawnPositions.get(eid);
+        if (pos) {
+          const tile = this.ctx.world.getTileDef(Math.round(pos.x), Math.round(pos.y));
+          if (tile.shelter) {
+            n.rest = Math.min(100, n.rest + t.shelterRestPerSec * dt);
+            n.mood = Math.min(100, n.mood + t.shelterMoodPerSec * dt);
+          }
+        }
+        this.ctx.setNeedField(eid, 'mood', n.mood);
+        this.ctx.setNeedField(eid, 'rest', n.rest);
+        if (n.food <= 0) {
+          const hp = this.ctx.readHealth(eid);
+          if (hp && hp.hp > 0) {
+            this.ctx.setHealth(eid, { hp: hp.hp - t.starvationDmg * dt, maxHp: hp.maxHp });
+            if (this.ctx.readHealth(eid)!.hp <= 0) {
+              this.ctx.killPawn(eid);
+              this.ctx.bus.emit({ type: 'pawn_died', eid, x: 0, y: 0, cause: 'starvation' } as never);
+            }
+          }
+        }
+        if (n.food < t.hungerAt) { (st as { urgent?: string }).urgent = 'eat'; }
+        else if (n.rest < t.sleepyAt) { (st as { urgent?: string }).urgent = 'rest'; }
+        else { (st as { urgent?: string }).urgent = undefined; }
+        this.recordNeed(eid, st!, n);
+      }
     }
   }
 
@@ -129,15 +178,36 @@ export class NeedsSystem implements GameSystem {
     if (best !== null) this.ctx.socialUnits.addMemory(best, text);
   }
 
-  // 附近 aura 建筑——用缓存遍历（2026-08-16：原 queryBuildingsNear 每 pawn 每帧调用 = 热点）
+  // 附近 aura 建筑（2026-08-20 架构优化：用共享 building-cache）
+  // 构建 aura 缓存（从共享 tagIndex 提取带 aura 的建筑 → 专用小列表）
+  private buildAuraCache(): { x: number; y: number; radius: number; moodPerSec?: number; restPerSec?: number }[] {
+    const out: { x: number; y: number; radius: number; moodPerSec?: number; restPerSec?: number }[] = [];
+    const R = this.ctx.tuning.needs.auraScanRadius;
+    for (const [, buildings] of this.tagIndex) {
+      for (const b of buildings) {
+        if (!b.def.aura) continue;
+        out.push({ x: b.x, y: b.y, radius: b.def.aura.radius ?? R, moodPerSec: b.def.aura.moodPerSec, restPerSec: b.def.aura.restPerSec });
+      }
+    }
+    return out;
+  }
+
   private nearAura(eid: number): { moodPerSec?: number; restPerSec?: number } | null {
     const pos = this.ctx.pawnPositions.get(eid);
     if (!pos) return null;
+    // 遍历所有 tag 的建筑，找带 aura 的最近建筑
     let best: { moodPerSec?: number; restPerSec?: number } | null = null;
     let bestD = Infinity;
-    for (const a of this.auraBuildings) {
-      const d = (a.x - pos.x) ** 2 + (a.y - pos.y) ** 2;
-      if (d <= a.radius * a.radius && d < bestD) { bestD = d; best = { moodPerSec: a.moodPerSec, restPerSec: a.restPerSec }; }
+    for (const [, buildings] of this.tagIndex) {
+      for (const b of buildings) {
+        if (!b.def.aura) continue;
+        const radius = b.def.aura.radius ?? this.ctx.tuning.needs.auraScanRadius;
+        const d = (b.x - pos.x) ** 2 + (b.y - pos.y) ** 2;
+        if (d <= radius * radius && d < bestD) {
+          bestD = d;
+          best = { moodPerSec: b.def.aura.moodPerSec, restPerSec: b.def.aura.restPerSec };
+        }
+      }
     }
     return best;
   }

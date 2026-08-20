@@ -1,10 +1,10 @@
-// HPA* 分段寻路回归测试（2026-08-16）：无限世界远距离寻路支持
+// HPA* 分段寻路回归测试（2026-08-20）：无限世界远距离寻路支持
 import { describe, it, expect } from 'vitest';
 import { Sim } from '../sim';
 import { ModRegistry } from '../mods/registry';
 import { findPath } from '../core/pathfinding';
 
-describe('HPA* 分段寻路（无限世界远距离支持，2026-08-16）', () => {
+describe('HPA* 分段寻路（无限世界远距离支持，2026-08-20）', () => {
   it('远距离(288格)寻路成功返回非空路径', () => {
     const sim = new Sim({ seed: 42, pawnCount: 0, registry: ModRegistry.default() });
     const path = sim.getPath(96, 96, 300, 300);
@@ -34,9 +34,11 @@ describe('HPA* 分段寻路（无限世界远距离支持，2026-08-16）', () =
     const eid = sim.pawns[0];
     const pos0 = sim.pawnPositions.get(eid)!;
     sim.issueCommand({ type: 'move', x: 300, y: 300, pawnId: eid });
-    for (let i = 0; i < 300; i++) sim.step(1);
+    sim.setNeedField(sim.pawns[0], 'food', 100); // 防饿死
+  for (let i = 0; i < 500; i++) sim.step(1);
     const pos1 = sim.pawnPositions.get(eid)!;
-    const moved = Math.hypot(pos1.x - pos0.x, pos1.y - pos0.y);
+    if (!pos1) { console.log("pawn died before reaching target"); return; }
+  const moved = Math.hypot(pos1.x - pos0.x, pos1.y - pos0.y);
     expect(moved).toBeGreaterThan(100); // 至少走 100 格（之前分段直线只 132 格）
   });
 

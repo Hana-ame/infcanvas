@@ -51,6 +51,41 @@ import { oracleGuidancePack } from './oracle-guidance';
 import { draftingPack } from './drafting';
 import { fieldCommandPack } from './field-command';
 import { beastTamingPack } from './beastTaming';
+import { seasonsPack } from './seasons';
+import { astronomyPack } from './astronomy';
+import { sailingPack } from './sailing';
+import { diseasePack } from './disease';
+import { breedingPack } from './breeding';
+import { lineagePack } from './lineage';
+import { geneticsPack } from './genetics';
+import { flyingPack } from './flying';
+import { buildingsExtraPack } from './buildings-extra';
+import { biomesPack } from './biomes';
+import { meteorPack } from './meteor';
+import { visitorPack } from './visitor';
+import { neutralFaunaPack } from './neutral-fauna';
+import { waterworksPack } from './waterworks';
+import { railPack } from './rail';
+import { industrialPack } from './industrial';
+import { extraNeedsPack } from './extra-needs';
+import { buildings2Pack } from './buildings-2';
+import { clothing2Pack } from './clothing-2';
+import { zonePack } from './zone';
+import { workPriorityPack } from './work-priority';
+import { diplomacyPack } from './diplomacy';
+import { beltPack } from './belt';
+import { masterpiecePack } from './masterpiece';
+import { gossipFactsPack } from './gossip-facts';
+import { ruinsPack } from './ruins';
+import { biomes2Pack } from './biomes-2';
+import { enemies2Pack } from './enemies-2';
+import { events2Pack } from './events-2';
+import { buildings3Pack } from './buildings-3';
+import { clothing3Pack } from './clothing-3';
+import { storyPack } from './story';
+import { hotColdPack } from './hot-cold';
+import { fortificationsPack } from './fortifications';
+import { weaponsPack } from './weapons';
 
 // 包目录对照表（id → 真包对象；管理器/测试用）。id 校验失败即抛错——防清单改错 id 后
 // 静默丢包。2026-08-15 从 registry.ts 迁入本文件（数据归数据层，框架不再 import 玩法包）。
@@ -82,6 +117,41 @@ export const PLAYSTYLE_PACKS: Record<string, ModPack> = {
   drafting: draftingPack,
   'field-command': fieldCommandPack,
   'beast-taming': beastTamingPack,
+  'seasons': seasonsPack,
+  'astronomy': astronomyPack,
+  'sailing': sailingPack,
+  'disease': diseasePack,
+  'breeding': breedingPack,
+  'lineage': lineagePack,
+  'genetics': geneticsPack,
+  'flying': flyingPack,
+  'buildings-extra': buildingsExtraPack,
+  'biomes': biomesPack,
+  'meteor': meteorPack,
+  'visitor': visitorPack,
+  'neutral-fauna': neutralFaunaPack,
+  'waterworks': waterworksPack,
+  'rail': railPack,
+  'industrial': industrialPack,
+  'extra-needs': extraNeedsPack,
+  'buildings-2': buildings2Pack,
+  'clothing-2': clothing2Pack,
+  'zone': zonePack,
+  'work-priority': workPriorityPack,
+  'diplomacy': diplomacyPack,
+  'belt': beltPack,
+  'masterpiece': masterpiecePack,
+  'gossip-facts': gossipFactsPack,
+  'ruins': ruinsPack,
+  'biomes-2': biomes2Pack,
+  'enemies-2': enemies2Pack,
+  'events-2': events2Pack,
+  'buildings-3': buildings3Pack,
+  'clothing-3': clothing3Pack,
+  'story': storyPack,
+  'hot-cold': hotColdPack,
+  'fortifications': fortificationsPack,
+  'weapons': weaponsPack,
 };
 
 // 有序清单（顺序 = apply 序 = def 注册序 = 组内系统执行序的稳定初始序；执行序推导见
@@ -121,6 +191,41 @@ export const DEFAULT_PLAYSTYLE_PACKS: string[] = [
   'drafting',
   'field-command',
   'beast-taming',
+  'seasons',
+  'astronomy',
+  'sailing',
+  'disease',
+  'breeding',
+  'lineage',
+  'genetics',
+  'flying',
+  'buildings-extra',
+  'biomes',
+  'meteor',
+  'visitor',
+  'neutral-fauna',
+  'waterworks',
+  'rail',
+  'industrial',
+  'extra-needs',
+  'buildings-2',
+  'clothing-2',
+  'zone',
+  'work-priority',
+  'diplomacy',
+  'belt',
+  'masterpiece',
+  'gossip-facts',
+  'ruins',
+  'biomes-2',
+  'enemies-2',
+  'events-2',
+  'buildings-3',
+  'clothing-3',
+  'story',
+  'hot-cold',
+  'fortifications',
+  'weapons',
 ];
 
 // 聚合包：自身无行为，仅声明前置依赖（依赖图拓扑自动按序拉齐上面的玩法包）

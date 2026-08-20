@@ -16,6 +16,7 @@ export function capGainTo(raw: number, cap: number): number {
   return Math.min(Math.max(0, raw), Math.max(1, Math.floor(cap)));
 }
 
+// 采集系统：祈祷进度 + 伐木/采矿/矿洞/钓鱼 产出推进（DNA STR/SIZ 加成）
 export class GatherSystem implements GameSystem {
   id = 'gather';
 
@@ -50,7 +51,7 @@ export class GatherSystem implements GameSystem {
     };
     // 产出钳制：gain = min(计算值, 负重上限)，向下取整
     const capGain = (raw: number, eid: number): number => capGainTo(raw, carryOf(eid));
-    for (const eid of this.ctx.pawnList) {
+    for (const eid of this.ctx.iterPawns) {
       const st = this.ctx.pawnStates.get(eid);
       if (!st) continue;
       const f = this.ctx.tuning.faith;

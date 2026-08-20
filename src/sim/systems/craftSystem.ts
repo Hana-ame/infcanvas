@@ -5,6 +5,7 @@ import type { SimContext } from './context';
 import type { RecipeDef } from '../defs/recipes';
 import type { EventBus } from '../core/events';
 
+// 手工系统：工作台配方推进（wood→tools / ore→... 等；passive 配方由 farm 系统结算）
 export class CraftSystem implements GameSystem {
   id = 'craft';
   private craftCd = 0;

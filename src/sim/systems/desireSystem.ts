@@ -7,6 +7,7 @@ import type { EventBus } from '../core/events';
 import type { DesireId } from '../core/desires';
 import { tickDesires, fulfill, starvingDesires } from '../core/desires';
 
+// 欲望系统：欲望值漂移（工作满足→减少；闲置→增长→驱动决策倾向）
 export class DesireSystem implements GameSystem {
   id = 'desire';
   private checkTimer = 0; // 定期检查（欲望变化慢，检查也慢）
@@ -21,7 +22,7 @@ export class DesireSystem implements GameSystem {
       const st = this.ctx.pawnStates.get(ev.eid);
       if (!st?.desires) return;
       const mine = this.skillTotal(ev.eid);
-      for (const other of this.ctx.pawnList) {
+      for (const other of this.ctx.iterPawns) {
         if (other === ev.eid) continue;
         if (this.skillTotal(other) > mine) {
           fulfill(st.desires, 'envy', this.ctx.tuning.desire.envyFulfillPerWork);
@@ -48,7 +49,7 @@ export class DesireSystem implements GameSystem {
 
   private processDesires(dt: number): void {
     const t = this.ctx.tuning.desire;
-    for (const eid of this.ctx.pawnList) {
+    for (const eid of this.ctx.iterPawns) {
       const st = this.ctx.pawnStates.get(eid);
       if (!st) continue;
       if (!st.desires) continue;

@@ -124,7 +124,7 @@ describe('medicine 玩法包（RimWorld 式）', () => {
     expect(w[1]).toMatchObject({ kind: 'bruise', bleeding: false });
   });
 
-  // ---- 2026-08-16 审查修复回归 ----
+  // ---- 2026-08-20 审查修复回归 ----
   it('疗伤中篝火被毁 → 清理 healTarget/healing 并退出疗伤态（不无限等待不存在的火）', () => {
     // 发现背景：raids 拆家/怒砸摧毁篝火后，treat 小人 healTarget 仍指向已毁坐标 →
     // 距离判定恒 > 2.2 → 治疗推进分支永久 continue，卡死在"疗伤养伤"。

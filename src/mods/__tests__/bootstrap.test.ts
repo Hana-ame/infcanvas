@@ -1,4 +1,4 @@
-// bootstrap 引导系统测试（2026-08-16 审计 L4）：
+// bootstrap 引导系统测试（2026-08-20 审计 L4）：
 // 出生篝火此前"手动 onCampfireBuilt + building_built 事件监听"双触发（assignPawn 全量
 // 重算跑两遍；fireMemory 有守卫掩盖）。修复 = 只发事件、统一走监听单入口。
 import { describe, it, expect, beforeEach } from 'vitest';
@@ -6,7 +6,7 @@ import { makeMinCtx } from '../../sim/__tests__/helpers/minCtx';
 import { BootstrapSystem } from '../packs/bootstrap';
 import type { MinCtx } from '../../sim/__tests__/helpers/minCtx';
 
-describe('bootstrap 出生篝火单触发（审计 L4，2026-08-16）', () => {
+describe('bootstrap 出生篝火单触发（审计 L4，2026-08-20）', () => {
   let ctx: MinCtx;
   let calls: number;
 

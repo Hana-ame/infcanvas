@@ -21,17 +21,17 @@ export interface Hostile {
   speed?: number;     // 移速（enemy def 快照，避免每帧查表）
   dmgPerSec?: number; // 攻击力（部落战士比野猫强）
   loot?: { item: string; amount: number }; // 击杀掉落
-  // 捕食者携带态（2026-08-16）：叼走的鼠 eid + 逃跑方向（捕获时定的单位向量）；
+  // 捕食者携带态（2026-08-20）：叼走的鼠 eid + 逃跑方向（捕获时定的单位向量）；
   // 携带中不索敌/不拆家,直冲方向跑离营地
   carried?: { eid: number; dirX: number; dirY: number };
-  // 驯兽守卫 DLC（2026-08-16 beast-taming 包）：驯化中 = 臣服趴伏（不攻击不捕猎，
+  // 驯兽守卫 DLC（2026-08-20 beast-taming 包）：驯化中 = 臣服趴伏（不攻击不捕猎，
   // raid 战斗跳过；tamer = 驯养人 eid，死亡后驯化中止）。tamed 用 faction==='player'
   // 标识（营地守卫，随局不随档——hostiles 是运行时状态，存档天然不含，产品语义：
   // 读档后守卫野生化；同 carried 的先例）
   taming?: { progress: number; tamer: number };
   // 守卫驯养人 eid（beast-taming：taming 转正时从 tamer 迁入；主人逝去 → 守卫就地游荡）
   owner?: number;
-  // 冲刺冷却（2026-08-16：猫的跳跃/冲刺技能——周期性向目标方向瞬移，越过近身反击圈；
+  // 冲刺冷却（2026-08-20：猫的跳跃/冲刺技能——周期性向目标方向瞬移，越过近身反击圈；
   // 随局不随档同 carried/taming 先例。EnemyDef.dash={range,cd} 配置，dashCd 运行时递减）
   dashCd?: number;
 }
@@ -76,7 +76,7 @@ export interface SimContext {
   fragmentsNeeded(techId: string): number; // 该科技所需碎片总数（def.fragments ?? 1）
   oracleGoal: { workType: string; label: string; until: number } | null; // 神谕目标（影响目标层）
   // 神谕设定目标（策略卡 = 神谕目标：只调制工作系列权重 ×oracleGoalMul，不插小人卡槽、不碰选择链）
-  // 2026-08-16 更名：不再叫"神谕"——它就是卡池影响项（调工作权重,不裁决、不发布）。
+  // 2026-08-20 更名：不再叫"神谕"——它就是卡池影响项（调工作权重,不裁决、不发布）。
   // 内部标识 oracle* 与命令 type 'oracle' 保留（协议/存档/远程兼容），人类可见面已改"策略卡"。
   setOracleGoal(def: { workType?: string; label: string; duration: number }): void;
   // 印卡 API（RW-1 M1 修订，2026-08-15 加入接口）：策略卡/习惯卡插入小人槽位（空槽优先、
@@ -103,10 +103,13 @@ export interface SimContext {
   readHealth(eid: number): { hp: number; maxHp: number } | null;
   readSpeed(eid: number): { v: number } | null;
   setNeeds(eid: number, n: { food: number; rest: number; mood: number; san: number }): void;
+  // 2026-08-20 深度优化：直接写 ECS 数组，跳过 object alloc + observer chain
+  adjustNeedField(eid: number, field: 'food' | 'rest' | 'mood' | 'san', delta: number): void;
+  setNeedField(eid: number, field: 'food' | 'rest' | 'mood' | 'san', value: number): void;
   setHealth(eid: number, h: { hp: number; maxHp: number }): void;
   setPosition(eid: number, p: { x: number; y: number }): void;
   // 命令/移动。markCommand=false = 系统行为移动（征召追击/理智乱跑）不标记"玩家命令"——
-  // 否则 moveTo 会把 commandCooldown 重置为 3s，系统自身的持续追击被自己锁死（2026-08-16
+  // 否则 moveTo 会把 commandCooldown 重置为 3s，系统自身的持续追击被自己锁死（2026-08-20
   // 审查发现：DraftSystem 追击 moveTo → cooldown 永 3 → 征召门挡住衰减 → 追击永冻只发生一次）。
   moveTo(eid: number, x: number, y: number, opts?: { markCommand?: boolean }): void;
   // 返回是否发起了寻路（false = 超距/节流/无路——调用方可决定放弃目标或等待节流）
@@ -121,7 +124,7 @@ export interface SimContext {
   rollEvent(eid: number, dc: number): { success: boolean; roll: number };
   rollEventSkill(eid: number, dc: number, skill: SkillId): { success: boolean; roll: number };
   adjustMood(eid: number, delta: number): void;
-  /** 命令路由（2026-08-16 审查修复：此前接口是窄 'build' 联合——系统侧发新命令
+  /** 命令路由（2026-08-20 审查修复：此前接口是窄 'build' 联合——系统侧发新命令
    *（wear/draft/attack/strategy…）被迫 cast；命令协议已开放（sim.Command 枚举含
    * (string & {}) + args 通用位），接口与实现同宽，协议即契约 */
   issueCommand(cmd: Command): void;
@@ -153,10 +156,24 @@ export interface SimContext {
   // 'socialUnits'、economy 报 'economy'、bootstrap 报 'bootstrap'）；Sim 以此取代
   // "写死 this.behavior/this.socialUnits"的硬引用——插件可装卸的核心机制
   provide(cap: string, impl: unknown): void;
+  // 2026-08-20: getCap 公开（zone/diplomacy 等需要查询其他系统的能力）
+  getCap<T>(cap: string): T | null;
   // 寻路服务（命令处理器等玩法代码要寻路时用；moveAdjacent 已内建）
   getPath(sx: number, sy: number, ex: number, ey: number, climb?: number): { x: number; y: number }[];
   // 初始人口数（SimOptions.pawnCount，bootstrap 包读取用于出生刷人）
   initialPawnCount: number;
   // 当前选中实体（命令分发用：命令无 pawnId 时默认作用于选中集）
   selected: number[];
+  // 2026-08-20 大规模优化：批处理模式下当前轮转的 pawn 子集
+  currentBatch?: readonly number[];
+  // 2026-08-20 十万级优化：批量 needs 衰减（直接写 ECS 数组，无对象分配）
+  tickNeedsBatch?(pawnList: readonly number[], dt: number): void;
+  // 2026-08-20 数据驱动需求：DLC 注册新需求类型
+  registerNeed?(def: { id: string; label: string; init: number; decay: number; nightDecayMul?: number; urgentAt?: number; starveDmg?: number; moodLow?: number; moodHigh?: number; moodDriftDown?: number; moodDriftUp?: number; sanThreshold?: number; sanDrain?: number }): void;
+  readCustomNeed?(eid: number, id: string): number | undefined;
+  setCustomNeed?(eid: number, id: string, value: number): void;
+  // 2026-08-20 十万级优化：返回当前应迭代的 pawn 列表（batch 模式 = 子集，正常 = 全体）
+  readonly iterPawns: readonly number[];
+  // 2026-08-20 空间索引（behavior 系统每 tick 构建，executors 查找用——替代 findNearest 环扫）
+  spatialTileIndex?: Map<number, { x: number; y: number }[]>;
 }

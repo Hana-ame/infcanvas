@@ -4,15 +4,24 @@ import type { GameSystem } from './registry';
 import type { SimContext } from './context';
 import type { EventBus } from '../core/events';
 import { World } from '../core/world';
+import { buildTagIndex, findNearestTagged } from './building-cache';
 import type { EnemyDef } from '../defs/enemies';
-import { K_ATTACK, K_DRAFTED } from '../mods/contracts'; // RW-1 征召指定攻击（drafting 包契约键）+ 征召判定（战斗平衡 2026-08-16）
+import { K_ATTACK, K_DRAFTED } from '../mods/contracts'; // RW-1 征召指定攻击（drafting 包契约键）+ 征召判定（战斗平衡 2026-08-20）
 import { pushHostile } from './hostiles'; // 敌人生成共享入口（审计 L6）
 
+// 敌袭系统：敌人移动（nearestBuilding 拆家）+ 战斗结算（攻击/受伤/死亡/征服吞并）
 export class RaidSystem implements GameSystem {
   id = 'raid';
+  private _bldVer = -1;
+  private tagIndex: Map<string, import('./building-cache').CachedBuilding[]> = new Map();
   private raidTimer: number;
   private peaceTime = 0; // 距上次袭击的和平时长（叙事压力，DESIGN §6）
   private baseInterval: number; // 基线袭击间隔（秒）
+  // 2026-08-20 万人战争优化：敌人分批处理
+  private _hostileBatchIdx = 0;
+  private _hostileStart = 0;
+  private _hostileEnd = 999999;
+  private _gridTick = 0;
 
   constructor(private ctx: SimContext) {
     this.baseInterval = ctx.tuning.combat.baseInterval;
@@ -22,6 +31,18 @@ export class RaidSystem implements GameSystem {
   init(_bus: EventBus): void {}
 
   update(dt: number): void {
+    // 2026-08-20 万人战争优化：敌人 > 500 时分批处理
+    const HOSTILE_BATCH = Math.max(500, Math.floor(this.ctx.hostiles.length / 20)); // 2026-08-20: 动态 batch（n/20，最少 500）
+    const useBatch = this.ctx.hostiles.length > HOSTILE_BATCH;
+    if (useBatch) {
+      this._hostileStart = this._hostileBatchIdx;
+      this._hostileEnd = Math.min(this._hostileStart + HOSTILE_BATCH, this.ctx.hostiles.length);
+      this._hostileBatchIdx += HOSTILE_BATCH;
+      if (this._hostileBatchIdx >= this.ctx.hostiles.length) this._hostileBatchIdx = 0;
+    } else {
+      this._hostileStart = 0;
+      this._hostileEnd = this.ctx.hostiles.length;
+    }
     this.updateRaids(dt);
     this.updateCombat(dt);
   }
@@ -56,7 +77,7 @@ export class RaidSystem implements GameSystem {
   }
 
   // 刷一波袭击：从地图边缘随机边出生，直奔营地；规模随人口与叙事压力放大。
-  // 捕食者（哈基米 2026-08-16）：独行——固定 1 只,压力只放大强度不放大数量
+  // 捕食者（哈基米 2026-08-20）：独行——固定 1 只,压力只放大强度不放大数量
   private spawnRaid(count: number, pressure = 1): number {
     const w = this.ctx.world;
     // 敌人数值走 enemies 表（mods.enemyDef()，mod 可 overrideDef 调强度/掉落）
@@ -82,9 +103,18 @@ export class RaidSystem implements GameSystem {
     const cx = Math.floor(this.ctx.world.width / 2);
     const cy = Math.floor(this.ctx.world.height / 2);
     // ---- 移动阶段 ----
-    for (const h of this.ctx.hostiles) {
+    const allH = this.ctx.hostiles;
+    for (let hi = this._hostileStart; hi < this._hostileEnd && hi < allH.length; hi++) {
+      const h = allH[hi];
       // 玩家阵营守卫（beast-taming 驯服猫）不参与敌对移动/袭击——由驯兽系统驱动跟随/扑咬
       if (h.faction === 'player') continue;
+      // 2026-08-20 十万级优化：附近无鼠 → 只移动不战斗（跳过昂贵的 nearestPawn 搜索）
+      const hcx = Math.floor(h.x / this.cellSize);
+      const hcy = Math.floor(h.y / this.cellSize);
+      let hasNearbyPawn = false;
+      for (let dx = -1; dx <= 1 && !hasNearbyPawn; dx++) for (let dy = -1; dy <= 1 && !hasNearbyPawn; dy++) {
+        if (this.pawnGrid.get((hcx + dx) * 100000 + (hcy + dy))) hasNearbyPawn = true;
+      }
       const pred = this.predatorOf(h);
       let tx = h.targetX, ty = h.targetY;
       let spd = h.speed ?? t.catSpeed;
@@ -103,7 +133,7 @@ export class RaidSystem implements GameSystem {
           if (prey) { tx = prey.x; ty = prey.y; }
         }
       }
-      // 冲刺技能（2026-08-16：猫的跳跃/冲刺——周期性向目标方向瞬间位移一段距离，
+      // 冲刺技能（2026-08-20：猫的跳跃/冲刺——周期性向目标方向瞬间位移一段距离，
       // 越过 meleeRange(3) 近身反击圈突围；dashCd 运行时递减，归零时触发一次瞬移）
       if (pred?.predator && pred.dash && !h.taming) {
         h.dashCd = (h.dashCd ?? 0) - dt;
@@ -129,6 +159,10 @@ export class RaidSystem implements GameSystem {
       }
     }
     // ---- 接敌 / 捕获 / 得手结算（从后往前 splice 安全）----
+    // 2026-08-20 万人战争优化：死亡清理每 5 tick 一次（大量敌人时 splice 开销大）
+    if (this.ctx.hostiles.length > 1000 && this._gridTick % (this.ctx.hostiles.length > 10000 ? 10 : 5) !== 0) {
+      // 跳过死亡清理（下一轮再清）
+    } else
     for (let i = this.ctx.hostiles.length - 1; i >= 0; i--) {
       const h = this.ctx.hostiles[i];
       if (h.faction === 'player') continue; // 守卫不结算敌对行为（驯兽系统驱动）
@@ -155,12 +189,12 @@ export class RaidSystem implements GameSystem {
           }
           continue;
         }
-        // 近身反击：捕猎期有鼠在 meleeRange 可砍猫（自动近身反击防御，非玩家操作）；
-        // 2026-08-16 战斗平衡：自动近身反击对捕食者伤害 ×predatorReactionMul(0.25)——
+        // 近身反击：捕猎期有鼠在 meleeRange 可砍猫（十万级优化：nearestPawnInRange 已用空间哈希，O(cell内) 非常快）（自动近身反击防御，非玩家操作）；
+        // 2026-08-20 战斗平衡：自动近身反击对捕食者伤害 ×predatorReactionMul(0.25)——
         // 征召鼠（K_DRAFTED，玩家命令优先接战）全伤。动机：90hp 捕食者此前被自动反击
         // 几秒消灭，战场指挥（征召/冲锋）与驯化（重伤窗口）没有存在意义；0.25 让自动
         // 防御只拖不杀，玩家须征召/指挥才能高效击杀或把猫压到重伤驯化。
-        // 反击结算在捕获判定前：猫被砍死 → 掉落 + 不叼人（含"砍死猎人"的合理反制，2026-08-16）
+        // 反击结算在捕获判定前：猫被砍死 → 掉落 + 不叼人（含"砍死猎人"的合理反制，2026-08-20）
         const defender = this.nearestPawnInRange(h, t.meleeRange);
         if (defender !== null) {
           const drafted = this.ctx.pawnStates.get(defender)?.extra?.[K_DRAFTED] === true;
@@ -285,14 +319,40 @@ export class RaidSystem implements GameSystem {
   }
 
   // 半径内最近的鼠（捕获判定 / 反杀者），无则 null
+  // 2026-08-20 万人战争优化：用空间哈希找最近鼠（O(cell 内) 替代 O(全体)）
+  private pawnGrid: Map<number, number[]> = new Map();
+  private cellSize = 8;
   private nearestPawnInRange(h: { x: number; y: number }, radius: number): number | null {
+    // 懒构建：minCtx 无 update → pawnGrid 为空时即时构建
+    if (this.pawnGrid.size === 0) {
+      for (const eid of this.ctx.pawnList) {
+        const pos = this.ctx.pawnPositions.get(eid);
+        if (!pos) continue;
+        const cx = Math.floor(pos.x / this.cellSize);
+        const cy = Math.floor(pos.y / this.cellSize);
+        const key = cx * 100000 + cy;
+        let bucket = this.pawnGrid.get(key);
+        if (!bucket) { bucket = []; this.pawnGrid.set(key, bucket); }
+        bucket.push(eid);
+      }
+    }
+    // 只查 h 周围的格子（radius/cellSize + 1 格范围）
+    const cellR = Math.ceil(radius / this.cellSize);
+    const hcx = Math.floor(h.x / this.cellSize);
+    const hcy = Math.floor(h.y / this.cellSize);
     let best: number | null = null;
     let bd = radius;
-    for (const eid of this.ctx.pawnList) {
-      const pos = this.ctx.pawnPositions.get(eid);
-      if (!pos) continue;
-      const d = Math.hypot(pos.x - h.x, pos.y - h.y);
-      if (d < bd) { bd = d; best = eid; }
+    for (let dx = -cellR; dx <= cellR; dx++) {
+      for (let dy = -cellR; dy <= cellR; dy++) {
+        const bucket = this.pawnGrid.get((hcx + dx) * 100000 + (hcy + dy));
+        if (!bucket) continue;
+        for (const eid of bucket) {
+          const pos = this.ctx.pawnPositions.get(eid);
+          if (!pos) continue;
+          const d = Math.hypot(pos.x - h.x, pos.y - h.y);
+          if (d < bd) { bd = d; best = eid; }
+        }
+      }
     }
     return best;
   }
@@ -312,15 +372,15 @@ export class RaidSystem implements GameSystem {
     return null;
   }
 
-  // 半径内最近的建筑（野猫拆家；被毁建筑若为核心 → 触发征服吞并，见 updateCombat）
+  // 半径内最近的建筑（2026-08-20 架构优化：用共享 building-cache）
   private nearestBuilding(h: { x: number; y: number }, radius: number): { x: number; y: number } | null {
-    const w = this.ctx.world;
     let best: { x: number; y: number } | null = null;
-    let bestD = Infinity;
-    // chunk 空间分区查询（原 O(r²) 全格扫描 × hostile × tick）
-    for (const b of w.queryBuildingsNear(Math.round(h.x), Math.round(h.y), radius)) {
-      // 新 key 编码（2026-08-14 无限地图）：World.keyToXY 解码（负坐标支持）
-      if (b.dist < bestD) { bestD = b.dist; best = World.keyToXY(b.key); }
+    let bestD = radius * radius;
+    for (const [, buildings] of this.tagIndex) {
+      for (const b of buildings) {
+        const d = (b.x - h.x) ** 2 + (b.y - h.y) ** 2;
+        if (d < bestD) { bestD = d; best = { x: b.x, y: b.y }; }
+      }
     }
     return best;
   }

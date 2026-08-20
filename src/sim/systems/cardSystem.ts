@@ -1,6 +1,6 @@
 // 行为系统：消费卡的意图(intent) → 执行（走位/工作/进食/祈祷）
 // 意图执行器可注册：mod 加新意图 = 注册一个执行器
-//（2026-08-16 大文件拆分：执行器实现迁至 systems/executors.ts 纯函数实现表——
+//（2026-08-20 大文件拆分：执行器实现迁至 systems/executors.ts 纯函数实现表——
 // 本类只留决策循环/移动/到达回执，装配走"声明表 × 实现表"双表数据驱动）
 import type { GameSystem } from './registry';
 import type { SimContext } from './context';
@@ -8,6 +8,9 @@ import type { EventBus } from '../core/events';
 import type { PawnState } from '../sim';
 import type { BehaviorCard, CardContext, CardView, BehaviorIntent } from '../ai/pawn';
 import { drawCards, pickBest, BASE_CARDS } from '../ai/pawn';
+import { NeedsComp } from '../sim';
+// 2026-08-20 空间索引：findNearest 已有环剪枝 + avg 1.1 次/tick，索引开销 > 收益 → 暂不启用
+
 import { JOB_CARD, JOBS } from '../defs/jobs';
 import { BUILTIN_INTENTS, BUILTIN_WORKS } from '../defs/executors';
 import { fulfill } from '../core/desires';
@@ -29,9 +32,9 @@ import {
 // sim.ts/registry.ts 等既有 import 路径（'../systems/cardSystem'）保持不变
 export type { IntentExecutor, WorkExecutor } from './executors';
 
-// 拥挤统计格表（2026-08-16 热路径优化，配合 walk）：pawnPositions 按取整格聚合人数。
+// 拥挤统计格表（2026-08-20 热路径优化，配合 walk）：pawnPositions 按取整格聚合人数。
 // 字符串键 `${x},${y}`（x/y 取整整数化，字符串拼接免 Map 数组/双层 Map 的分配开销）
-// 拥挤格表（2026-08-16 性能优化：原 Map<string,number> → 数字 key Map<number,number>，
+// 拥挤格表（2026-08-20 性能优化：原 Map<string,number> → 数字 key Map<number,number>，
 // 消除 40 pawn × 3000 tick = 120k 次字符串分配 `${x},${y}` + GC 压力）
 const buildCrowdGrid = (c: SimContext): Map<number, number> => {
   const g = new Map<number, number>();
@@ -45,13 +48,27 @@ const buildCrowdGrid = (c: SimContext): Map<number, number> => {
 // 数字 key helper（与 buildCrowdGrid 同编码：x 低 16 位 + y 高 16 位）
 const crowdKey = (x: number, y: number): number => (Math.round(x) & 0xFFFF) | (Math.round(y) << 16);
 
+// 2026-08-20 大规模优化：只统计 batch 内 pawn 的拥挤表（batch 模式 = 子集 → 更小）
+const buildCrowdGridFrom = (_c: SimContext, batch: readonly number[]): Map<number, number> => {
+  const g = new Map<number, number>();
+  for (const eid of batch) {
+    const p = _c.pawnPositions.get(eid);
+    if (!p) continue;
+    const k = crowdKey(p.x, p.y);
+    g.set(k, (g.get(k) ?? 0) + 1);
+  }
+  return g;
+};
+
+// 行为决策系统（内核引擎）：buildCrowdGrid → 40 人循环（征召/崩溃/工作/决策节流/walk）
+// 决策 = 抽卡 pickBest → 意图执行（walkAndWork/eat/rest/heal/pray/idle）
 export class BehaviorSystem implements GameSystem {
   id = 'behavior';
   private intentExecutors = new Map<string, IntentExecutor>();
   private workExecutors = new Map<string, WorkExecutor>();
 
   constructor(private ctx: SimContext) {
-    // 数据驱动装配（2026-08-16 拆分后）：声明表 defs/executors.ts 的 handler 键 ×
+    // 数据驱动装配（2026-08-20 拆分后）：声明表 defs/executors.ts 的 handler 键 ×
     // 实现表 executors.ts（INTENT_IMPL/WORK_IMPL 纯函数）——不再反射类方法名
     //（迁出前 handler = 类方法名字符串）。deps.workExecutors 传引用：mod 运行期
     // registerWork 注册的新工作要在执行时查到（不能装配时快照）
@@ -82,7 +99,7 @@ export class BehaviorSystem implements GameSystem {
 
   init(_bus: EventBus): void {}
 
-  // 热路径优化（2026-08-16 第三轮）：CardView 每 tick 只构造一次——所有函数以 eid 为参数
+  // 热路径优化（2026-08-20 第三轮）：CardView 每 tick 只构造一次——所有函数以 eid 为参数
   // 或独立于 pawn，故可复用；per-pawn 字段（lastSeries/assignedJob）在循环内刷新。
   private makeView(): CardView {
     return {
@@ -127,53 +144,47 @@ export class BehaviorSystem implements GameSystem {
   }
 
   update(dt: number): void {
-    // 拥挤统计格表（2026-08-16 热路径优化）：walk 的拥挤惩罚/占位检查原为每小人每帧
-    // 全表遍历 pawnPositions（40 人 = 每帧 ~1600 次距离检查，profiler 定位为行为系统
-    // 占 step 耗时 50% 的主因之一）。每帧先按取整格聚合一次（O(n) 哈希），walk 内
-    // 查 3×3 邻域/目标格即得 O(1)——语义近似注释见 walk。
-    const crowdGrid = buildCrowdGrid(this.ctx);
-    // 热路径优化（2026-08-16 第三轮）：CardView 只需每 tick 构造一次，复用。
+    // 2026-08-20 算法逻辑优化：缓存 ctx 引用避免每帧 500×N 次 getter 调用
+    const ctx = this.ctx;
+    // 2026-08-20 大规模优化：批处理模式下只处理 currentBatch（全体 pawn 的子集）
+    const batch = ctx.currentBatch ?? ctx.pawnList;
+    const crowdGrid = batch === ctx.pawnList ? buildCrowdGrid(ctx) : buildCrowdGridFrom(ctx, batch);
+    // 缓存热路径引用（避免循环内重复属性访问）
+    const pawnStates = ctx.pawnStates;
+    const pawnPositions = ctx.pawnPositions;
+    const crazyAt = ctx.tuning.san.crazyAt;
+
     const view = this.makeView();
-    for (const eid of this.ctx.pawnList) {
-      const st = this.ctx.pawnStates.get(eid);
+    for (let bi = 0; bi < batch.length; bi++) {
+      const eid = batch[bi]!;
+      const st = pawnStates.get(eid);
       if (!st) continue;
-      const pos = this.ctx.readPosition(eid);
+      const pos = pawnPositions.get(eid);
       if (!pos) continue;
 
-      // RW-1 征召门（2026-08-15，drafting 玩法包 K_DRAFTED 契约键）：
-      // 征召中的小人**不自主**——不抽卡/不工作/不休闲/不吃不睡不治疗，保持站位；
-      // 玩家 move 命令依然有效（path 继续走完）。为什么动内核：抽卡决策是引擎内部循环，
-      // 纯插件无法在不动引擎的前提下阻止它（只读一个契约键，是最小协议扩展）。
-      // 被动衰减不豁免：needs/san 照跑（下方理智/紧急分支被这扇门挡住，征召只挡"自主行动"）。
-      // Key point: 门放在理智分支**之前**——征召 = 完全听指挥，连理智崩溃的自主乱跑也不执行
-      //（但精神崩溃的危险依然存在，解除征召后立即恢复）。
-      if (st.extra?.[K_DRAFTED] === true) {
+      // 征召门：st.extra?.[K_DRAFTED] → 提前取 extra 引用减少属性链
+      const extra = st.extra;
+      if (extra?.[K_DRAFTED] === true) {
         st.job = '待命';
-        // 玩家命令冷却继续衰减（修复 2026-08-16 审查：此处 continue 跳过了下方唯一衰减点
-        // → 玩家 move 命令设的 commandCooldown 在征召期间永不归零 → DraftSystem 追击永冻。
-        // 征召只挡"自主决策"，不挡冷却流逝；3s 窗口走完即恢复征召追击。）
         if ((st.commandCooldown ?? 0) > 0) st.commandCooldown = (st.commandCooldown ?? 0) - dt;
-        if (st.path && st.pathIndex < st.path.length) this.walk(eid, st, pos, dt, crowdGrid); // 玩家命令的路径照走
+        if (st.path && st.pathIndex < st.path.length) this.walk(eid, st, pos, dt, crowdGrid);
         continue;
       }
 
-      // 理智崩溃：狂乱行为由 SanSystem 接管（发呆/乱跑），不自动决策
-      // 崩溃前遗留的路径仍推进（否则 path 走不完 + SanSystem 见 path 早退 = 永久冻结）
-      const n = this.ctx.readNeeds(eid);
-      if (n && n.san < this.ctx.tuning.san.crazyAt) {
+      // 理智崩溃：直接读 NeedsComp.san[eid] 避免 readNeeds 对象分配
+      const san = NeedsComp.san[eid] ?? 100;
+      if (san < crazyAt) {
         st.job = '理智崩溃';
         if (st.path && st.pathIndex < st.path.length) this.walk(eid, st, pos, dt, crowdGrid);
         continue;
       }
 
-      // 工作中（采集/祈祷/疗伤/建造进度）不打断
+      // 工作中不打断
       if (st.mining || st.chopXY || st.praying || st.healing || st.caveWork) continue;
 
-      // 玩家命令冷却递减
+      // 冷却递减（去掉 ?? 0 模式——直接 if truthy 判断）
       if ((st.commandCooldown ?? 0) > 0) st.commandCooldown = (st.commandCooldown ?? 0) - dt;
-      // 远距回扫冷却递减（miss 后 5s 内不重复大半径扫描，防性能拖垮）
       if ((st.farScanCd ?? 0) > 0) st.farScanCd = (st.farScanCd ?? 0) - dt;
-      // 寻路节流冷却递减（两次寻路最小间隔）
       if ((st.pathCd ?? 0) > 0) st.pathCd = (st.pathCd ?? 0) - dt;
 
       // 紧急需求优先
@@ -188,30 +199,27 @@ export class BehaviorSystem implements GameSystem {
         continue;
       }
 
-      // 玩家命令冷却中：空闲等待（不自动决策，尊重玩家指挥）
+      // 玩家命令冷却中
       if ((st.commandCooldown ?? 0) > 0) {
         st.job = '听从指令';
         continue;
       }
 
-      // 决策节流（2026-08-16：pawn 非每帧抽卡决策——每 decisionInterval 秒才真正 decide，
-      // 间隔内保持上次意图不变。降 CPU：40 pawn × 3000 tick = 120k 次 decide → /2 = 60k 次。
-      // 鼠的行为略滞后（最多 2 秒延迟响应环境变化），但可接受且更贴近"非全知"的拟真感。
+      // 决策节流
       if ((st.decisionCd ?? 0) > 0) {
         st.decisionCd = (st.decisionCd ?? 0) - dt;
-        continue; // 冷却中：不抽卡，保持上次 job/intent
+        continue;
       }
 
       // 空闲：抽3选1 → 执行意图
-      // 每 pawn 刷新 view 的 per-pawn 字段（CardView 复用，减分配）
       view.lastSeries = st.lastSeries;
       view.assignedJob = st.assignedJob;
       const intent = this.decide(eid, st, view);
-      st.decisionCd = this.ctx.tuning.pawn.decisionInterval; // 设下一次决策冷却
+      st.decisionCd = ctx.tuning.pawn.decisionInterval;
       if (intent) {
         st.job = intent.label;
         const exec = this.intentExecutors.get(intent.action);
-        if (exec) exec(this.ctx, eid, st, intent);
+        if (exec) exec(ctx, eid, st, intent);
       } else {
         st.job = '闲逛';
       }
@@ -302,10 +310,10 @@ export class BehaviorSystem implements GameSystem {
 
   // 沿 path 逐段移动（速度 × 心情系数 moodFactor × 拥挤系数 crowdFactor，读 tuning.pawn）；
   // 走完全程 → onArrive
-  // 拥挤惩罚（2026-08-16 用户反馈"鼠鼠挤同一路径"）：±1 格内其他鼠越多移速越慢（floor 钳制），
+  // 拥挤惩罚（2026-08-20 用户反馈"鼠鼠挤同一路径"）：±1 格内其他鼠越多移速越慢（floor 钳制），
   // 目标格被占时停在格前 crowdStopGap 排队不叠格——多鼠同目标自然减速成队列（涌现式避让，
   // 零新增状态，只读 pawnPositions 快照）
-  //（2026-08-16 热路径优化：原拥挤统计与占位检查=每走一步全表遍历 pawnPositions
+  //（2026-08-20 热路径优化：原拥挤统计与占位检查=每走一步全表遍历 pawnPositions
   //（40 人 → 每帧 1600 次距离检查，profiler 定位行为系统占 step 50% 的主因之一）；
   // 改由 update 每帧先按格聚合一次（buildCrowdGrid），此处查 3×3 邻域/目标格即 O(1)）
   private walk(eid: number, st: PawnState, pos: { x: number; y: number }, dt: number, crowdGrid: Map<number, number>): void {
@@ -335,7 +343,10 @@ export class BehaviorSystem implements GameSystem {
       d -= 1; // 自己（必在表中）
       if (d > 0) crowd = Math.max(pw.crowdingFloor, 1 - pw.crowdingPenalty * d);
     }
-    const move = (sp?.v ?? pw.baseSpeed) * moodFactor * crowd * dt;
+    // 2026-08-20 铁道 DLC：在矿车上速度 ×3（K_RAIL 标记 = extra.rail）
+    const onCart = !!st.extra?.['rail'];
+    const speedMul = onCart ? 3 : 1;
+    const move = (sp?.v ?? pw.baseSpeed) * moodFactor * crowd * speedMul * dt;
     if (dist <= move) {
       // 目标格被他人占据：工作目标格（chop/mine/cave/heal/pray/onArriveWork）允许重叠作业
       //（共同采集/挖掘不阻塞——排死会卡住生产，clothing 测试 30s 采不到 flax 即是此坑）；

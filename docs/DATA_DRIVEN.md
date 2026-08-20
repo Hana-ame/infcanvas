@@ -480,11 +480,52 @@ overrideTuning(patch: DeepPartial<TuningConfig>): this  // 覆盖平衡参数（
 - **玩法包数值、修复记录、数据模型演进**已统一移至 `docs/CHANGELOG.md`。
 - 当前数据表、执行序、契约与装配态见下方快照。
 
-## 当前装配态快照（2026-08-16 终版，前列数字为历史演进记录请勿改动——以本条为最新）
+## 当前装配态快照（2026-08-20 终版，前列数字为历史演进记录请勿改动——以本条为最新）
 
 - `SYSTEM_DEFS` 表 = **27 系统**（内核 1 = behavior 决策引擎，内联 ctor；表内插件 26 + field-command）；默认装配 = **28 系统**（另有 beastTaming 表外插件）；`KERNEL_SYSTEM_IDS = ['behavior']`；`DEFAULT_PLAYSTYLE_PACKS` = **27 包**（含 field-command / beast-taming）。
 - 测试 = **536 用例 / 57 文件**（全量 `npm test` + `npx tsc --noEmit` 干净）。
 - `tuning.combat.predatorReactionMul = 0.25`：非征召鼠对捕食者自动近身反击倍率；征召鼠（K_DRAFTED）全伤。语义见上节捕食者近身反击倍率。
-- 战斗数值（2026-08-16 终版）：`pawnDmg = 5`（鼠近战）、`meleeRange = 3`（反击圈）、`captureRange = 1.5`（捕食者叼鼠距离）。
-- 决策节流（2026-08-16）：`tuning.pawn.decisionInterval = 2`——小人每 2 秒抽卡决策一次，冷却中保持上次意图；不阻塞紧急需求/走路/征召/工作。
-- 捕食者本体：`enemies.ts` 野猫 hp = **110**、speed = **8**、`dash = { range: 6, cd: 8 }`（2026-08-16 战斗平衡第二轮延伸；PLAYING 已同步）。
+- 战斗数值（2026-08-20 终版）：`pawnDmg = 5`（鼠近战）、`meleeRange = 3`（反击圈）、`captureRange = 1.5`（捕食者叼鼠距离）。
+- 决策节流（2026-08-20）：`tuning.pawn.decisionInterval = 2`——小人每 2 秒抽卡决策一次，冷却中保持上次意图；不阻塞紧急需求/走路/征召/工作。
+- 捕食者本体：`enemies.ts` 野猫 hp = **110**、speed = **8**、`dash = { range: 6, cd: 8 }`（2026-08-20 战斗平衡第二轮延伸；PLAYING 已同步）。
+
+## 新增 DLC 数值表（2026-08-20 追加）
+
+### zone 系统数值
+| 参数 | 默认值 | 说明 |
+|---|---|---|
+| maxZones | 20 | 最多区域数 |
+| zoneCheckInterval | 2s | zone 检测节流 |
+
+### hot-cold 系统数值
+| 参数 | 默认值 | 说明 |
+|---|---|---|
+| frontDetectRange | 15格 | 热区检测敌人范围 |
+| frontCheckInterval | 3s | 热区检测节流 |
+| buildingDamageInFront | 0.5/s | 热区建筑损坏 |
+| autoDraftInFront | true | 热区自动征召 |
+| autoUndraftInRear | true | 冷区自动解除 |
+
+### belt 系统数值
+| 参数 | 默认值 | 说明 |
+|---|---|---|
+| beltMovePerSec | 0.5 | 传送带每秒搬运量 |
+| beltCapacity | 5 | 传送带暂存上限 |
+| maxBeltChain | 50 | 最长链 |
+
+### diplomacy 系统数值
+| 参数 | 默认值 | 说明 |
+|---|---|---|
+| tradeThreshold | 50 | 关系>50可贸易 |
+| warThreshold | -50 | 关系<-50可宣战 |
+| tradeGain | wood+5,food+5 | 每次贸易获得 |
+| relationDrift | 0.01/s | 关系漂移 |
+| evalInterval | 10s | 外交评估节流 |
+
+### extra-needs 数值
+| 参数 | 默认值 | 说明 |
+|---|---|---|
+| hygiene.decay | 0.05/s | 卫生衰减 |
+| hygiene.urgentAt | 15 | 紧急阈值 |
+| entertainment.decay | 0.08/s | 娱乐衰减 |
+| entertainment.urgentAt | 10 | 紧急阈值 |

@@ -27,11 +27,12 @@ export function allowRate(st: CmdGuardState, now: number): boolean {
   return true;
 }
 
+// 命令验证（白名单 + 形状校验 + 频率限制；防恶意/异常命令崩溃 sim）
 export function validateCommand(sim: Sim, raw: unknown, guard: CmdGuardState, now: number): { ok: boolean; reason?: string } {
   if (!allowRate(guard, now)) return { ok: false, reason: 'rate limited' };
   if (typeof raw !== 'object' || raw === null) return { ok: false, reason: 'not an object' };
   const c = raw as Record<string, unknown>;
-  // 命令面 = 注册表 ∪ 引擎内建（move 实体移动；pause/speed 播放控制——2026-08-16
+  // 命令面 = 注册表 ∪ 引擎内建（move 实体移动；pause/speed 播放控制——2026-08-20
   // 审计 H1：远程暂停/变速不再本地直改，统一走命令面，服务器权威闭环）
   // （2026-08-15 命令协议开放后不再硬编码命令表；wear 等玩法包命令动态可用）
   const known = (type: string): boolean => type === 'move' || type === 'pause' || type === 'speed' || sim.mods.commandHandlers.has(type);
@@ -76,7 +77,7 @@ export function validateCommand(sim: Sim, raw: unknown, guard: CmdGuardState, no
     }
     return { ok: true };
   }
-  // 播放控制（引擎内建，2026-08-16 审计 H1）：pause 的 args.paused 必须布尔（缺省 true）；
+  // 播放控制（引擎内建，2026-08-20 审计 H1）：pause 的 args.paused 必须布尔（缺省 true）；
   // speed 值域 {1,2,3}（issueCommand 硬编码值域校验——服务器权威拒绝注入非法速率）
   if (c.type === 'pause') {
     const a = (c.args ?? {}) as Record<string, unknown>;
@@ -88,7 +89,7 @@ export function validateCommand(sim: Sim, raw: unknown, guard: CmdGuardState, no
     if (a.speed !== 1 && a.speed !== 2 && a.speed !== 3) return fail('speed must be 1|2|3');
     return { ok: true };
   }
-  // 战场指挥 DLC（field-command 包 2026-08-16）：commander/train/dispatch 形状校验
+  // 战场指挥 DLC（field-command 包 2026-08-20）：commander/train/dispatch 形状校验
   // ——pawnId 必须存在（服务端无 selected 镜像，命令只允许指挥存在的 pawn，同 move）；
   // role/subordinates/tactic/hostileIndex 边界在此拦截，战术存在性由处理器把关（同 wear）。
   if (c.type === 'commander') {
@@ -110,7 +111,7 @@ export function validateCommand(sim: Sim, raw: unknown, guard: CmdGuardState, no
     return { ok: true };
   }
   if (c.type === 'tame' || c.type === 'release') {
-    // 驯兽守卫 DLC（beast-taming 包 2026-08-16）：hostileIndex 必须在场（下标越界拒）；
+    // 驯兽守卫 DLC（beast-taming 包 2026-08-20）：hostileIndex 必须在场（下标越界拒）；
     // tame 的 pawnId 存在性校验（缺省最近活人由包处理器决定）
     const a = (c.args ?? {}) as Record<string, unknown>;
     const hi = a.hostileIndex;

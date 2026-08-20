@@ -99,9 +99,16 @@ export function makeMinCtx(seed = 1, override?: Partial<MinCtx>): MinCtx {
     factionPriority: {},
     flow: {},
     selected: [],
+    currentBatch: undefined,
+    tickNeedsBatch: undefined,
+    registerNeed: undefined,
+    readCustomNeed: () => undefined,
+    setCustomNeed: () => {},
+    get iterPawns() { return _pawnList; },
     initialPawnCount: 2,
     // 引擎服务（2026-08-15 纯引擎）：能力让渡桩（单测里包不挂载 → 无提供者）+ 寻路桩
     provide: () => {},
+    getCap: () => null,
     getPath: (sx, sy, ex, ey) => { const p: { x: number; y: number }[] = []; let x = sx, y = sy; while (x !== ex || y !== ey) { if (x !== ex) x += ex > x ? 1 : -1; else y += ey > y ? 1 : -1; p.push({ x, y }); } return p; },
 
     // ---- 数据驱动查询 ----
@@ -127,6 +134,8 @@ export function makeMinCtx(seed = 1, override?: Partial<MinCtx>): MinCtx {
     readHealth: (eid) => _health.get(eid) ?? null,
     readSpeed: (eid) => ({ v: 1 }),
     setNeeds: (eid, n) => { _needs.set(eid, { ...n }); },
+    adjustNeedField: (eid: number, field: 'food' | 'rest' | 'mood' | 'san', delta: number) => { const n = _needs.get(eid); if (n) { (n as Record<string, number>)[field] = Math.max(0, Math.min(100, (n as Record<string, number>)[field] + delta)); } },
+    setNeedField: (eid: number, field: 'food' | 'rest' | 'mood' | 'san', value: number) => { const n = _needs.get(eid); if (n) { (n as Record<string, number>)[field] = Math.max(0, Math.min(100, value)); } },
     setHealth: (eid, h) => { _health.set(eid, { ...h }); },
     setPosition: (eid, p) => { _pawnPositions.set(eid, { ...p }); },
     moveTo: (eid, x, y) => { _pawnPositions.set(eid, { x, y }); },

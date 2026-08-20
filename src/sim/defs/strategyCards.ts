@@ -47,6 +47,7 @@ function num(v: number | { tuning: string; div?: number }, ctx: StrategyCtx): nu
   return (v.div ?? 1) > 1 ? n / (v.div ?? 1) : n;
 }
 
+// 策略卡条件求值（hasTech/hasBuilding/hasResource 等；神谕降旨前置判定）
 export function evalStrategyCondition(ctx: StrategyCtx, cond: StrategyCondition): boolean {
   const s = ctx.stockpile;
   switch (cond.kind) {

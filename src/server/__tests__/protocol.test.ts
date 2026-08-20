@@ -147,11 +147,11 @@ describe('server 网络层基础（P1）', () => {
   });
 });
 
-// ---- H1（2026-08-16 审计修复）：播放控制 = 引擎内建命令面 ----
+// ---- H1（2026-08-20 审计修复）：播放控制 = 引擎内建命令面 ----
 // 此前 main.ts/hud.ts 直改 sim.paused/speed：远程模式改的是本地壳字段，服务器权威
 // 不知情 → HUD 谎报暂停、时钟漂移。修复后唯一写入路径 = issueCommand（pause/speed
 // 与 move 同层硬编码分支），cmdValidate 白名单 + 形状校验，RemoteSim 经既有命令通道。
-describe('引擎内建播放控制命令面（H1，2026-08-16）', () => {
+describe('引擎内建播放控制命令面（H1，2026-08-20）', () => {
   it('本地 Sim：pause/speed 命令生效（值域内），非法值静默忽略', () => {
     const sim = new Sim({ seed: 9, pawnCount: 1 });
     sim.issueCommand({ type: 'pause', x: 0, y: 0 });
@@ -202,11 +202,11 @@ describe('引擎内建播放控制命令面（H1，2026-08-16）', () => {
   });
 });
 
-// ---- 审计 M2（2026-08-16）：applyDelta 不把增量形状灌进权威快照 ----
+// ---- 审计 M2（2026-08-20）：applyDelta 不把增量形状灌进权威快照 ----
 // 此前 this.snap = { ...this.snap, ...delta }：delta.pawns 是"逐 pawn 部分字段"增量，
 // spread 后 snap.pawns 被整体替换 → 其余 pawn 蒸发、条目字段残缺（半残快照潜伏误读）。
 // 修复后 = 逐 eid 字段合并（与 pawnCache 同源）+ 顶层字段单点赋值 + 对账仍为收敛点。
-describe('applyDelta 权威快照合并（审计 M2，2026-08-16）', () => {
+describe('applyDelta 权威快照合并（审计 M2，2026-08-20）', () => {
   function buildWelcome(_sim: Sim): WelcomeMsg {
     return {
       type: 'welcome', you: 1, seed: 42, tickHz: 20, dayLength: 120,
@@ -293,12 +293,12 @@ describe('applyDelta 权威快照合并（审计 M2，2026-08-16）', () => {
   });
 });
 
-// ---- 审计 L2/L3（2026-08-16）----
+// ---- 审计 L2/L3（2026-08-20）----
 // L2：RemoteWorld.canBuildAt 边界此前用 welcome 的 width/height 且拒绝负坐标——与 server
 //     （无限地图 ±MAX_TILE）不一致 → 客户端 UI 说不可建、server 实际接受。修复对齐 MAX_TILE。
 // L3：无 pawnList 的新 pawn 增量，this.pawns 此前按 pawnCache Map 插入序重建——与权威序
 //     （snap.pawns 顺序）漂移。修复 = 跟随 snap 权威序。
-describe('远程视图边界/权威序（审计 L2/L3，2026-08-16）', () => {
+describe('远程视图边界/权威序（审计 L2/L3，2026-08-20）', () => {
   function fresh(): { rs: RemoteSim; feedS: (s: SnapshotMsg) => void } {
     const rs = new RemoteSim('ws://127.0.0.1:1');
     const feed = (raw: string) => (rs as unknown as { onMessage(s: string): void }).onMessage(raw);

@@ -1,6 +1,6 @@
 // raidSystem 独立测试（2026-08-14 插件化纪律：系统只依赖 SimContext，可脱离完整 Sim 单独验证）
 // 覆盖：定时袭击（猫群刷出）/ 击杀掉落（食物私有化进个人口袋）/ 袭击间隔受叙事压力缩短
-// 2026-08-16 追加捕食者语义：独行 1 只 / 叼走（cause captured）+ 逃跑 / 得手消失 / 近身反击
+// 2026-08-20 追加捕食者语义：独行 1 只 / 叼走（cause captured）+ 逃跑 / 得手消失 / 近身反击
 import { describe, it, expect, beforeEach } from 'vitest';
 import { RaidSystem } from '../../systems/raidSystem';
 import { makeMinCtx } from '../helpers/minCtx';
@@ -110,7 +110,7 @@ describe('RaidSystem 独立测试（最小 ctx，无 Sim）', () => {
     expect(ctx._killed.includes(eid)).toBe(false); // 鼠没被叼（反击在先,猫先死）
   });
 
-  it('捕食者近身反击：自动减半、征召全伤（2026-08-16 战斗平衡——指挥有真实价值）', () => {
+  it('捕食者近身反击：自动减半、征召全伤（2026-08-20 战斗平衡——指挥有真实价值）', () => {
     const sys = new RaidSystem(ctx);
     const eid = ctx.spawnPawn(96, 96);
     const t = ctx.tuning.combat;
@@ -127,7 +127,7 @@ describe('RaidSystem 独立测试（最小 ctx，无 Sim）', () => {
     expect(ctx.hostiles[0]!.hp).toBeCloseTo(100 - t.pawnDmg * t.predatorReactionMul - t.pawnDmg, 5);
   });
 
-  // ---- 2026-08-16 猫冲刺技能回归 ----
+  // ---- 2026-08-20 猫冲刺技能回归 ----
 
   it('猫冲刺：dashCd 递减 → 归零时向目标瞬移 dash.range 格', () => {
     const ctx2 = makeMinCtx(60);

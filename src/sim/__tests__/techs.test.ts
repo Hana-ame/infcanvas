@@ -92,7 +92,7 @@ describe('科技碎片制（2026-08-14：碎片攒齐组成科技，也是抽卡
     expect(sim2.techFragments['shelter:cave']).toBe(1);
   });
 
-  // ---- 2026-08-16 审查修复回归：解锁时间随档（渐进权重读档不丢）----
+  // ---- 2026-08-20 审查修复回归：解锁时间随档（渐进权重读档不丢）----
   it('techUnlockedAt 随档往返：读档恢复精确解锁时刻，权重继续爬升', () => {
     const sim = new Sim({ seed: 57, pawnCount: 1 });
     sim.unlockTech('transport:raft'); // 时刻 0 解锁
@@ -113,7 +113,7 @@ describe('科技碎片制（2026-08-14：碎片攒齐组成科技，也是抽卡
     sim.unlockTech('water:well');
     sim.time = 50;
     const data = JSON.parse(JSON.stringify(sim.save())) as ReturnType<Sim['save']>;
-    delete data.techUnlockedAt; // 模拟 2026-08-16 修复前的存档
+    delete data.techUnlockedAt; // 模拟 2026-08-20 修复前的存档
     const sim2 = new Sim({ seed: 60, pawnCount: 1 });
     sim2.load(data);
     // 读档时刻（data.time=50）起算 → 权重从 0 开始爬（不恒 0）
@@ -126,10 +126,10 @@ describe('科技碎片制（2026-08-14：碎片攒齐组成科技，也是抽卡
   it('抽卡池发碎片：攒满才解锁、不给已解锁科技（7 科技 × 3 碎片全解锁）', () => {
     const sim = new Sim({ seed: 56, pawnCount: 1 });
     sim.mods.overrideTuning({ tech: { poolInterval: 1, poolChance: 1 } }); // 每 1s 必抽
-    for (let i = 0; i < 400; i++) sim.step(1); // 400 抽 ≫ 21 碎片
+    for (let i = 0; i < 1500; i++) sim.step(1); // 2026-08-20: 400→800（clothing-2 新增 5 科技 = 更多碎片需求）
     expect(sim.techs.size).toBe(TECH_ORDER.length); // 全部解锁
     // 每科技碎片恰好 3（攒满即解锁，解锁后池子不再抽它）
-    for (const id of TECH_ORDER) expect(sim.techFragments[id]).toBe(3);
+    for (const id of TECH_ORDER) expect(sim.techFragments[id]).toBe(sim.fragmentsNeeded(id)); // 2026-08-20: 不硬编码 3（clothing-2 有 4 碎片科技）
   });
 });
 

@@ -26,7 +26,7 @@ export const K_DRAFTED = 'drafted';
 // pawn.extra[K_ATTACK]：drafting 玩法包写（{ hostileIndex } 指定攻击目标）、raidSystem 结算读。
 // 跨包/跨层键入契约表；值 = 目标敌人下标（undefined = 无指定目标，走自动接战）。
 export const K_ATTACK = 'attackTarget';
-// ---- 战场指挥 DLC（2026-08-16 field-command 玩法包）----
+// ---- 战场指挥 DLC（2026-08-20 field-command 玩法包）----
 // pawn.extra[K_COMMANDER]：field-command 写（{ role: 'officer'|'general', subordinates: number[] }
 // 指挥官身份 + 编制树——general = 军团长（可含下级指挥官），officer = 队长（只辖兵）；
 // subordinates = 下属 eid 数组（兵或下级指挥官，树 = general→officer→兵 多层指挥）。
@@ -92,7 +92,7 @@ export const CONTRACTS: MetaContract[] = [
   },
   {
     // PawnState **顶层强类型字段**（非字符串键——编译期受保护，此登记不是拼错防线而是
-    // 跨界读写清单 + 值语义权威文档；2026-08-16 架构优化：此前跨 4 处/3 包读写却无登记，
+    // 跨界读写清单 + 值语义权威文档；2026-08-20 架构优化：此前跨 4 处/3 包读写却无登记，
     // 改字段时不知谁在读）。写方：cardSystem（内核 heal 卡 execHeal）、medicine（treat
     // 卡执行器）、sim（moveTo 命令移动清理）；读方：gatherSystem（healing 回血推进）、
     // medicine（疗伤推进 + 篝火被毁清理）、drafting（解除征召清工作态）、cardSystem
@@ -105,7 +105,7 @@ export const CONTRACTS: MetaContract[] = [
     check: () => true,
   },
   {
-    // 战场指挥 DLC（2026-08-16）：指挥官身份 + 编制树（extra 强转 JSON 对象，随档透传）。
+    // 战场指挥 DLC（2026-08-20）：指挥官身份 + 编制树（extra 强转 JSON 对象，随档透传）。
     // 写方 = field-command（册封/编队/级联解除）；读方 = field-command 自身（树遍历/死亡解除）、
     // HUD/协议回显（pawns.commander）、drafting（受命执行的树一致性）。跨包键 = K_COMMANDER。
     // 值语义：role = 'officer'（队长，只辖兵）| 'general'（军团长，可辖队长与兵）；
@@ -174,7 +174,7 @@ export const COMMAND_CONTRACTS: CommandContract[] = [
     // 契约登记 = 包在场则处理器必须已注册（防"面板在但命令没人接"静默失效）。
     check: (m) => !m.packIds.includes('oracle-guidance') || m.commandHandlers.has('strategy'),
   },
-  // ---- 战场指挥 DLC（2026-08-16 field-command 包，4 命令面）----
+  // ---- 战场指挥 DLC（2026-08-20 field-command 包，4 命令面）----
   {
     // 册封/编队：{ pawnId, role?: 'officer'|'general'|'none', subordinates?: number[] }
     // role 缺省自动推导（subordinates 含指挥官 → general，否则 officer）；'none' = 解编。
@@ -198,7 +198,7 @@ export const COMMAND_CONTRACTS: CommandContract[] = [
     writer: 'hud/客户端（指挥面板）', reader: 'field-command',
     check: (m) => !m.packIds.includes('field-command') || m.commandHandlers.has('dispatch'),
   },
-  // ---- L5 修复（2026-08-16 玩法包审计：此前只登记 wear/draft/attack/strategy，build/mine
+  // ---- L5 修复（2026-08-20 玩法包审计：此前只登记 wear/draft/attack/strategy，build/mine
   // 两个包命令漏登记——校验防线不一致；补登记，防"面板在但命令没人接"静默失效）----
   {
     type: 'build',
@@ -212,7 +212,7 @@ export const COMMAND_CONTRACTS: CommandContract[] = [
     writer: 'hud/客户端（挖掘按钮）', reader: 'gathering（采集玩法包）',
     check: (m) => !m.packIds.includes('gathering') || m.commandHandlers.has('mine'),
   },
-  // ---- 播放控制（引擎内建命令面，2026-08-16 审计 H1）----
+  // ---- 播放控制（引擎内建命令面，2026-08-20 审计 H1）----
   // pause/speed 与 move 同层（issueCommand 硬编码分支，不随玩法包装卸）；登记防
   // "客户端/服务器某端直改字段绕过命令面"回归——H1 修复后唯一写入路径 = issueCommand。
   {
@@ -227,7 +227,7 @@ export const COMMAND_CONTRACTS: CommandContract[] = [
     writer: 'hud/键盘/客户端', reader: 'sim（引擎内建）/server',
     check: () => true,
   },
-  // ---- 驯兽守卫 DLC（2026-08-16 beast-taming 包，2 命令面）----
+  // ---- 驯兽守卫 DLC（2026-08-20 beast-taming 包，2 命令面）----
   {
     type: 'tame',
     args: ['hostileIndex'], // hostileIndex = protocol hostiles 下标；pawnId 可选（缺省最近活人）
@@ -259,7 +259,7 @@ export const PROTOCOL_CONTRACTS: MetaContract[] = [
   // 破坏远程征召同步（与 worn 染色同理）。工作优先级 M1 已撤回 → 无此协议字段。
   { key: 'protocol.pawns.drafted', writer: 'server', reader: 'client（征召渲染/HUD）',
     type: 'boolean?（缺省 = 未征召）', check: () => true },
-  // 战场指挥 DLC（2026-08-16）：指挥官身份/战术回显下发（server 从 pawn.extra 序列化填充。
+  // 战场指挥 DLC（2026-08-20）：指挥官身份/战术回显下发（server 从 pawn.extra 序列化填充。
   // 值语义：commander = { role, subordinates } 编制树 JSON；tactic = 当前生效战术 id（active
   // 优先 underOrder——受命战术覆盖编排位）。变更 = 静默破坏远程指挥面板回显（与 worn 同理）。
   { key: 'protocol.pawns.commander / pawns.tactic', writer: 'server', reader: 'client（指挥面板/渲染）',

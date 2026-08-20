@@ -38,7 +38,7 @@ export interface SimViewPawn {
   // RW-1（2026-08-15）：征召（协议透传自 server pawn.extra）。缺省 = 未征召——
   // HUD 征召按钮据此渲染（本地与远程共用同一 SimViewPawn 契约）。工作优先级 M1 已撤回。
   drafted?: boolean;
-  // 战场指挥 DLC（field-command 包 2026-08-16）：编制树/生效战术回显（协议透传）。
+  // 战场指挥 DLC（field-command 包 2026-08-20）：编制树/生效战术回显（协议透传）。
   // 缺省 undefined = 非指挥官/无战术——HUD 指挥面板据此渲染（远程与本地同契约）。
   commander?: { role: 'officer' | 'general'; subordinates: number[] };
   tactic?: string;
@@ -152,7 +152,7 @@ export class RemoteWorld {
   defOf(id: string): BuildingDef | undefined { return this.defs[id]; }
 
   canBuildAt(x: number, y: number): boolean {
-    // 无限地图边界（2026-08-16 审计 L2）：此前用 this.width/height 判界并把负坐标全拒——
+    // 无限地图边界（2026-08-20 审计 L2）：此前用 this.width/height 判界并把负坐标全拒——
     // 与 server/sim 的 ±MAX_TILE 防御边界不一致（welcome 的 width/height 只是初始区块，
     // 不是世界边界）→ 客户端 ghost 说"不可建"而 server 实际接受，UI 与权威漂移。
     // 对齐 sim.world.inBounds 同款语义：|坐标| ≤ MAX_TILE 即"坐标可访问"。

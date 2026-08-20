@@ -98,13 +98,13 @@ export interface CombatTuning {
   catSpeed: number;  // 敌人表缺 speed 字段时的兜底（天敌=野猫）         // 敌人表缺 speed 字段时的兜底
   catLootItem: string;      // 敌人表缺 loot 字段时的兜底
   catLootAmount: number;
-  captureRange: number;     // 捕食者叼鼠判定距离（格）（2026-08-16 用户设计"叼起鼠鼠就跑"）
+  captureRange: number;     // 捕食者叼鼠判定距离（格）（2026-08-20 用户设计"叼起鼠鼠就跑"）
   captureFleeDist: number;  // 叼走后跑离营地中心该距离 = 得手消失（鼠损失不回场）
   pawnDmg: number;           // 小人近战每秒伤害
-  predatorReactionMul: number; // 捕食者近身反击倍率（2026-08-16 战斗平衡：自动近身反击
+  predatorReactionMul: number; // 捕食者近身反击倍率（2026-08-20 战斗平衡：自动近身反击
                                //   = pawnDmg × 该倍率，玩家征召鼠全伤——给指挥/驯化留介入
                                //   窗口；试玩反馈 0.5 仍让猫 60s 内被秒，最终调为 0.25）
-  skillGrowth: {             // 技能成长参数（2026-08-16 审计 L5：原 hardcode 在 growSkill，
+  skillGrowth: {             // 技能成长参数（2026-08-20 审计 L5：原 hardcode 在 growSkill，
                              //   mod 无法覆盖——数据驱动化；COC 语义 = 掷 d100 > 当前值才升）
     base: number;            //   技能起点（未练默认）
     cap: number;             //   技能上限
@@ -305,7 +305,7 @@ export interface EnvTuning {
 
 export interface PawnTuning {
   baseSpeed: number;       // 小人移动速度（格/秒）
-  decisionInterval: number; // 决策节流（2026-08-16：pawn 非每帧决策——每 N 秒才抽卡决定，间隔内保持上次意图；降 CPU）
+  decisionInterval: number; // 决策节流（2026-08-20：pawn 非每帧决策——每 N 秒才抽卡决定，间隔内保持上次意图；降 CPU）
   climb: number;           // 通过能力：可攀爬的地形高差上限（|Δz| ≤ climb 可通行；用户 2026-08-14 设计）
   hpBase: number;          // 血量基础值（+ (con+siz)/2）
   scanRadius: number;      // 目标搜索半径（找树/矿/建筑等，近距快扫）
@@ -321,7 +321,7 @@ export interface PawnTuning {
   maxSlotsRand: number;    // 卡槽随机增量（0..N）
   moodSpeedBase: number;   // 移动速度心情系数 = base + mood/100 × scale
   moodSpeedScale: number;
-  crowdingPenalty: number; // 拥挤惩罚（2026-08-16 用户反馈"鼠鼠挤同一路径"）：周围 ±1 格每多一只
+  crowdingPenalty: number; // 拥挤惩罚（2026-08-20 用户反馈"鼠鼠挤同一路径"）：周围 ±1 格每多一只
                            // 鼠 → 移速 ×(1-penalty)，floor 见下——多鼠同目标自然减速成队列（涌现式避让）
   crowdingFloor: number;   // 拥挤速度系数下限（不许挤死，0.5 = 半速）
   crowdStopGap: number;    // 目标格被占时停在格前的距离（排队：不叠格，等占位者离开再补位）
@@ -371,6 +371,10 @@ export interface PathTuning {
   waypointRadius: number; // 锚点中转范围上限（起点/终点距锚点超此值不中转）
   darkCost: number;  // 未照亮格代价倍率（倾向走篝火照明路）
   heuristic: HeuristicId; // 启发式策略（chebyshev 对角/ manhattan / euclidean）
+  // 2026-08-20 z 轴优化：上下坡代价差异化（原 z 差只做通断判定，无代价差异）
+  uphillCost: number;     // 上坡额外代价倍率（Δz > 0 时 moveCost × 此值；1.0 = 无差异，2.0 = 上坡翻倍）
+  downhillDiscount: number; // 下坡折扣倍率（Δz < 0 时 moveCost × 此值；1.0 = 无折扣，0.5 = 下坡半价）
+  zCacheRange: number;     // z 缓存范围（A* 搜索区域内预缓存 z 值到 Int8Array，超范围回退 getTileDef；0 = 不缓存）
 }
 
 export interface CardTuning {
@@ -556,13 +560,13 @@ export const TUNING: TuningConfig = {
   combat: {
     raidEnemy: 'cat',  // 天敌=野猫（2026-08-14 世界观修正）
     unitRaidEnemy: 'raider',
-    // 捕食者规则（2026-08-16 用户设计"叼起鼠鼠就跑"）：接触捕获距离 + 得手消失距离（跑离营地中心）
-    captureRange: 1.5, // 2026-08-16 战斗平衡：1.2→1.5（猫更易叼到鼠——突围威胁更强）
+    // 捕食者规则（2026-08-20 用户设计"叼起鼠鼠就跑"）：接触捕获距离 + 得手消失距离（跑离营地中心）
+    captureRange: 1.5, // 2026-08-20 战斗平衡：1.2→1.5（猫更易叼到鼠——突围威胁更强）
     captureFleeDist: 32,
     catSpeed: 3.5,
     catLootItem: 'ore',
     catLootAmount: 2,
-    pawnDmg: 5, // 2026-08-16 战斗平衡：8→5（鼠近战伤害下调——试玩反馈"鼠太强"）
+    pawnDmg: 5, // 2026-08-20 战斗平衡：8→5（鼠近战伤害下调——试玩反馈"鼠太强"）
     predatorReactionMul: 0.25, // 捕食者自动近身反击 ×0.25（玩家征召全伤——给指挥/驯化充足窗口；试玩反馈：0.5 仍让猫 60s 内被秒，驯化重伤窗口只剩 ~6s）
     skillGrowth: { base: 10, cap: 100, gainMin: 1, gainMax: 10 }, // COC 规则（原 growSkill 硬编码值）
     initialRaidDelay: 90, //（试玩后调整，待定稿：开局喘息）
@@ -571,7 +575,7 @@ export const TUNING: TuningConfig = {
     pressureScale: 3,
     raidCountBase: 2,
     raidCountPerPawn: 0.35,
-    meleeRange: 3, // 2026-08-16 战斗平衡：5→3（近身反击范围缩小——猫更容易突围逃出反击圈）
+    meleeRange: 3, // 2026-08-20 战斗平衡：5→3（近身反击范围缩小——猫更容易突围逃出反击圈）
     buildingDmg: 3,   // 建筑抗拆（试玩后调整，待定稿）：80HP ≈ 27s 拆——重玩发现 well 被 5 狼 3 秒拆 → 反复重建循环
     buildingRadius: 6,
     minDodge: 0.05,
@@ -702,7 +706,7 @@ export const TUNING: TuningConfig = {
   autobuild: {
     evaluateMin: 20,
     evaluateMax: 30,
-    maxPerEval: 2,
+    maxPerEval: 2, // 2026-08-20: 回到原始值（expansion plans 优先级提高解决挤出问题）
     campfireWood: 6,
     campfireWoodExtra: 10,
     pawnsPerCampfire: 4,
@@ -810,6 +814,9 @@ export const TUNING: TuningConfig = {
     waypointRadius: 60,     // 锚点中转范围上限
     darkCost: 3,            // 未照亮格代价倍率（倾向走篝火照明路）
     heuristic: 'chebyshev', // 启发式策略（chebyshev 对角/ manhattan / euclidean）
+    uphillCost: 1.5,        // 2026-08-20 z 轴：上坡 ×1.5 代价（爬高更慢）
+    downhillDiscount: 0.7,  // 2026-08-20 z 轴：下坡 ×0.7 代价（下坡更快）
+    zCacheRange: 0, // 2026-08-20: 64→0 禁用（Int8Array alloc 每次 findPathRaw = GC 压力 > 查询节省）         // 2026-08-20 z 轴：搜索区域 64 格内缓存 z 值（Int8Array，避免每邻居 getTileDef）
   },
   event: {
     interval: 45,

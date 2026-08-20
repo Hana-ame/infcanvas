@@ -11,6 +11,7 @@ import type { SimContext } from './context';
 import type { EventBus } from '../core/events';
 import { World } from '../core/world';
 
+// 派系单位系统：篝火记忆管理（谁在哪里建了什么 → 区域记忆 → 社交聊天素材）
 export class SocialUnitSystem implements GameSystem {
   id = 'socialUnit';
 
@@ -93,13 +94,17 @@ export class SocialUnitSystem implements GameSystem {
     if (!this.ctx.world.fireMemory.has(key)) {
       this.ctx.world.fireMemory.set(key, [{ time: this.ctx.time, text: '🏕 有人在这里建立了营地' }]);
     }
-    for (const eid of this.ctx.pawnList) this.assignPawn(eid);
+    for (const eid of this.ctx.iterPawns) this.assignPawn(eid);
   }
 
   private migrateTimer = 0;
   private reassignTimer = 0;
 
+  private _throttle = 0;
   update(dt: number): void {
+    this._throttle += dt;
+    if (this._throttle < 5) return; // 2026-08-20 节流：篝火记忆更新 5s 一次
+    this._throttle = 0;
     // 另起篝火（用户 B 方案：不舒适环境可另起）：低频检查
     this.migrateTimer -= dt;
     if (this.migrateTimer <= 0) {
@@ -112,7 +117,7 @@ export class SocialUnitSystem implements GameSystem {
     this.reassignTimer -= dt;
     if (this.reassignTimer <= 0) {
       this.reassignTimer = this.ctx.tuning.faction.reassignInterval;
-      for (const eid of this.ctx.pawnList) this.assignPawn(eid);
+      for (const eid of this.ctx.iterPawns) this.assignPawn(eid);
     }
   }
 
@@ -146,7 +151,7 @@ export class SocialUnitSystem implements GameSystem {
       const hurtCount = mem.filter((m) => m.text.includes('💥')).length;
       if (hurtCount < f.migrateRaidThreshold) continue;
       // 找离此篝火最近的一名成员（fireId === key）
-      const eid = this.ctx.pawnList.find((pe) => this.ctx.pawnStates.get(pe)?.fireId === key);
+      const eid = this.ctx.iterPawns.find((pe) => this.ctx.pawnStates.get(pe)?.fireId === key);
       if (eid === undefined) continue;
       const pos = this.ctx.pawnPositions.get(eid);
       if (!pos) continue;

@@ -8,6 +8,7 @@ export type AssetId =
   | 'pawn:mouse' | 'pawn:strong' | 'pawn:devout' | 'pawn:lazy' | 'pawn:workaholic' | 'pawn:owl'
   | 'hostile:cat' | 'hostile:generic';
 
+// SVG 资源加载器：从内存 data URL 加载 SVG 图标（避免 HTTP 请求）
 export class SvgAssets {
   private textures = new Map<string, any>();
 

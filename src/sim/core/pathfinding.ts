@@ -1,6 +1,6 @@
 // A* 寻路 —— 图块网格，P0 简单实现（无优化，后续可加 JPS/分块）
 // （迭代优化：open 表已从线性数组升为二叉堆 MinHeap、加篝火航点中转/迭代上限双档/段缓存，见下文）
-// 2026-08-16 架构优化：A* 内部 key/closed/cost 从字符串 `${x},${y}` 改为数字
+// 2026-08-20 架构优化：A* 内部 key/closed/cost 从字符串 `${x},${y}` 改为数字
 // `x * 65536 + y`（避免每节点 ×8 邻居 = 8 次字符串分配 + GC 压力，Map<number> 比
 // Map<string> 快约 2-3 倍）；reconstruct 后做路径简化（去直线冗余中间点，减缓存体积）。
 // 数据驱动：策略参数（迭代上限/暗区代价/启发式）进表（tuning.path），算法本体保留代码
@@ -22,6 +22,10 @@ export interface PathConfig {
   waypoints?: boolean;      // 显式开关（缺省自动：有锚点即启用）
   darkCost?: number;   // 未照亮格代价倍率
   heuristic?: HeuristicId;
+  // 2026-08-20 z 轴优化：上下坡代价差异化 + z 缓存
+  uphillCost?: number;        // 上坡代价倍率（Δz > 0 时 × 此值）
+  downhillDiscount?: number;  // 下坡折扣倍率（Δz < 0 时 × 此值）
+  zCacheRange?: number;       // z 缓存范围（Int8Array 预读，0 = 不缓存）
 }
 
 // 航点段缓存回调（sim 侧提供：锚点对路径缓存复用 trailCache）
@@ -97,12 +101,14 @@ class MinHeap {
 }
 
 // 锚点收集：tags 含 anchor 的建筑（篝火/教堂），按距起点距离排序取 cap 个
-// 锚点缓存（2026-08-16 性能优化：原每次 findPath 遍历全建筑表 filter+map+sort+slice，
+// 锚点缓存（2026-08-20 性能优化：原每次 findPath 遍历全建筑表 filter+map+sort+slice，
 // 40 pawn × 多次寻路 = 大量重复。锚点在建筑存活期间不变 → 按 buildingVersion 缓存）
 // 注意：必须按 World 实例缓存（WeakMap），不能用模块级单例——多个 Sim/World 的
 // buildingVersion 可能相同但建筑集合不同，全局缓存会串世界（测试/多开污染）。
 const _anchorCacheByWorld = new WeakMap<World, { version: number; anchors: { x: number; y: number }[] }>();
 
+// 收集航点锚点（篝火/教堂/灯塔等 anchor tag 建筑）；缓存 by buildingVersion
+// 背景：原每次 findPath 全表扫 buildings → 改按 version 缓存
 function collectAnchors(world: World, sx: number, sy: number, cfg: PathConfig | undefined): { x: number; y: number }[] {
   // 版本检查：buildingVersion 变了才重建缓存
   let entry = _anchorCacheByWorld.get(world);
@@ -123,6 +129,7 @@ function collectAnchors(world: World, sx: number, sy: number, cfg: PathConfig | 
     .map(({ x, y }) => ({ x, y }));
 }
 
+// 找最近的锚点（起点/终点中转用；超 waypointRadius 不参与中转）
 function nearestAnchor(anchors: { x: number; y: number }[], x: number, y: number, radius: number): { x: number; y: number } | null {
   let best: { x: number; y: number } | null = null;
   let bestD = radius * radius;
@@ -139,14 +146,14 @@ function nearestAnchor(anchors: { x: number; y: number }[], x: number, y: number
 //  - 迭代上限：无篝火 → maxIter（防爆）；有篝火 → waypointMaxIter（放宽）
 //  - 任一段失败 → 回退直连（放宽 1.5 倍上限）
 export function findPath(world: World, startX: number, startY: number, endX: number, endY: number, cfg?: PathConfig, wpCache?: WaypointCache, climb = Infinity): { x: number; y: number }[] {
-  // 短距离优化（2026-08-16）：起终点 < 32 格直连 A*，不走航点中转——短距离 A*
+  // 短距离优化（2026-08-20）：起终点 < 32 格直连 A*，不走航点中转——短距离 A*
   // 搜索范围小（64×64 内），航点查找/段缓存/合并开销 > 收益。maxIter 钳到 2000 防爆。
   const distSq = (startX - endX) * (startX - endX) + (startY - endY) * (startY - endY);
   if (distSq <= 32 * 32) {
     const shortMax = Math.min(cfg?.maxIter ?? 2000, 2000);
     return findPathRaw(world, startX, startY, endX, endY, shortMax, cfg, climb);
   }
-  // 远距离分段寻路（2026-08-16 HPA* 简化版：无限世界支持）：
+  // 远距离分段寻路（2026-08-20 HPA* 简化版：无限世界支持）：
   // A* 在远距离（跨多 chunk）maxIter 不够绕行 → 返回空。改为沿直线方向分段：
   // 每 56 格（< chunk 64 宽）做一次短距离 A*（maxIter 8000 够搜），拼接所有段。
   // 某段失败 → 该段回退直线（目标格直接放路径，walk 推进时遇障停下 → 下次决策重试）。
@@ -193,11 +200,44 @@ export function findPath(world: World, startX: number, startY: number, endX: num
   return findPathRaw(world, startX, startY, endX, endY, explicitMax !== undefined ? explicitMax : Math.max(wpMaxIter, Math.floor(baseMaxIter * 1.5)), cfg, climb);
 }
 
+// A* 核心实现：二叉堆 open + closed/cost 数字 key + z 轴高差判定 + 暗区代价 + 篝火光照倾向
+// 终点不可走→nearestPassable 就近找；maxIter 防爆；返回简化路径（去共线冗余点）
 function findPathRaw(world: World, startX: number, startY: number, endX: number, endY: number, maxIter: number, cfg?: PathConfig, climb = Infinity): { x: number; y: number }[] {
   const darkCost = cfg?.darkCost ?? 3;
+  // 2026-08-20 z 轴优化：上下坡代价差异化（原 z 差只做通断判定，爬上 z=2 和走平地代价相同）
+  const uphillMul = cfg?.uphillCost ?? 1.5;        // 上坡额外代价倍率
+  const downhillMul = cfg?.downhillDiscount ?? 0.7; // 下坡折扣倍率
+  const zCacheRange = cfg?.zCacheRange ?? 0;        // z 缓存范围（0 = 不缓存）
   const h = HEURISTICS[cfg?.heuristic ?? 'chebyshev'];
   if (!world.inBounds(endX, endY)) return [];
-  const zOf = (x: number, y: number) => world.getTileDef(x, y).z ?? 0;
+
+  // 2026-08-20 z 轴优化：z 值缓存——搜索区域内预读 z 到 Int8Array，
+  // 避免每邻居展开都调 world.getTileDef (Map lookup)。范围外回退 getTileDef。
+  // 缓存区域 = 以起点为中心的 zCacheRange×zCacheRange 正方形
+  let zCache: Int8Array | null = null;
+  let zCacheOX = 0, zCacheOY = 0, zCacheSize = 0;
+  if (zCacheRange > 0) {
+    zCacheSize = zCacheRange * 2 + 1;
+    zCacheOX = startX - zCacheRange;
+    zCacheOY = startY - zCacheRange;
+    zCache = new Int8Array(zCacheSize * zCacheSize);
+    for (let dy = 0; dy < zCacheSize; dy++) {
+      for (let dx = 0; dx < zCacheSize; dx++) {
+        const wx = zCacheOX + dx, wy = zCacheOY + dy;
+        zCache[dy * zCacheSize + dx] = world.inBounds(wx, wy) ? (world.getTileDef(wx, wy).z ?? 0) : 0;
+      }
+    }
+  }
+  // zOf: 优先从缓存读（O(1) 数组索引），缓存外回退 getTileDef
+  const zOf = (x: number, y: number): number => {
+    if (zCache) {
+      const dx = x - zCacheOX, dy = y - zCacheOY;
+      if (dx >= 0 && dx < zCacheSize && dy >= 0 && dy < zCacheSize) {
+        return zCache[dy * zCacheSize + dx];
+      }
+    }
+    return world.getTileDef(x, y).z ?? 0;
+  };
   // 终点不可走（如站在建筑上），找最近可走格；z 感知（高差地图）：
   // 终点与起点 z 差 > climb（石丘顶上的目标）→ 目标落到起点可达的格，避免 A* 满跑失败
   const sZ = zOf(startX, startY);
@@ -209,7 +249,7 @@ function findPathRaw(world: World, startX: number, startY: number, endX: number,
   start.f = start.g + start.h;
   open.push(start);
 
-  // 数字 key（2026-08-16 架构优化）：避免每节点 8 次字符串分配 + GC；x,y < 2^16 → key = x*65536+y
+  // 数字 key（2026-08-20 架构优化）：避免每节点 8 次字符串分配 + GC；x,y < 2^16 → key = x*65536+y
   const key = (x: number, y: number) => x * 65536 + y;
   const cost = new Map<number, number>();
   cost.set(key(startX, startY), 0);
@@ -276,7 +316,14 @@ function findPathRaw(world: World, startX: number, startY: number, endX: number,
       const tileCost = world.getTileDef(nx, ny).moveCost ?? 1;
       // 黑暗区高代价权重：尽量走篝火照亮的路
       const lightCost = world.isLit(nx, ny) ? 1 : darkCost;
-      const g = current.g + moveCost * tileCost * lightCost;
+      // 2026-08-20 z 轴优化：上下坡代价差异化
+      // Δz > 0（上坡）→ moveCost × uphillMul（爬高更慢）
+      // Δz < 0（下坡）→ moveCost × downhillMul（下坡更快）
+      // Δz = 0（平地）→ 无额外代价
+      const nZ = zOf(nx, ny);
+      const dz = nZ - curZ;
+      const zMul = dz > 0 ? uphillMul : dz < 0 ? downhillMul : 1;
+      const g = current.g + moveCost * tileCost * lightCost * zMul;
 
       const existing = cost.get(key(nx, ny));
       if (existing !== undefined && existing <= g) continue;
@@ -308,6 +355,7 @@ function collectTunnelEntries(world: World): { x: number; y: number }[] {
   return out;
 }
 
+// 路径重建（从终点 Node 沿 parent 链回溯到起点 → 路径数组）
 function reconstruct(node: Node): { x: number; y: number }[] {
   const path: { x: number; y: number }[] = [];
   let cur: Node | null = node;
@@ -318,7 +366,7 @@ function reconstruct(node: Node): { x: number; y: number }[] {
   return path;
 }
 
-// 路径简化（2026-08-16 架构优化）：去直线冗余中间点——三点共线时删中间点。
+// 路径简化（2026-08-20 架构优化）：去直线冗余中间点——三点共线时删中间点。
 // 减缓存体积（value 数组更短 → Map 更小）+ 减少 walk 每帧 pathIndex 遍历量。
 function simplifyPath(path: { x: number; y: number }[]): { x: number; y: number }[] {
   if (path.length <= 2) return path;
@@ -351,7 +399,7 @@ function nearestPassable(world: World, x: number, y: number, fromZ: number, clim
   return null;
 }
 
-// 分段寻路（2026-08-16 HPA* 简化版：无限世界远距离支持）
+// 分段寻路（2026-08-20 HPA* 简化版：无限世界远距离支持）
 // 背景：A* 在远距离（>128 格跨多 chunk）下 maxIter 不够绕行大片水/山 → 返回空。
 // 方案：沿起→终直线方向，每隔 56 格（< chunk 64 宽）设一个中间点，每段做短距离
 // A*（maxIter 8000 够搜 56×56 = 3136 格），拼接所有段。某段失败 → 该段回退直线

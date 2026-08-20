@@ -190,6 +190,7 @@ export const TRAIT_CARDS: Record<string, BehaviorCard> = Object.fromEntries(
   allTraits().filter((id) => TRAITS[id]?.card).map((id) => [id, traitCardOf(TRAITS[id]!)]),
 );
 
+// 特质 → 行为卡转换（懒惰→闲逛卡 / 机灵→探索卡；特质影响抽卡池）
 function traitCardOf(t: TraitDef): BehaviorCard {
   return cardFromDef({ ...t.card!, id: t.card!.id, name: t.card!.name, series: t.card!.series, weight: t.card!.weight });
 }
@@ -340,6 +341,7 @@ export function drawCards(pawn: PawnLike, rng: SimRng, n: number, ctx: CardConte
   return drawn;
 }
 
+// 有效权重计算（base weight × markov bias × desire 映射；决策抽卡池的随机概率依据）
 export function effectiveWeight(card: BehaviorCard, pawn: PawnLike, ctx?: CardContext): number {
   // 权重合成流水线（数据驱动）：规则表（defs/weightRules.ts）按序调制，mod 可插入/替换
   let w = card.weight;

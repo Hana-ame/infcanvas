@@ -6,6 +6,7 @@ import type { SimContext } from './context';
 import type { EventBus } from '../core/events';
 import { World } from '../core/world';
 
+// 统计某类建筑数量（AI 建造规划用：避免重复建同类）
 const countBuilding = (ctx: SimContext, defId: string): number => {
   let n = 0;
   for (const [, b] of ctx.world.buildings) {
@@ -56,6 +57,7 @@ const buildBasePlans = (ctx: SimContext): ExpansionPlan[] => {
   ];
 };
 
+// 自动建造系统：AI 规划蓝图（按需求/科技/资源优先级选建筑类型 → 排队等建造）
 export class AutonomousBuildSystem implements GameSystem {
   id = 'autobuild';
   private timer = 0;
@@ -65,6 +67,7 @@ export class AutonomousBuildSystem implements GameSystem {
   init(_bus: EventBus): void {}
 
   update(dt: number): void {
+    // 2026-08-20: 不节流（autobuild 需要及时响应——campfire → church 升级有时序依赖）
     this.timer -= dt;
     if (this.timer > 0) return;
     const t = this.ctx.tuning.autobuild;
@@ -74,12 +77,12 @@ export class AutonomousBuildSystem implements GameSystem {
 
   private evaluate(maxPerEval: number): void {
     const w = this.ctx.world;
-    // 营地锚点 = 现存篝火/教堂的 barycenter（2026-08-16 用户⑬"AI 自动扩展领地"：
+    // 营地锚点 = 现存篝火/教堂的 barycenter（2026-08-20 用户⑬"AI 自动扩展领地"：
     // 此前固定以地图中心为圆心 —— 营地拓荒/多营地后 AI 仍绕着出生点扩建。
     // 以营地为中心向外环形找位 = 领地随营地迁移/茁壮向外扩）。无营地 → 出生点（地图中心）兜底。
     const camp = this.settlementCenter();
     // 内置计划 + mod 注册计划（mod 优先，可覆盖/追加）
-    const plans = [...buildBasePlans(this.ctx), ...this.ctx.mods.expansionPlans];
+    const plans = [...this.ctx.mods.expansionPlans, ...buildBasePlans(this.ctx)]; // 2026-08-20: expansion plans 先评估（用户自定义优先于 AI 基础规划）
     let pushed = 0;
     for (const plan of plans) {
       if (pushed >= maxPerEval) break; // 每次评估最多规划 N 个，防资源失控

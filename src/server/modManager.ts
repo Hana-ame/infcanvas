@@ -14,7 +14,7 @@ export interface ModLoadResult {
   errors: string[];     // 失败明细（ok=false 时原因）
 }
 
-// 跨文件依赖挂载（2026-08-16 修复）：manifest.requires.mods 声明依赖，按拓扑序喂入注册表
+// 跨文件依赖挂载（2026-08-20 修复）：manifest.requires.mods 声明依赖，按拓扑序喂入注册表
 // ——与 in-code ModPack 的 requires/topoSort DAG 对齐（此前按文件名序独立挂载，依赖方
 // 可能先于被依赖方挂载 → DLC 引用缺失 def 静默失败/半挂载）。缺失依赖 = 报错跳过该包
 // （不半挂载——defs 引用悬空的包比不加载更危险）。环依赖按"依赖未就绪即跳过"处理，

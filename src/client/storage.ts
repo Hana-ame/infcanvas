@@ -5,6 +5,7 @@ const KEY = 'autosave';
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
+// 打开 IndexedDB（存档持久化；浏览器端本地存储）
 function openDb(): Promise<IDBDatabase> {
   if (dbPromise) return dbPromise;
   dbPromise = new Promise((resolve, reject) => {

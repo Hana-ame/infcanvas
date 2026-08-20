@@ -15,6 +15,7 @@ import type { SimContext } from './context';
 import type { EventBus } from '../core/events';
 import { TECH_ORDER } from '../defs/techs';
 
+// 科技池系统：按间隔发科技碎片 → 攒齐解锁科技 → BuildingDef.tech 门控建造
 export class TechPoolSystem implements GameSystem {
   id = 'techPool';
   private acc = 0;
@@ -24,6 +25,8 @@ export class TechPoolSystem implements GameSystem {
   init(_bus: EventBus): void {}
 
   update(dt: number): void {
+    // 2026-08-20 节流：系统自带 acc 累加器 + poolInterval 检查 = 天然节流
+    // 无需额外 _throttle（acc < poolInterval 即 return）
     const t = this.ctx.tuning.tech;
     this.acc += dt;
     if (this.acc < t.poolInterval) return;

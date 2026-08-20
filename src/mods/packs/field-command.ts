@@ -1,4 +1,4 @@
-// 战场指挥 DLC（field-command 玩法包，2026-08-16）
+// 战场指挥 DLC（field-command 玩法包，2026-08-20）
 // 目标（用户需求）：通过**训练编排战术动作**培养小队 → **控制指挥官**下发战术 →
 // **小队作战** → **多层指挥**（军团长 → 队长 → 兵）实现**大兵团作战**。
 // 与 drafting（单个征召战斗）的关系：drafting = 玩家逐人指挥；本包 = 指挥官批量指挥
@@ -82,11 +82,13 @@ const CFG = {
 // tacticsOf() 每次都从 extra 重建对象（读面快照——防外部持有的旧引用污染存档）；
 // 因此**写回必须经 extra 原对象**，禁止改读面副本（dispatchTree/clearTree 曾踩此坑：
 // 对副本赋 underOrder/learned 不落盘 → 命令表面成功、状态纹丝不动）。
+// 读取/创建 pawn.extra[K_TACTICS]（战术状态对象）；不存在返回 null
 function mutateTactics(st: { extra?: Record<string, unknown> }): TacticsShape | null {
   const real = st.extra?.[K_TACTICS] as TacticsShape | undefined;
   if (!real) return null;
   return real;
 }
+// 确保 extra[K_TACTICS] 存在（不存在则创建），返回战术状态对象
 function ensureTacticsExtra(st: PawnState): TacticsShape {
   const real = st.extra?.[K_TACTICS] as TacticsShape | undefined;
   if (real) return real;
@@ -96,6 +98,7 @@ function ensureTacticsExtra(st: PawnState): TacticsShape {
   return t;
 }
 // 清单个小人的战术命令（受命态保留与否由调用方决定）
+// 清除单个小人的 underOrder（收兵 = 解除战术命令，恢复自主决策）
 function clearOrderIn(st: { extra?: Record<string, unknown> }): void {
   const real = mutateTactics(st);
   if (real) real.underOrder = null;
@@ -110,6 +113,7 @@ export interface TacticsShape {
   underOrder: OrderShape | null;
 }
 
+// 读取指挥官状态（role + subordinates）；非指挥官返回 null
 export function commanderOf(st: { extra?: Record<string, unknown> } | undefined): CommanderShape | null {
   const c = st?.extra?.[K_COMMANDER];
   if (!c || typeof c !== 'object' || Array.isArray(c)) return null;
@@ -118,6 +122,7 @@ export function commanderOf(st: { extra?: Record<string, unknown> } | undefined)
   return { role: o.role, subordinates: o.subordinates.filter((v) => typeof v === 'number') };
 }
 
+// 读取战术状态（active 编排位 + underOrder 生效命令）；无战术返回 null
 export function tacticsOf(st: { extra?: Record<string, unknown> } | undefined): TacticsShape | null {
   const t = st?.extra?.[K_TACTICS];
   if (!t || typeof t !== 'object' || Array.isArray(t)) return null;
@@ -146,9 +151,11 @@ export function tacticOf(st: { extra?: Record<string, unknown> } | undefined): s
 // ---- 训练冷却表（WeakMap<SimContext>：命令处理器与系统实例共享同一冷却；
 // SimContext = Sim 实现接口，同一 Sim 的 ctx 是同一对象——oracle 冷却先例）----
 const trainCd = new WeakMap<SimContext, Map<number, number>>();
+// 读取上次训练时间戳（训练冷却 15s——训练是培养仪式，不能频繁刷）
 function lastTrainOf(ctx: SimContext, eid: number): number {
   return trainCd.get(ctx)?.get(eid) ?? 0;
 }
+// 写入训练时间戳（train 命令调用）
 function stampTrain(ctx: SimContext, eid: number, t: number): void {
   let m = trainCd.get(ctx);
   if (!m) { m = new Map(); trainCd.set(ctx, m); }
@@ -161,6 +168,8 @@ function stampTrain(ctx: SimContext, eid: number, t: number): void {
 // 用途：指挥官死亡/解编/收兵（dispatch 'none'）——命令源没了 = 小队恢复自主。
 // 死指挥官树快照：killPawn 同步删除 pawnStates（含 extra 编制表）——死亡级联只能
 // 读 FieldCommandSystem 上帧缓存（见 refreshTree）。rootSubs 缺省 = 回读活人 extra。
+// 指挥官死亡 -> 级联解除整棵指挥树（递归清除所有下属的 underOrder + 征召）
+// 背景：killPawn 同步删 extra，死后编制表读不到 -> 需用上帧树快照递归
 function clearTree(ctx: SimContext, eid: number, log?: string | null, rootSubs?: number[]): void {
   if (log) ctx.logEvent(log);
   const stack: number[] = [eid];
@@ -185,6 +194,8 @@ function clearTree(ctx: SimContext, eid: number, log?: string | null, rootSubs?:
 // 级联下发战术：从指挥官 eid 起递归遍历编制树（含自己——指挥官自身也执行战术），
 // 全员设置 underOrder + 征召（受命 = 听指挥）。target = 集火目标的 hostileIndex（其余战术无）。
 // 返回受命人数（日志/测试用）。防环 visited（玩家手编的树形状可能有环）。
+// 战术下达：递归遍历指挥树设置 underOrder.tactic + 征召（'none' = 收兵全解除）
+// 返回受命人数
 function dispatchTree(ctx: SimContext, eid: number, tactic: string, target: number | undefined): number {
   let count = 0;
   const stack: number[] = [eid];
@@ -219,7 +230,8 @@ export class FieldCommandSystem implements GameSystem {
 
   init(): void {}
 
-  update(_dt: number): void {
+  update(dt: number): void {
+    // 不节流（战斗系统需每帧精度）：战术执行 1s 评估一次
     this.refreshTree();
     this.driveTactics();
   }

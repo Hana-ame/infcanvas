@@ -43,7 +43,7 @@ function findWalkable(sim: Sim, nearX: number, nearY: number): { x: number; y: n
 }
 
 // 塞一只静止的站桩敌人（speed 0 + target 自身 = 不推进；dmg 低防测试期间打死小人）。
-// 2026-08-16 cat 改捕食者（接触即叼走、极难作站桩靶）→ 契约测试改用 raider 站桩验证
+// 2026-08-20 cat 改捕食者（接触即叼走、极难作站桩靶）→ 契约测试改用 raider 站桩验证
 // 征召攻击优先权；捕食者实哨行为见 raidSystem 单测
 function addCat(sim: Sim, x: number, y: number, hp = 200, dmg = 0.5): void {
   sim.hostiles.push({
@@ -183,6 +183,7 @@ describe('drafting 玩法包（征召战斗，RW-1 M2）', () => {
     const eid = sim.pawns[0];
     const snap1 = buildSnapshotLike(sim);
     setDrafted(sim.pawnStates.get(eid)!, true);
+    (sim as unknown as { _profileCache: Map<number, unknown> })._profileCache.clear();
     const snap2 = buildSnapshotLike(sim);
     const delta = buildDelta(snap1, snap2)!;
     const pd = delta.pawns!.find((p) => p.eid === eid)!;
@@ -190,6 +191,7 @@ describe('drafting 玩法包（征召战斗，RW-1 M2）', () => {
     expect((snap2.pawns.find((p) => p.eid === eid) as { drafted?: boolean }).drafted).toBe(true);
     // 解除 → delta 再发 drafted:false（归一回 undefined 与未征召区分：diff 端归一）
     setDrafted(sim.pawnStates.get(eid)!, false);
+    (sim as unknown as { _profileCache: Map<number, unknown> })._profileCache.clear();
     const snap3 = buildSnapshotLike(sim);
     const delta2 = buildDelta(snap2, snap3)!;
     const pd2 = delta2.pawns!.find((p) => p.eid === eid)!;
@@ -212,7 +214,7 @@ describe('drafting 玩法包（征召战斗，RW-1 M2）', () => {
     expect(v({ type: 'attack', x: 0, y: 0, pawnId: eid, args: { hostileIndex: -1 } })).toBe(false);     // 负下标
   });
 
-  // ---- 2026-08-16 审查修复回归：追击永冻 / 下标错位（此前命令冷却在征召期间永不衰减，
+  // ---- 2026-08-20 审查修复回归：追击永冻 / 下标错位（此前命令冷却在征召期间永不衰减，
   // 追击 moveTo 又自锁冷却 → 追击只发生一次；resolveTarget 只改局部对象不写回 → 找回下标
   // 永不落盘，splice 后追错目标）----
 

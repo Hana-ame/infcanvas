@@ -18,6 +18,7 @@ export interface EconomyCap {
   recordSpend(eid: number | null, item: string, amount: number): void;
 }
 
+// 经济系统：派系优先级评估（行为决策前执行，当帧生效）；个人经济预期（赚/花心理账本）
 export class EconomySystem implements GameSystem {
   id = 'economy';
   private prioTimer = 0;

@@ -6,7 +6,8 @@ import type { ChunkData } from '../sim/core/world';
 // ---- C → S ----
 export interface CmdMsg { type: 'cmd'; cmd: Command }
 export interface HelloMsg { type: 'hello'; name?: string }
-export type ClientMsg = HelloMsg | CmdMsg;
+export interface SetViewportMsg { type: 'set_viewport'; cx: number; cy: number; range: number }
+export type ClientMsg = HelloMsg | CmdMsg | SetViewportMsg;
 
 // ---- S → C ----
 // welcome：建立连接时发一次世界底（chunk 全量 tile + defs 只读表）
@@ -58,7 +59,7 @@ export interface SnapshotMsg {
     worn?: string; // 穿着衣物物品 id（clothing 玩法包 2026-08-15：客户端染色 tint 用；
     //   空串 "" = 无穿着——2026-08-15 审计：undefined 会被 JSON.stringify 丢弃，delta 无法表达"脱下"）
     drafted?: boolean; // RW-1 征召（drafting 包）：true = 征召中（不自主决策）。缺省 = 未征召
-    // 战场指挥 DLC（field-command 包 2026-08-16）：编制树/生效战术回显（server 从
+    // 战场指挥 DLC（field-command 包 2026-08-20）：编制树/生效战术回显（server 从
     // pawn.extra 序列化）。commander 缺省 undefined = 非指挥官；tactic 缺省 undefined = 无战术
     commander?: { role: 'officer' | 'general'; subordinates: number[] };
     tactic?: string;
@@ -124,7 +125,7 @@ export interface EventMsg {
   }[];
 }
 
-// 心跳（2026-08-16 审计 M1）：服务器 2s 一发，唯一职责 = 让客户端看门狗在静默期
+// 心跳（2026-08-20 审计 M1）：服务器 2s 一发，唯一职责 = 让客户端看门狗在静默期
 //（暂停/无事件/无增量）仍能区分"连接活着"与"连接断了"。不带业务字段（t = 权威时间，
 // 客户端 t 锚定顺带刷新——暂停时 t 不变，锚定无损）。
 export interface PingMsg { type: 'ping'; t: number }

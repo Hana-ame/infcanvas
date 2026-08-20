@@ -3,10 +3,14 @@
 import type { GameSystem } from './registry';
 import type { SimContext } from './context';
 import { World } from '../core/world';
+import { buildTagIndex, findNearestTagged } from './building-cache';
 import { K_DRAFTED } from '../mods/contracts';
 
+// 修缮系统：搜索受损建筑 → 派空闲小人过去修 → 修理进度推进 → hp 恢复
 export class RepairSystem implements GameSystem {
   id = 'repair';
+  private _bldVer = -1;
+  private tagIndex: Map<string, import('./building-cache').CachedBuilding[]> = new Map();
   // 记录每个正在修理的小人：{ eid, key, progress }
   private repairing = new Map<number, { x: number; y: number; progress: number }>();
 
@@ -29,8 +33,13 @@ export class RepairSystem implements GameSystem {
       }
     }
 
+    // 2026-08-20 节流：tagIndex 只在建筑变更时重建（version-check）
+    if (this._bldVer !== this.ctx.world.buildingVersion) {
+      this._bldVer = this.ctx.world.buildingVersion;
+      this.tagIndex = buildTagIndex(this.ctx);
+    }
     // 给空闲小人派修理活
-    for (const eid of this.ctx.pawnList) {
+    for (const eid of this.ctx.iterPawns) {
       if (this.repairing.has(eid)) continue;
       const st = this.ctx.pawnStates.get(eid);
       if (!st) continue;
@@ -38,7 +47,7 @@ export class RepairSystem implements GameSystem {
       if (st.path && st.path.length > 0) continue;
       if (st.mining || st.chopXY || st.praying) continue;
       if (st.urgent) continue;
-      // 征召/战斗指挥中的小人不受自动修理差遣（2026-08-16 修复：meleeRange 缩小后
+      // 征召/战斗指挥中的小人不受自动修理差遣（2026-08-20 修复：meleeRange 缩小后
       // 站桩敌会拆营地 → RepairSystem 把征召兵拉去修篝火，覆盖玩家战术命令））
       if (st.extra?.[K_DRAFTED] === true) continue;
       const pos = this.ctx.readPosition(eid);
@@ -57,15 +66,19 @@ export class RepairSystem implements GameSystem {
     }
   }
 
-  // 扫 radius 内最近的受损建筑（修理优先级 = 距离最近；chunk 分区查询）
+  // 扫 radius 内最近的受损建筑（2026-08-20 架构优化：用共享 building-cache）
   private findDamaged(pos: { x: number; y: number }, radius: number): { x: number; y: number } | null {
-    const w = this.ctx.world;
+    
+    // 遍历所有 tag 的建筑找受损的
     let best: { x: number; y: number } | null = null;
-    let bestD = Infinity;
-    for (const b of w.queryBuildingsNear(Math.round(pos.x), Math.round(pos.y), radius)) {
-      if (b.hp >= b.def.hp) continue;
-      // 新 key 编码（2026-08-14 无限地图）：World.keyToXY 解码（负坐标支持）
-      if (b.dist < bestD) { bestD = b.dist; best = World.keyToXY(b.key); }
+    let bestD = radius * radius;
+    for (const [, buildings] of this.tagIndex) {
+      for (const raw of buildings) {
+        const b = raw as { hp: number; maxHp: number; x: number; y: number };
+        if (b.hp >= b.maxHp) continue;
+        const d = (b.x - pos.x) ** 2 + (b.y - pos.y) ** 2;
+        if (d < bestD) { bestD = d; best = { x: b.x, y: b.y }; }
+      }
     }
     return best;
   }
