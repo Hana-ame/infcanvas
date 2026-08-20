@@ -70,16 +70,22 @@ class AiDirectorSystem {
 
 export const aiDirectorPack: ModPack = {
   id: 'ai-director',
-  // 不硬依赖任何 DLC——前置可选：只调度"在场注册了 AI 动作"的包。
-  requires: [],
+  // 前置可选：AI 动作由各能力包自注册（不在场 = 不调度）；但玩家让位检测依赖
+  // human-input 的玩家活跃能力 → 显式 require（架构审查 P2-5：消除隐式 getCap 依赖）。
+  // 不 require 任何玩法动作包——uninstall 某个 DLC = 它的 aiAction 不在场，AI 自动降级。
+  requires: ['human-input'],
   apply(m: ModRegistry): void {
     m.registerSystemDef({
       id: 'ai-director', label: 'AI 总监', category: 'boot',
+      // 恒表尾豁免（架构审查 P1-4）：bootstrap 的"恒表尾"约束语义 = 出生刷人晚于全体系统
+      // **init**；本包是 update 尾的全局观察者（刷人后看完整局面再指挥），在 bootstrap 后执行
+      // 不违背该语义。显示豁免：boot 组内 apply 序在本包（挂清单最后）→ 排 bootstrap 后。
       // apply 序在 bootstrap 后（本包挂清单最末）→ 刷人后看全局再指挥，命令下一 tick 生效
       ctor: (ctx) => {
         const sys = new AiDirectorSystem(ctx);
-        // 灌入全部已注册 AI 动作（能力包在 apply 里 m.registerAiAction，池在 registry）
+        // 灌入池中已有动作 + 设 sink（此后 registerAiAction 实时进系统——架构审查 P1-3）
         for (const a of m.aiActions) sys.registerAction(a);
+        m.setAiDirectorSink((a) => sys.registerAction(a));
         ctx.provide('aiDirector', {
           registerAction: (a: AiAction) => sys.registerAction(a),
         });

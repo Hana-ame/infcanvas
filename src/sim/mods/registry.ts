@@ -615,8 +615,15 @@ export class ModRegistry {
   // 需求的包"才被调度）。存池：ai-director 系统构造时一次性灌入 + 之后实时登记，
   // 与挂载顺序无关（ai-director 前置/后置 apply 都正确）。
   private _aiActions: AiAction[] = [];
+  private _aiDirectorSink: ((a: AiAction) => void) | null = null;
+  // 2026-08-20 AI 总监：实时注册（架构审查 P1-3）——ai-director 系统构造时 setAiDirectorSink
+  // 注入回调；此后 registerAiAction 直接进系统（运行中 mountPack 挂新 DLC 也即时生效），
+  // 未构造 → 入池待 ctor 灌入。registry 不查询 Sim.caps（能力表在 Sim，注册面在 registry）。
+  setAiDirectorSink(fn: (a: AiAction) => void): void { this._aiDirectorSink = fn; }
   registerAiAction(a: AiAction): this {
-    if (!this._aiActions.some((x) => x.id === a.id)) this._aiActions.push(a);
+    if (this._aiActions.some((x) => x.id === a.id)) return this;
+    this._aiActions.push(a);
+    this._aiDirectorSink?.(a);
     return this;
   }
   get aiActions(): readonly AiAction[] { return this._aiActions; }

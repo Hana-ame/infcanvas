@@ -560,7 +560,7 @@ export class Sim implements SimContext {
     return this.dayTime > this.tuning.env.nightStart || this.dayTime < this.tuning.env.nightEnd;
   }
 
-  moveTo(eid: number, x: number, y: number, opts?: { markCommand?: boolean }): void {
+  moveTo(eid: number, x: number, y: number, opts?: { markCommand?: boolean | 'player' | 'ai' }): void {
     const pos = this.readPosition(eid);
     if (!pos) return;
     // 寻路带单位通过能力（高差判定）：每个单位各自 climb
@@ -611,10 +611,15 @@ export class Sim implements SimContext {
       st.praying = undefined;
       st.healTarget = undefined;
       st.healing = undefined;
-      // 玩家命令优先：短暂时间内不自动决策。仅玩家命令（默认）标记；系统行为移动
-      //（征召追击/理智乱跑，markCommand=false）不标记——否则自锁：cooldown 永 3s，
-      // 征召门/崩溃门挡住衰减点 → 追击只发生一次（2026-08-20 审查确认的永冻缺陷）。
-      if (opts?.markCommand !== false) st.commandCooldown = this.tuning.card.commandCooldown;
+      // 玩家命令优先：短暂时间内不自动决策。markCommand 语义（2026-08-20 玩家输入插件化）：
+      //   true/'player' → 3s 冷却（玩家命令覆盖一切，现有行为）
+      //   'ai'         → 1s 短冷却（AI 命令挡 behavior 自主但给 pawn 留空间，防 AI 每 5s 锁 3s
+      //                  → 永远无法自主——架构审查 P0-2）；系统行为移动（征召追击/理智乱跑，
+      //                  markCommand=false）不标记——否则自锁：cooldown 永 3s，征召门/崩溃门
+      //                  挡住衰减点 → 追击只发生一次（2026-08-20 审查确认的永冻缺陷）。
+      const mc = opts?.markCommand;
+      if (mc === 'ai') st.commandCooldown = Math.min(this.tuning.card.commandCooldown, 1);
+      else if (mc !== false) st.commandCooldown = this.tuning.card.commandCooldown;
     }
   }
 
@@ -885,8 +890,10 @@ export class Sim implements SimContext {
     if (this.batchConfig.enabled) advanceBatch(this._pawnList, this.batchConfig); // 推进轮转
     this._profileCache.clear(); // 命令改变状态 → 清 profile 缓存
     if (cmd.type === 'move') {
+      // 2026-08-20 玩家输入插件化：来源贯通——player/ai 走不同冷却（见 moveTo markCommand）
+      const mc = cmd.source === 'ai' ? 'ai' : 'player';
       const eids = cmd.pawnId ? [cmd.pawnId] : this.selected;
-      for (const eid of eids) this.moveTo(eid, cmd.x, cmd.y);
+      for (const eid of eids) this.moveTo(eid, cmd.x, cmd.y, { markCommand: mc });
       return;
     }
     // 播放控制（引擎内建，2026-08-20 审计 H1 修复）：暂停/变速收口到命令面——

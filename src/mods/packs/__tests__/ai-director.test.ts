@@ -19,7 +19,7 @@ describe('AI 总监 + 玩家输入插件化', () => {
   });
 
   it('ai-director 系统装配 + zone AI 动作自动划工作区', () => {
-    const t = createDlcTest('zone', { pawnCount: 1, extraPacks: ['ai-director', 'human-input'] });
+    const t = createDlcTest('zone', { pawnCount: 1, extraPacks: ['human-input', 'ai-director'] });
     expect(t.sim.systemIds).toContain('ai-director');
     expect(t.sim.systemIds).toContain('human-input');
     // 跑 6s（evalInterval=5）→ AI 探测 zone 未划 → 自动划
@@ -30,7 +30,7 @@ describe('AI 总监 + 玩家输入插件化', () => {
   });
 
   it('玩家活跃 → AI 让位（不新增动作）', () => {
-    const t = createDlcTest('zone', { pawnCount: 1, extraPacks: ['ai-director', 'human-input'] });
+    const t = createDlcTest('zone', { pawnCount: 1, extraPacks: ['human-input', 'ai-director'] });
     for (let i = 0; i < 60; i++) t.sim.step(0.1);
     const before = ((t.sim.getCap('zone') as { getZones?: (t?: string) => unknown[] } | null)?.getZones?.() ?? []).length;
     // 玩家命令（source='player'）→ 活跃窗口 3s

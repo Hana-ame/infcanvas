@@ -20,11 +20,11 @@ const stubSys = (id: string) => (): never => ({ id, update: () => {} }) as never
 describe('DLC 框架压力测试（大航海/一战/无线电/二战/飞天魔法/帝国/教国/2077 独立占位包）', () => {
   it('① 单 DLC 挂载：默认 39 系统 +1，装配/步进不崩，内核 behavior 不变，命令可用', () => {
     const m = ModRegistry.default();
-    expect(m.systemDefs.length).toBe(52); // 注册面
+    expect(m.systemDefs.length).toBe(50); // 注册面
     m.mount(dlcAgeOfSail());
-    expect(m.systemDefs.length).toBe(53);
+    expect(m.systemDefs.length).toBe(51);
     const sim = new Sim({ seed: 52, pawnCount: 2, registry: m });
-    expect(sim.systemIds).toHaveLength(54); // 装配面
+    expect(sim.systemIds).toHaveLength(52); // 装配面
     expect(sim.systemIds).toContain('dlc:sail');
     expect(sim.systemIds).toContain('behavior'); // 内核 1 系统仍在
     for (let i = 0; i < 120; i++) sim.step(1); // 步进不崩
@@ -50,7 +50,7 @@ describe('DLC 框架压力测试（大航海/一战/无线电/二战/飞天魔�
     for (const id of ['dlc:sail', 'dlc:ww1', 'dlc:radio', 'dlc:ww2', 'dlc:sky', 'dlc:empire', 'dlc:church', 'dlc:cyber']) {
       expect(sim.systemIds).toContain(id);
     }
-    expect(sim.systemIds).toHaveLength(61);
+    expect(sim.systemIds).toHaveLength(59);
     for (const pid of ['dlc-ww1', 'dlc-radio', 'dlc-ww2', 'dlc-sky-magic', 'dlc-age-of-sail', 'dlc-empire', 'dlc-theocracy', 'dlc-2077']) {
       expect(m.packIds).toContain(pid);
     }
@@ -89,7 +89,7 @@ describe('DLC 框架压力测试（大航海/一战/无线电/二战/飞天魔�
   it('⑤ 卸载 = 现状不变：不挂 DLC 的默认装配与基线一致（零回归对照）', () => {
     const m = ModRegistry.default();
     const sim = new Sim({ seed: 55, pawnCount: 2, registry: m });
-    expect(sim.systemIds).toHaveLength(53);
+    expect(sim.systemIds).toHaveLength(51);
     expect(sim.systemIds[0]).toBe('needs'); // 类别序推导的稳定首系统
     expect(sim.systemIds).not.toContain('dlc:sail');
     expect(sim.mods.commandHandlers.has('set-sails')).toBe(false);
@@ -104,7 +104,7 @@ describe('DLC 框架压力测试（大航海/一战/无线电/二战/飞天魔�
     m.mount(dlcSkyMagic());
     m.disableSystem('dlc:ww1'); // 挂载后按 id 禁用（与默认系统同一过滤：isSystemEnabled）
     const sim = new Sim({ seed: 56, pawnCount: 2, registry: m });
-    expect(sim.systemIds).toHaveLength(55); // 3 挂 1 禁 → 装配只收 2 个 DLC 系统
+    expect(sim.systemIds).toHaveLength(53); // 3 挂 1 禁 → 装配只收 2 个 DLC 系统
     expect(sim.systemIds).not.toContain('dlc:ww1');
     expect(sim.systemIds).toContain('dlc:radio');
     expect(sim.systemIds).toContain('dlc:sky');
@@ -119,7 +119,7 @@ describe('DLC 框架压力测试（大航海/一战/无线电/二战/飞天魔�
     m.mount(dlcCyberpunk());
     const sim = new Sim({ seed: 57, pawnCount: 2, registry: m });
     expect(sim.systemIds).toContain('dlc:cyber');
-    expect(sim.systemIds).toHaveLength(54);
+    expect(sim.systemIds).toHaveLength(52);
     // 义体内容注册面：斯安威斯坦物品 / 义体医生诊所建筑 / 义体强化令策略卡 / 命令
     expect(m.items['dlc:sandevistan']).toBeTruthy();
     expect(m.items['dlc:sandevistan']!.name).toContain('斯安威斯坦');

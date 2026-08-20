@@ -65,6 +65,7 @@ export const humanInputPack: ModPack = {
   apply(m: ModRegistry): void {
     m.registerSystemDef({
       id: 'human-input', label: '玩家输入', category: 'boot',
+      // 恒表尾豁免（同 ai-director P1-4）：boot 约束 = init 晚于全体；本包 update 尾观察者。
       // before 'bootstrap'？不——人类输入应在 bootstrap 后（刷人后玩家才操作）。category 'boot'
       // + apply 序在 bootstrap 后（本包挂清单最末）→ 执行 = 全体系统 → bootstrap 刷人 → human-input
       ctor: (ctx) => {

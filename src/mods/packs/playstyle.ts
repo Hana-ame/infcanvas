@@ -156,6 +156,10 @@ export const PLAYSTYLE_PACKS: Record<string, ModPack> = {
   'fortifications': fortificationsPack,
   'weapons': weaponsPack,
   'urban-combat': urbanCombatPack,
+  // 2026-08-20 玩家输入插件化：human-input + ai-director 是**可选 DLC**，不进默认装配——
+  // 理由（架构审查 P0-1）：AI 总监默认开启会毒化所有"纯自主行为"场景（10s 自动划区 →
+  // 现有测试/无 AI 演出状态被污染）。玩家显式启用：ModRegistry.default({ extraPacks: [...] })
+  // 或运行时 sim.mountPack。headless 纯 AI 服 / 人机混合 = 显式装配这两个包。
   'human-input': humanInputPack,
   'ai-director': aiDirectorPack,
 };
@@ -233,8 +237,6 @@ export const DEFAULT_PLAYSTYLE_PACKS: string[] = [
   'fortifications',
   'weapons',
   'urban-combat',
-  'human-input',
-  'ai-director',
 ];
 
 // 聚合包：自身无行为，仅声明前置依赖（依赖图拓扑自动按序拉齐上面的玩法包）
