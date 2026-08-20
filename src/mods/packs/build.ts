@@ -27,7 +27,7 @@ export const buildPack: ModPack = {
       if (!def) { sim.events.push({ time: sim.time, text: `⚠ 未知建筑 ${defId}` }); return; }
       const cost = def.costWood ?? 0;
       if (sim.stockpile.wood < cost) { sim.events.push({ time: sim.time, text: `⚠ 木材不足（需 ${cost}）` }); return; }
-      const b = sim.world.addBuilding(defId, x, y);
+      const b = sim.world.addBuilding(defId, x, y, def.hp);
       if (!b) { sim.events.push({ time: sim.time, text: '⚠ 该位置无法建造' }); return; }
       sim.stockpile.wood -= cost;
       sim.events.push({ time: sim.time, text: `🏗 建好了 ${def.name}` });

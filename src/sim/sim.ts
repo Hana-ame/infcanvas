@@ -79,7 +79,7 @@ export class Sim {
 
   private ensureCamp(): void {
     if (this.campId) return;
-    const b = this.world.addBuilding('campfire', this.world.spawn.x, this.world.spawn.y);
+    const b = this.world.addBuilding('campfire', this.world.spawn.x, this.world.spawn.y, 80);
     if (b) this.campId = b.id;
   }
 

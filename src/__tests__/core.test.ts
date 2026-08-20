@@ -43,8 +43,18 @@ describe('从零核心', () => {
   it('建造：消耗木材 + 放置建筑', () => {
     const sim = makeSim();
     sim.stockpile.wood = 100;
-    sim.issueCommand('build', { buildingId: 'wall', x: 30, y: 30 });
-    expect(sim.world.buildingAt(30, 30)?.defId).toBe('wall');
+    // 找 spawn 附近草地（无限世界 (30,30) 可能是水）
+    let bx = 1, by = 0;
+    for (let r = 1; r <= 20; r++) {
+      let hit = false;
+      for (let dy = -r; dy <= r && !hit; dy++) for (let dx = -r; dx <= r && !hit; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+        if (sim.world.tileAt(dx, dy) === 'grass') { bx = dx; by = dy; hit = true; }
+      }
+      if (hit) break;
+    }
+    sim.issueCommand('build', { buildingId: 'wall', x: bx, y: by });
+    expect(sim.world.buildingAt(bx, by)?.defId).toBe('wall');
     expect(sim.stockpile.wood).toBe(98); // wall 耗 2
   });
 

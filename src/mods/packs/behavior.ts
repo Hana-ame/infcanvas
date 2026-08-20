@@ -3,6 +3,7 @@
 // 规则式（不搞抽卡），第一版最小正确。
 
 import type { Sim } from '../../sim/sim';
+import { isHarvested } from './gather';
 import type { ModPack, Category } from '../pack';
 
 const B = {
@@ -48,7 +49,7 @@ export const behaviorPack: ModPack = {
             }
             // ③ 饿 → 找食物（树/浆果 → 先采集树，简单：最近的树 = 食物源）
             if (p.needs.food < B.hungryAt) {
-              const tree = sim.world.nearestOf('tree', p.pos.x, p.pos.y);
+              const tree = sim.world.nearestOf('tree', p.pos.x, p.pos.y, 15);
               if (tree) {
                 p.path = sim.pathTo(p.eid, tree.x, tree.y);
                 p.job = '觅食';
@@ -62,8 +63,14 @@ export const behaviorPack: ModPack = {
               p.job = '回家';
               continue;
             }
-            // ⑤ 闲 → 采集最近的树（+木头）
-            const tree = sim.world.nearestOf('tree', p.pos.x, p.pos.y);
+            // ⑤ 闲 → 采集最近的树（+木头），跳过已采（冷却中）
+            const tree = (() => {
+              for (let r = 1; r <= 15; r++) {
+                const t = sim.world.nearestOf('tree', p.pos.x, p.pos.y, r);
+                if (t && !isHarvested(t.x, t.y, sim.time)) return t;
+              }
+              return null;
+            })();
             if (tree) {
               p.path = sim.pathTo(p.eid, tree.x, tree.y);
               p.job = '采集';
