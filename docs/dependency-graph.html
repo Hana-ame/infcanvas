@@ -41,8 +41,8 @@
 <div class="stats" id="stats"></div>
 
 <div class="tabs">
-  <button class="tab active" data-tab="depgraph">① DLC 依赖图（64 包）</button>
-  <button class="tab" data-tab="execgraph">② 系统执行序（51 系统流水线）</button>
+  <button class="tab active" data-tab="depgraph">① DLC 依赖图（66 包）</button>
+  <button class="tab" data-tab="execgraph">② 系统执行序（52 系统流水线）</button>
   <button class="tab" data-tab="factiongraph">③ 玩法包类别星图</button>
 </div>
 
@@ -83,7 +83,7 @@ const PIPELINE = [
   ['gather','production'],['build','production'],['farm','production'],['craft','production'],['repair','production'],['medicine','production'],['power','production'],['thermo','production'],['trade','production'],['prison','production'],['cook','production'],['clothing','production'],
   ['beastTaming','raid'],['raid','raid'],['drafting','raid'],['field-command','raid'],
   ['population','world'],['events','world'],['techPool','world'],['autobuild','world'],['bootstrap','boot'],
-  ['seasons','world'],['astronomy','world'],['disease','world'],['lineage','world'],['genetics','world'],['flying','world'],['meteor','world'],['visitor','world'],['neutral-fauna','world'],['zone','world'],['work-priority','ai'],['diplomacy','society'],['masterpiece','world'],['gossip-facts','society'],['ruins','world'],['hot-cold','raid'],['breeding','world'],['sailing','world'],['rail','world'],['industrial','production'],['belt','production'],['weapons','raid'],['urban-combat','raid']
+  ['seasons','world'],['astronomy','world'],['disease','world'],['lineage','world'],['genetics','world'],['flying','world'],['meteor','world'],['visitor','world'],['neutral-fauna','world'],['zone','world'],['work-priority','ai'],['diplomacy','society'],['masterpiece','world'],['gossip-facts','society'],['ruins','world'],['hot-cold','raid'],['breeding','world'],['death','world'],['sailing','world'],['rail','world'],['industrial','production'],['belt','production'],['weapons','raid'],['urban-combat','raid']
 ];
 
 const $ = (id) => document.getElementById(id);
@@ -278,7 +278,7 @@ document.querySelectorAll('.tab').forEach(t => {
   });
 });
 $('stats').innerHTML =
-  `<div class="stat"><b>64</b> 玩法包</div><div class="stat"><b>18</b> 依赖边</div><div class="stat"><b>51</b> 系统</div><div class="stat"><b>7</b> 类别</div><div class="stat"><b>629+</b> 测试</div>`;
+  `<div class="stat"><b>64</b> 玩法包</div><div class="stat"><b>18</b> 依赖边</div><div class="stat"><b>51</b> 系统</div><div class="stat"><b>7</b> 类别</div><div class="stat"><b>637+</b> 测试</div>`;
 
 depGraph();
 </script>
