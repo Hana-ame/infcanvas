@@ -51,12 +51,14 @@
 
 ## 命令
 
-- 测试：`npm test`（vitest，625 用例 / 62 文件全绿，覆盖插件装卸/依赖图/无限地图/契约/DLC/网络/性能回归/十万级批处理）；类型：`npx tsc --noEmit`
+- 测试：`npm test`（vitest，632 用例 / 62 文件全绿，覆盖插件装卸/依赖图/无限地图/契约/DLC/网络/性能回归/十万级批处理）；类型：`npx tsc --noEmit`
 - 单系统独立测试：`npx vitest run <文件> -t "<用例名>"`（系统只依赖 SimContext，可脱离完整 Sim 单独验证）
 - DLC 隔离测试：`npx vitest run src/mods/packs/__tests__/dlc-isolated.test.ts`（不挂完整 playstyle，只测指定 DLC + 依赖）
 - 纯逻辑游玩：`npx tsx scripts/play.ts`（CLI：state/pawns/sel/move/build/job/oracle/map/f）
 - 联机 server：`npm run server -- 8080`，客户端 `?remote=ws://127.0.0.1:8080`（神谕抽卡默认启用，LLM_ENDPOINT 仅可选增强）
-- DLC 基线自动更新：`npx tsx scripts/update-baselines.ts`（加完 DLC 后运行 → 自动更新 assembly/dlc-stress/dlc-deploy 的系统数基线）
-- **当前装配态快照**（2026-08-20 终版）：`npm test` 当前 = **625 用例 / 62 文件**；默认装配 = **50 系统** / **62 包**。
+- DLC 基线自动更新：`npx tsx scripts/update-baselines.ts`
+- DLC 加载器：`npx tsx scripts/loader.ts [目录] [--sim]`（扫描 .mod.json → 依赖拓扑 → 挂载 + 契约校验 → 报告；--sim = 40 pawn 冒烟）
+- DLC 隔离测试：`npx vitest run src/mods/packs/__tests__/dlc-isolated.test.ts`（加完 DLC 后运行 → 自动更新 assembly/dlc-stress/dlc-deploy 的系统数基线）
+- **当前装配态快照**（2026-08-20 终版）：`npm test` 当前 = **632 用例 / 62 文件**；默认装配 = **50 系统** / **62 包**。
 - **DLC 添加指南**：`docs/DLC_GUIDE.md`（6 步流程 + 检查清单 + 模板 + 可注册内容速查表）
 - 历史功能演进、性能优化、DLC/玩法包、审查修复记录统一见 `docs/PROGRESS.md` 与 `docs/CHANGELOG.md`。
