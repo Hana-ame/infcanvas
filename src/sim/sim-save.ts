@@ -52,6 +52,7 @@ export function saveSim(sim: Sim): SaveData {
         inventory: st.inventory ?? {},
         oracleBuff: st.oracleBuff,
         assignedJob: st.assignedJob,
+        age: st.age ?? 0, // 2026-08-20 死亡机制：年龄随档（否则读档后永远 18 岁，衰老失效）
         fireId: st.fireId ?? null,
         knownFires: st.knownFires,
         extra: st.extra ?? {},
@@ -136,6 +137,7 @@ export function loadSim(sim: Sim, data: SaveData): void {
       if (p.desires) st.desires = { ...p.desires };
       if (p.inventory) st.inventory = { ...p.inventory };
       if (p.assignedJob) st.assignedJob = p.assignedJob;
+      if (p.age !== undefined) st.age = p.age; // 2026-08-20 死亡机制：读档还原年龄
       if (p.fireId !== undefined) st.fireId = p.fireId;
       if (p.knownFires) st.knownFires = { ...p.knownFires };
       if (p.extra) st.extra = { ...p.extra };

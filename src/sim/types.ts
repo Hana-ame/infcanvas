@@ -141,6 +141,7 @@ export interface SaveData {
     inventory?: Record<string, number>;
     oracleBuff?: { until: number; mood: number };
     assignedJob?: string;
+    age?: number; // 2026-08-20 死亡机制：年龄随档（否则读档后衰老失效）
     fireId?: number | null; // 关联篝火建筑 key（2026-08-14 重构：无派系单位，指向 campfire 主格）
     knownFires?: Record<number, { stance: 'friend' | 'enemy' | 'unknown'; basis: string; at: number }>;
     extra?: Record<string, unknown>; // mod 自定义字段（存档扩展点：JSON-safe，load 原样还原）
