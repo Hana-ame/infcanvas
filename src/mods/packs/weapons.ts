@@ -137,6 +137,11 @@ class WeaponSystem {
       }
       if (best >= 0) {
         const h = this.ctx.hostiles[best]!;
+        // 2026-08-20 巷战：LOS 门——看不见的敌人不能射击（墙后打不到）
+        const vision = this.ctx.getCap('vision') as { hasLOS?: (x0: number, y0: number, x1: number, y1: number) => boolean } | null;
+        if (vision?.hasLOS && !vision.hasLOS(Math.round(pos.x), Math.round(pos.y), Math.round(h.x), Math.round(h.y))) {
+          continue;
+        }
         h.hp -= weapon.dmg;
         this.shootCd.set(eid, weapon.cd);
         // 击杀
