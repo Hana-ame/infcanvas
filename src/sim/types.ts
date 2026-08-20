@@ -109,6 +109,11 @@ export interface Command {
   buildingId?: string;
   job?: string; // assign 命令用（lumberjack/miner/farmer/crafter）
   args?: Record<string, unknown>; // 玩法命令参数位（如 wear 的 { itemId }）
+  // 2026-08-20 玩家输入插件化：命令来源标记（玩家/AI/程序）。三方（human-input 包 /
+  // ai-director 包 / 脚本）共用同一命令协议；仲裁在 sim.issueCommand：
+  //   player → commandCooldown 覆盖一切（现有行为）；ai → 短冷却（不锁死 pawn 但挡
+  //   behavior 自主）；缺省 = player（向后兼容脚本/远程客户端）。
+  source?: 'player' | 'ai';
 }
 
 export interface SaveData {

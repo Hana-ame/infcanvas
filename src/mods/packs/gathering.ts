@@ -4,7 +4,8 @@
 // 采集(伐木/采矿/采食)作为一种玩法由包提供。默认 playstyle 必挂本包，故默认模拟器行为不变；
 // 纯内核(卸掉本包)则无采集产出，仅剩基础循环（符合"卸载不破坏核心"= 不崩，非保生存）。
 // 依赖：内核 build（产出经 building.recipe / harvest 结算）；无其它玩法包依赖。
-// 装配：before 'build'（原内核表序 gather 在 build 前，迁出后仍锚在 build 前保持原位）。
+// 装配：id 已在 SYSTEM_DEFS 表登记（类别推导执行序），无需 before 锚点；
+// gather 在 build 前由默认 playstyle 注册序保持（原内核表序语义）。
 import type { ModRegistry } from '../../sim/mods/registry';
 import { GatherSystem } from '../../sim/systems/gatherSystem';
 import type { Sim } from '../../sim/sim';
@@ -18,7 +19,6 @@ export const gatheringPack: ModPack = {
     m.registerSystemDef({
       id: 'gather', label: '采集', category: 'production',
       ctor: (s: Sim) => new GatherSystem(s),
-      before: 'build',
     });
     // 采矿命令处理器（原 Sim.mineAt）：给小人设 mineTarget（GatherSystem 推进采矿）
     // 与内核 caveMine 卡（cardSystem 洞穴矿脉）同写 st.mineTarget——命令后设置覆盖卡目标

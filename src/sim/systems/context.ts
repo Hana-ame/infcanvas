@@ -62,6 +62,8 @@ export interface SimContext {
   pawnStates: Map<number, PawnState>;
   pawnPositions: Map<number, { x: number; y: number }>;
   time: number;
+  // 2026-08-20 玩家输入插件化：查询玩家活跃（最近 player 来源命令在窗口内 → AI 让位）
+  playerActive?(windowSec?: number): boolean;
   dayTime: number;
   dayLength: number; // 一天秒数（120）
   pawnList: readonly number[];

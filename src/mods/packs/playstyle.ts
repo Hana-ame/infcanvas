@@ -87,6 +87,8 @@ import { hotColdPack } from './hot-cold';
 import { fortificationsPack } from './fortifications';
 import { weaponsPack } from './weapons';
 import { urbanCombatPack } from './urban-combat';
+import { humanInputPack } from './human-input';
+import { aiDirectorPack } from './ai-director';
 
 // 包目录对照表（id → 真包对象；管理器/测试用）。id 校验失败即抛错——防清单改错 id 后
 // 静默丢包。2026-08-15 从 registry.ts 迁入本文件（数据归数据层，框架不再 import 玩法包）。
@@ -154,6 +156,8 @@ export const PLAYSTYLE_PACKS: Record<string, ModPack> = {
   'fortifications': fortificationsPack,
   'weapons': weaponsPack,
   'urban-combat': urbanCombatPack,
+  'human-input': humanInputPack,
+  'ai-director': aiDirectorPack,
 };
 
 // 有序清单（顺序 = apply 序 = def 注册序 = 组内系统执行序的稳定初始序；执行序推导见
@@ -229,6 +233,8 @@ export const DEFAULT_PLAYSTYLE_PACKS: string[] = [
   'fortifications',
   'weapons',
   'urban-combat',
+  'human-input',
+  'ai-director',
 ];
 
 // 聚合包：自身无行为，仅声明前置依赖（依赖图拓扑自动按序拉齐上面的玩法包）

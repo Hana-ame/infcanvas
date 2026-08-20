@@ -41,7 +41,7 @@ export const beastTamingPack: ModPack = {
   apply(m: ModRegistry): void {
     m.registerSystemDef({
       id: 'beastTaming', label: '驯兽守卫', category: 'raid',
-      before: 'raid', // 第三方表外系统：锚点插位到 raid 前（驯化结算先于袭击战斗）
+      // 2026-08-20 顺序审计后已是表内系统：执行序 = 类别序 × 组内注册序推导，不再用 before 锚点。
       ctor: (ctx) => new BeastTamingSystem(ctx),
     });
 

@@ -879,6 +879,7 @@ export class Sim implements SimContext {
   // （signature 与 SimContext 对齐：`(ctx: SimContext, cmd: Command) => void`）。
   // 路由失败仍 logEvent 反馈（原 queueBuild 拒建反馈纪律延续）。
   issueCommand(cmd: Command): void {
+    if ((cmd.source ?? 'player') === 'player') this.lastPlayerCommandAt = this.time; // 玩家输入插件化
     if (this.batchConfig.enabled) advanceBatch(this._pawnList, this.batchConfig); // 推进轮转
     this._profileCache.clear();
     if (this.batchConfig.enabled) advanceBatch(this._pawnList, this.batchConfig); // 推进轮转
@@ -901,6 +902,13 @@ export class Sim implements SimContext {
     const handler = this.mods.commandHandlers.get(cmd.type);
     if (handler) handler(this, cmd);
     else this.logEvent(`⚠ 未知命令：${cmd.type}`);
+  }
+
+  // 2026-08-20 玩家输入插件化：记录最近玩家命令时间（human-input 包用——AI 让位依据）
+  lastPlayerCommandAt = -Infinity;
+  // 玩家活跃判定：最近 player 来源命令在 activeWindow（秒）内 → AI 应让位
+  playerActive(windowSec = 3): boolean {
+    return this.time - this.lastPlayerCommandAt <= windowSec;
   }
 
   // 产出归集（2026-08-14 重构：派系实体删除，无单位私有库存；全部进全局仓库）

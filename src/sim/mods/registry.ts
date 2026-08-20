@@ -45,6 +45,15 @@ import type { SimContext } from '../systems/context';
 import { playstyleManager, PLAYSTYLE_PACKS, DEFAULT_PLAYSTYLE_PACKS } from '../../mods/packs/playstyle';
 import { validateContracts } from './contracts';
 
+// 2026-08-20 AI 总监：AI 动作接口（能力包自注册，调度器执行）。放 registry 同层——
+// 框架不 import 玩法包（插件化纪律），ai-director 包从 registry import 此类型。
+export interface AiAction {
+  id: string;
+  weight: number;
+  probe: (ctx: import('../systems/context').SimContext) => boolean;
+  act: (ctx: import('../systems/context').SimContext) => import('../types').Command | null;
+}
+
 // 生命周期钩子上下文（step:before / step:after，见 sim.step）
 export interface HookContext {
   sim: Sim;
@@ -602,6 +611,16 @@ export class ModRegistry {
   }
 
   // 阶段钩子：check 流程 beforeRoll 等（mod 可插入）
+  // 2026-08-20 AI 总监：能力包自注册 AI 动作（前置 DLC 可选——只有"在场且有
+  // 需求的包"才被调度）。存池：ai-director 系统构造时一次性灌入 + 之后实时登记，
+  // 与挂载顺序无关（ai-director 前置/后置 apply 都正确）。
+  private _aiActions: AiAction[] = [];
+  registerAiAction(a: AiAction): this {
+    if (!this._aiActions.some((x) => x.id === a.id)) this._aiActions.push(a);
+    return this;
+  }
+  get aiActions(): readonly AiAction[] { return this._aiActions; }
+
   registerHook(stage: string, fn: (ctx: HookContext) => void): this {
     if (!this.hooks.has(stage)) this.hooks.set(stage, []);
     this.hooks.get(stage)!.push(fn);

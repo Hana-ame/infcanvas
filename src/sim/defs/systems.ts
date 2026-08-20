@@ -74,7 +74,7 @@ export const SYSTEM_DEFS: Record<string, SystemDef> = {
   // 引导类（'boot'）：类别序恒表尾——出生刷人必须晚于全体系统装配/init（见文件头注释）
   bootstrap:  { id: 'bootstrap',   label: '引导',     category: 'boot' },
 
-  // ===== 表外系统占位（2026-08-20 顺序审计修复）=====
+  // ===== 新增表内系统占位（2026-08-20 顺序审计修复）=====
   // 背景（用户指摘"哪个先哪个后需要调整"）：此前这 23 个系统**不在本表**（只由玩法包
   // registerSystemDef 直接注册），registerSystems 兜底循环把"清单外系统"整体追加到
   // bootstrap 之后 → 类别语义丢失（seasons 世界类跑到 boot 后、weapons 战斗类跑到最后、
@@ -87,6 +87,7 @@ export const SYSTEM_DEFS: Record<string, SystemDef> = {
   //   raid 组: raid → drafting → field-command → beastTaming → hot-cold → weapons → urban-combat
   //   world 组: …autobuild → seasons/astronomy/disease/…/rail/zone（世界演化铺在自动建造后）
   // 行为影响：RNG 消耗顺序变化 → 个别统计性测试需调步数（cavem/tech 类），已同步修。
+  // 注意：这些系统现在是**表内系统**，不应再写 before 锚点；执行序完全由类别×组内注册序推导。
   'work-priority': { id: 'work-priority', label: '职业优先级', category: 'ai' },
   diplomacy:     { id: 'diplomacy',     label: '外交',       category: 'society' },
   'gossip-facts': { id: 'gossip-facts', label: '传闻事实',   category: 'society' },

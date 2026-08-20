@@ -85,6 +85,19 @@ export const zonePack: ModPack = {
         return sys;
       },
     });
+    // 2026-08-20 AI 总监演示：开局自动划工作区（模拟玩家 zone 命令；仅在无人划定时触发）
+    m.registerAiAction({
+      id: 'zone:auto-work-area', weight: 1,
+      probe: (ctx) => {
+        const cap = ctx.getCap('zone') as { getZones?: (t?: string) => unknown[] } | null;
+        return cap?.getZones?.('work')?.length === 0 && ctx.pawnList.length > 0;
+      },
+      act: (ctx) => {
+        const p = ctx.pawnPositions.get(ctx.pawnList[0]!);
+        if (!p) return null;
+        return { type: 'zone', x: Math.round(p.x) - 1, y: Math.round(p.y) - 1, args: { action: 'add', type: 'work', x1: Math.round(p.x) - 1, y1: Math.round(p.y) - 1, x2: Math.round(p.x) + 2, y2: Math.round(p.y) + 2 } };
+      },
+    });
     // zone 命令：划定/删除区域
     m.registerCommand('zone', (ctx, cmd) => {
       const cap = ctx.getCap('zone') as { addZone?: (z: { id?: string; type: string; x1: number; y1: number; x2: number; y2: number; label?: string }) => string; removeZone?: (id: string) => boolean } | null;
