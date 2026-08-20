@@ -299,8 +299,9 @@ function attachScene(
   canvas.addEventListener('pointerdown', (e) => {
     pointers.set(e.pointerId, screenPos(e));
     touchActive = touchActive || e.pointerType !== 'mouse';
-    if (pointers.size === 1 && e.pointerType !== 'mouse' && !buildMode) {
-      boxSelectStart = screenPos(e); // 触摸单指候选框选起点（>12px 才确认为框选）
+    if (pointers.size === 1 && e.pointerType !== 'mouse') {
+      // 2026-08-20 触摸单指 = 平移屏幕（用户裁决）；位移 >12px 取消长按（移动命令）
+      boxSelectStart = screenPos(e);
       boxSelecting = false;
     }
     if (pointers.size >= 2) {
@@ -335,15 +336,11 @@ function attachScene(
       if (pinchDist > 0 && d > 0) renderer.zoomBy(d / pinchDist);
       midLast = mid;
       pinchDist = d;
-    } else if (pointers.size === 1 && !buildMode) {
-      // 2026-08-20 触摸单指拖动 = 框选（双指才平移缩放）
-      const start = boxSelectStart ?? prev;
-      if (!boxSelecting && dist(start, cur) > 12) {
-        boxSelecting = true;
-        boxSelectStart = start;
-        renderer.clearSelection();
-      }
-      if (boxSelecting) renderer.setSelBox(start.x, start.y, cur.x, cur.y);
+    } else if (pointers.size === 1 && e.pointerType !== 'mouse') {
+      // 2026-08-20 触摸单指 = 拖动屏幕（平移）。位移 >12px 视作拖动：取消长按（移动命令），
+      // 按 pointer 增量平移（与双指平移同手感）。框选留给 PC 左键拖。
+      if (boxSelectStart && dist(boxSelectStart, cur) > 12) clearLP();
+      renderer.setCamera(cur.x - prev.x, cur.y - prev.y);
     }
   });
 
@@ -353,20 +350,11 @@ function attachScene(
     pointers.delete(e.pointerId);
     if (wasTwo) return;
     if (e.pointerType === 'mouse') return; // PC 走 mouseup 提交框选
-    // 触摸：单指抬起——若是框选拖动 → 提交；否则（轻点）走 click 点选；长按已处理移动
-    if (boxSelecting && boxSelectStart) {
-      const ids = renderer.boxPawnIds;
-      renderer.clearSelBox();
-      if (ids.length > 0) {
-        sim.selected = ids;
-        renderer.selectPawn(ids[0] ?? 0);
-        hud.update(null);
-      }
-      boxSelectStart = null;
-      boxSelecting = false;
-    } else if (!twoMoved && pointers.size === 0) {
-      // 轻点（未拖动、未长按）→ click 合成事件走点选；此处不重复
-    }
+    // 触摸：单指抬起——轻点（未拖未长按）→ 浏览器合成 click → 现有点选逻辑；
+    // 长按已由 timer 发移动命令（boxSelectStart 走 pointermove 位移判定取消）；
+    // 拖动已平移。此处不重复动作。
+    boxSelectStart = null;
+    boxSelecting = false;
   });
 
   canvas.addEventListener('pointercancel', (e) => {
