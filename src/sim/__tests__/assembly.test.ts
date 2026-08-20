@@ -41,7 +41,7 @@ import { INTENT_IMPL, WORK_IMPL } from '../systems/executors';
 const KERNEL_IDS = KERNEL_SYSTEM_IDS;
 // 玩法包系统 id 全集（默认清单 DEFAULT_PLAYSTYLE_PACKS 里各包注册的系统）：
 // 改装配面时此处须与 playstyle.ts 清单同步（防清单改动后断言失真）
-const PACK_IDS = ['needs', 'san', 'desire', 'economy', 'socialUnit', 'social', 'gather', 'build', 'farm', 'craft', 'repair', 'medicine', 'power', 'thermo', 'trade', 'prison', 'cook', 'clothing', 'beastTaming', 'raid', 'drafting', 'field-command', 'population', 'events', 'techPool', 'autobuild', 'bootstrap', 'seasons', 'astronomy', 'disease', 'lineage', 'genetics', 'flying', 'meteor', 'visitor', 'neutral-fauna', 'zone', 'work-priority', 'diplomacy', 'masterpiece', 'gossip-facts', 'ruins', 'hot-cold', 'breeding', 'sailing', 'rail', 'industrial', 'belt', 'weapons', 'urban-combat'];
+const PACK_IDS = ['needs', 'san', 'desire', 'economy', 'work-priority', 'socialUnit', 'social', 'diplomacy', 'gossip-facts', 'gather', 'build', 'farm', 'craft', 'repair', 'medicine', 'power', 'thermo', 'trade', 'prison', 'cook', 'clothing', 'industrial', 'belt', 'raid', 'drafting', 'beastTaming', 'hot-cold', 'weapons', 'field-command', 'urban-combat', 'population', 'events', 'techPool', 'seasons', 'astronomy', 'disease', 'lineage', 'genetics', 'flying', 'meteor', 'visitor', 'neutral-fauna', 'zone', 'masterpiece', 'ruins', 'breeding', 'autobuild', 'sailing', 'rail', 'bootstrap'];
 
 // 期望执行序（2026-08-15 起由类别序 × 组内注册序推导；本数组 = 推导结果快照 = 测试文档）：
 // needs(数值修正) → ai(behavior 决策引擎) → society(socialUnit/social) → production
@@ -49,7 +49,7 @@ const PACK_IDS = ['needs', 'san', 'desire', 'economy', 'socialUnit', 'social', '
 // autobuild——清单序调整后与旧 BASE_SYSTEM_ORDER 一致) → boot(bootstrap 恒表尾)
 // 2026-08-20 战场指挥 DLC（field-command 玩法包）：raid 组内注册序 = drafting 之后——
 // 每 tick 先征召追击结算（冲锋/集火拖动）再战术修正（固守/撤退/集结）。27→28 系统（beastTaming 驯兽守卫 2026-08-20 加入）。
-const EXPECTED_ORDER = ['needs', 'san', 'desire', 'economy', 'behavior', 'socialUnit', 'social', 'gather', 'build', 'farm', 'craft', 'repair', 'medicine', 'power', 'thermo', 'trade', 'prison', 'cook', 'clothing', 'beastTaming', 'raid', 'drafting', 'field-command', 'population', 'events', 'techPool', 'autobuild', 'bootstrap', 'seasons', 'astronomy', 'disease', 'lineage', 'genetics', 'flying', 'meteor', 'visitor', 'neutral-fauna', 'zone', 'work-priority', 'diplomacy', 'masterpiece', 'gossip-facts', 'ruins', 'hot-cold', 'breeding', 'sailing', 'rail', 'industrial', 'belt', 'weapons', 'urban-combat'];
+const EXPECTED_ORDER = ['needs', 'san', 'desire', 'economy', 'behavior', 'work-priority', 'socialUnit', 'social', 'diplomacy', 'gossip-facts', 'gather', 'build', 'farm', 'craft', 'repair', 'medicine', 'power', 'thermo', 'trade', 'prison', 'cook', 'clothing', 'industrial', 'belt', 'raid', 'drafting', 'beastTaming', 'hot-cold', 'weapons', 'field-command', 'urban-combat', 'population', 'events', 'techPool', 'seasons', 'astronomy', 'disease', 'lineage', 'genetics', 'flying', 'meteor', 'visitor', 'neutral-fauna', 'zone', 'masterpiece', 'ruins', 'breeding', 'autobuild', 'sailing', 'rail', 'bootstrap'];
 
 function systemOrder(seed = 3): string[] {
   return [...new Sim({ registry: ModRegistry.default(), pawnCount: 1, seed }).systemIds];

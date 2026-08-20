@@ -80,7 +80,7 @@ export const geneticsPack: ModPack = {
   requires: [],
   apply(m: ModRegistry): void {
     m.registerSystemDef({
-      id: 'genetics', label: '基因', category: 'society',
+      id: 'genetics', label: '基因', category: 'world',
       ctor: (ctx) => new GeneticsSystem(ctx),
     });
   },

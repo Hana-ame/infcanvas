@@ -73,6 +73,44 @@ export const SYSTEM_DEFS: Record<string, SystemDef> = {
   autobuild:  { id: 'autobuild',   label: '自动建造', category: 'world' },
   // 引导类（'boot'）：类别序恒表尾——出生刷人必须晚于全体系统装配/init（见文件头注释）
   bootstrap:  { id: 'bootstrap',   label: '引导',     category: 'boot' },
+
+  // ===== 表外系统占位（2026-08-20 顺序审计修复）=====
+  // 背景（用户指摘"哪个先哪个后需要调整"）：此前这 23 个系统**不在本表**（只由玩法包
+  // registerSystemDef 直接注册），registerSystems 兜底循环把"清单外系统"整体追加到
+  // bootstrap 之后 → 类别语义丢失（seasons 世界类跑到 boot 后、weapons 战斗类跑到最后、
+  // work-priority 声明 ai 类却排不进 ai 组——AGENTS.md "category 必须与表一致"被违反）。
+  // 修法：全部补占位条目（仅声明类别归属，ctor 由玩法包回填——与 drafting/field-command
+  // 同姿势），类别序推导恢复语义正确：
+  //   ai 组: behavior → work-priority（决策读加成，放 behavior 后）
+  //   society 组: socialUnit/social → diplomacy → gossip-facts（派系关系/传闻属社会层）
+  //   production 组: …cook/clothing → industrial → belt（工业/物流产出，组尾）
+  //   raid 组: raid → drafting → field-command → beastTaming → hot-cold → weapons → urban-combat
+  //   world 组: …autobuild → seasons/astronomy/disease/…/rail/zone（世界演化铺在自动建造后）
+  // 行为影响：RNG 消耗顺序变化 → 个别统计性测试需调步数（cavem/tech 类），已同步修。
+  'work-priority': { id: 'work-priority', label: '职业优先级', category: 'ai' },
+  diplomacy:     { id: 'diplomacy',     label: '外交',       category: 'society' },
+  'gossip-facts': { id: 'gossip-facts', label: '传闻事实',   category: 'society' },
+  industrial:    { id: 'industrial',    label: '工业',       category: 'production' },
+  belt:          { id: 'belt',          label: '传送带',     category: 'production' },
+  beastTaming:   { id: 'beastTaming',   label: '驯兽',       category: 'raid' },
+  'hot-cold':    { id: 'hot-cold',      label: '热区冷区',   category: 'raid' },
+  weapons:       { id: 'weapons',       label: '武器',       category: 'raid' },
+  'urban-combat':{ id: 'urban-combat',  label: '巷战视野',   category: 'raid' },
+  seasons:       { id: 'seasons',       label: '季节',       category: 'world' },
+  astronomy:     { id: 'astronomy',     label: '天文',       category: 'world' },
+  disease:       { id: 'disease',       label: '疾病',       category: 'world' },
+  lineage:       { id: 'lineage',       label: '血脉',       category: 'world' },
+  genetics:      { id: 'genetics',      label: '基因',       category: 'world' },
+  flying:        { id: 'flying',        label: '飞行',       category: 'world' },
+  meteor:        { id: 'meteor',        label: '陨石',       category: 'world' },
+  visitor:       { id: 'visitor',       label: '访客',       category: 'world' },
+  'neutral-fauna': { id: 'neutral-fauna', label: '中立生物', category: 'world' },
+  masterpiece:   { id: 'masterpiece',   label: '杰作',       category: 'world' },
+  ruins:         { id: 'ruins',         label: '遗迹',       category: 'world' },
+  breeding:      { id: 'breeding',      label: '生育',       category: 'world' },
+  sailing:       { id: 'sailing',       label: '航海',       category: 'world' },
+  rail:          { id: 'rail',          label: '铁道',       category: 'world' },
+  zone:          { id: 'zone',          label: '区域',       category: 'world' },
 };
 
 // 内核（引擎）系统 id 集：只有 behavior（决策引擎 = 引擎服务）。卸载/挂载语义与其他系统

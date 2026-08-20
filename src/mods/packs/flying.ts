@@ -101,7 +101,7 @@ export const flyingPack: ModPack = {
     } as never);
     // 弓箭手职业
     m.registerSystemDef({
-      id: 'flying', label: '飞行防空', category: 'raid',
+      id: 'flying', label: '飞行防空', category: 'world',
       ctor: (ctx) => new FlyingSystem(ctx),
     });
   },

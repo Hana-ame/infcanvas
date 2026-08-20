@@ -92,7 +92,7 @@ export const lineagePack: ModPack = {
   requires: [],
   apply(m: ModRegistry): void {
     m.registerSystemDef({
-      id: 'lineage', label: '血脉', category: 'society',
+      id: 'lineage', label: '血脉', category: 'world',
       ctor: (ctx) => new LineageSystem(ctx),
     });
     // 监听出生事件 → applyLineage

@@ -81,7 +81,7 @@ export const diseasePack: ModPack = {
     // 草药物品
     m.registerItem({ id: 'disease-herb', name: '草药' });
     m.registerSystemDef({
-      id: 'disease', label: '疾病', category: 'needs',
+      id: 'disease', label: '疾病', category: 'world',
       ctor: (ctx) => new DiseaseSystem(ctx),
     });
     // treat 命令：用草药治疗
