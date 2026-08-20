@@ -34,44 +34,8 @@ export const BUILDING_SVG: Record<string, string> = {
   boat: `${BASE}/building/boat.svg`,
   bridge: `${BASE}/building/bridge.svg`,
 
-  // 通用类型图标（按 tag 复用——多个建筑共用一个图标）
-  // house：住宅/小屋类 → house.svg
-  shelter: `${BASE}/building/house.svg`,
-  house: `${BASE}/building/house.svg`,
-  manor: `${BASE}/building/house.svg`,
-  caveHouse: `${BASE}/building/house.svg`,
-  // storage：存储类 → storage.svg
-  silo: `${BASE}/building/storage.svg`,
-  armory: `${BASE}/building/storage.svg`,
-  stockpile: `${BASE}/building/storage.svg`,
-  // defense：防御工事类 → defense.svg
-  trap: `${BASE}/building/defense.svg`,
-  'arrow-tower': `${BASE}/building/defense.svg`,
-  watchtower: `${BASE}/building/defense.svg`,
-  pillbox: `${BASE}/building/defense.svg`,
-  bunker: `${BASE}/building/defense.svg`,
-  emplacement: `${BASE}/building/defense.svg`,
-  signalTower: `${BASE}/building/defense.svg`,
-  // production：生产类 → production.svg
-  market: `${BASE}/building/production.svg`,
-  school: `${BASE}/building/production.svg`,
-  hospital: `${BASE}/building/production.svg`,
-  // worship：信仰类 → worship.svg
-  shrine: `${BASE}/building/worship.svg`,
-  'bell-tower': `${BASE}/building/worship.svg`,
-  'clan-totem': `${BASE}/building/worship.svg`,
-  // social：社交类 → social.svg
-  tavern: `${BASE}/building/social.svg`,
-  library: `${BASE}/building/social.svg`,
-  garden: `${BASE}/building/social.svg`,
-  arena: `${BASE}/building/social.svg`,
-  // fortify：工事类 → fortify.svg
-  trench: `${BASE}/building/fortify.svg`,
-  parapet: `${BASE}/building/fortify.svg`,
-  'barbed-wire': `${BASE}/building/fortify.svg`,
-  abatis: `${BASE}/building/fortify.svg`,
-  cheval: `${BASE}/building/fortify.svg`,
-};
+  };
+
 
 // 鼠鼠（按天赋 6 种）
 export const PAWN_SVG: Record<string, string> = {
@@ -112,22 +76,22 @@ export const HUD_SVG: Record<string, string> = {
 
 // 根据天赋返回鼠鼠图标 id（与 HUD 共用）
 export function pawnAssetIdFor(traits: readonly string[] | undefined): string {
-  if (!traits || traits.length === 0) return 'mouse';
-  if (traits.includes('强壮')) return 'strong';
-  if (traits.includes('虔诚')) return 'devout';
-  if (traits.includes('懒惰')) return 'lazy';
-  if (traits.includes('工作狂')) return 'workaholic';
-  if (traits.includes('夜猫子')) return 'owl';
-  return 'mouse';
+  if (!traits || traits.length === 0) return "mouse";
+  if (traits.includes("强壮")) return "strong";
+  if (traits.includes("虔诚")) return "devout";
+  if (traits.includes("懒惰")) return "lazy";
+  if (traits.includes("工作狂")) return "workaholic";
+  if (traits.includes("夜猫子")) return "owl";
+  return "mouse";
 }
 
 // 敌人图标 id
 export function hostileAssetId(enemyId: string): string {
-  return enemyId === 'cat' ? 'cat' : 'generic';
+  return enemyId === "cat" ? "cat" : "generic";
 }
 
 // 工具：SVG data URL（保留给旧代码兼容；新代码直接引用文件路径）
 export function svgDataUri(svg: string): string {
-  if (svg.startsWith('/assets/svg/')) return svg; // 已经是文件路径，直接返回
-  return `data:image/svg+xml,${encodeURIComponent(svg)}`;
+  if (svg.startsWith("/assets/svg/")) return svg;
+  return "data:image/svg+xml," + encodeURIComponent(svg);
 }

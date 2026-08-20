@@ -26,30 +26,9 @@ function icon(id: string, size = 16): string {
   return `<img src="${svgDataUri(src)}" alt="" style="width:${size}px;height:${size}px;vertical-align:-3px;display:inline;">`;
 }
 // 建筑图标：有 emoji 用 emoji，否则用首字母占位
-// 建筑图标：查找优先级 def.sprite → def.id → def.tags 匹配通用类型 → emoji
-// sprite 机制（2026-08-20 资产复用）：多个建筑共用一个 SVG 图标，
-// 如所有防御建筑 def.sprite='defense' → 共用 defense.svg，无需每建筑独立 SVG 文件。
-function buildIcon(def: { id: string; emoji?: string; sprite?: string; tags?: string[] }, size = 16): string {
-  // ① sprite 显式指定
-  const spriteId = def.sprite ?? def.id;
-  let src = BUILDING_SVG[spriteId];
-  // ② def.id 查找
-  if (!src) src = BUILDING_SVG[def.id];
-  // ③ tag 匹配通用类型
-  if (!src && def.tags) {
-    const tagMap: Record<string, string> = {
-      'house': 'house', 'shelter': 'house', 'warmth': 'house',
-      'storage': 'storage', 'defense': 'defense', 'fortify': 'fortify',
-      'food': 'production', 'craft': 'production', 'mine': 'production',
-      'faith': 'worship', 'wonder': 'worship', 'social': 'social',
-      'heal': 'medical',
-    };
-    for (const t of def.tags) {
-      const mapped = tagMap[t];
-      if (mapped && BUILDING_SVG[mapped]) { src = BUILDING_SVG[mapped]; break; }
-    }
-  }
-  if (src) return `<img src="${svgDataUri(src)}" alt="" style="width:${size}px;height:${size}px;vertical-align:-3px;display:inline;">`;
+// 建筑图标：HUD 按钮用 emoji（游戏内瓦片渲染用 SVG，但按钮用 emoji 更简单）
+// 2026-08-20 用户裁定：为什么不用 emoji？——直接用，不要搞 SVG 文件。
+function buildIcon(def: { id: string; emoji?: string }, _size = 16): string {
   return def.emoji ?? '🏗';
 }
 // 小人头像：按特质显示不同图标（懒惰/机灵等）
