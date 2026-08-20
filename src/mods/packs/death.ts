@@ -62,6 +62,9 @@ class DeathSystem {
     this._throttle = 0;
 
     for (const eid of this.ctx.iterPawns) {
+      // 2026-08-20 通用 HP 归零检查（战斗/疾病/流血等未触发 killPawn 的兜底）
+      const h = this.ctx.readHealth(eid);
+      if (h && h.hp <= 0) { this.ctx.killPawn(eid, 'injuries'); continue; }
       const st = this.ctx.pawnStates.get(eid);
       if (!st) continue;
       const pos = this.ctx.pawnPositions.get(eid);
@@ -135,6 +138,9 @@ class DeathSystem {
         const { x, y } = World.keyToXY(k);
         const isTomb = b.def.id === 'tomb';
         for (const eid of this.ctx.iterPawns) {
+      // 2026-08-20 通用 HP 归零检查（战斗/疾病/流血等未触发 killPawn 的兜底）
+      const h = this.ctx.readHealth(eid);
+      if (h && h.hp <= 0) { this.ctx.killPawn(eid, 'injuries'); continue; }
           const pos = this.ctx.pawnPositions.get(eid);
           if (!pos) continue;
           const d = Math.hypot(pos.x - x, pos.y - y);
