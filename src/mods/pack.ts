@@ -20,6 +20,10 @@ export interface ModPack {
   name?: string;          // 展示名（远程商店/列表用）
   version?: string;       // 包版本（远程包建议带）
   requires?: string[];    // 前置包 id（有向图边：本包 → 依赖）
+  // 2026-08-20「DLC 里加 DLC」：子包（嵌套 DLC）——mount 本包前自动先挂子包（子包
+  // 同样走 requires 依赖解析与幂等去重）。用途：聚合包/管理器带出子玩法；DLC 商店
+  // 把"大 DLC"拆成若干可单独装卸的小 DLC，父包只声明组合。
+  subpacks?: ModPack[];
   apply(m: ModRegistry): void;
 }
 

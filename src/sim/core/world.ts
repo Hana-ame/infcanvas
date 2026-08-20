@@ -55,7 +55,7 @@ export class World {
   readonly height: number;
   private readonly tileKeys: string[]; // index -> tile id
   private readonly tilesDefs: Record<string, TileDef>; // mod 可注入（覆盖后生效）
-  private readonly buildingsDefs: Record<string, BuildingDef>;
+  private buildingsDefs: Record<string, BuildingDef>; // 可变：Sim.mountPack 运行时热挂载新建筑
   private readonly biomeSeeds: BiomeSeeds; // 生成层三轴种子（seed 确定性派生）
   private readonly seed: number;
   rng: SimRng;
@@ -734,6 +734,15 @@ export class World {
   // 注意：资源扣减在 buildSystem 完成蓝图时进行——调用方必须判返回值，
   // 否则会出现"资源已扣、建筑没建"的资源蒸发（此前 bug，见 buildSystem 注释）
   // extra = mod 自定义字段（存档扩展点：电网温度等随建筑持久）；缺省 undefined
+  // 2026-08-20「DLC 里加 DLC」：运行时注册建筑 def（mountPack 热挂载后调用，
+  // 否则运行中挂载的新建筑因 buildingsDefs 是构造时快照而无法放置）。
+  registerBuildingDef(id: string, def: BuildingDef): void {
+    this.buildingsDefs[id] = def;
+  }
+  hasBuildingDef(id: string): boolean {
+    return id in this.buildingsDefs;
+  }
+
   placeBuilding(x: number, y: number, defId: string, faction: string, extra?: Record<string, unknown>): boolean {
     const def = this.buildingsDefs[defId];
     if (!def) return false;

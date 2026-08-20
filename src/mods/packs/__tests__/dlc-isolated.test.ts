@@ -227,3 +227,47 @@ describe('DLC 隔离测试（不挂载完整 playstyle）', () => {
     expect(t.registry.commandHandlers.has('hotcold')).toBe(true);
     t.step(1); // 不崩
   });
+
+  // 2026-08-20「DLC 里加 DLC」：运行时热挂载 + 子包嵌套
+  it('运行时 mountPack：挂载新 DLC → 新系统/建筑/命令即时生效（不重启）', () => {
+    const t = createDlcTest('zone', { pawnCount: 1 }); // 任意基础装配
+    const before = t.sim.systemIds.length;
+    const runtimeDlc = {
+      id: 'rt-dlc-test', requires: [],
+      apply(m: typeof t.registry) {
+        m.registerBuilding({ id: 'rt-test-hut', name: '测试茅屋', size: { x: 1, y: 1 }, hp: 50, color: '#0a0', emoji: '🏠', passable: true, buildTime: 1, tags: ['house'], meta: {}, costWood: 3 });
+        m.registerSystemDef({ id: 'rt-test-sys', label: '测试系统', category: 'world', ctor: () => ({ id: 'rt-test-sys', init() {}, update() {} }) });
+        m.registerCommand('rt_test_cmd', (ctx) => { ctx.logEvent('rt ok'); });
+      },
+    };
+    (t.sim as unknown as { mountPack: (p: unknown) => void }).mountPack(runtimeDlc);
+    expect(t.sim.systemIds.length).toBe(before + 1);
+    expect(t.sim.systemIds).toContain('rt-test-sys');
+    expect(t.sim.buildingDef('rt-test-hut')).toBeDefined();
+    expect(t.registry.commandHandlers.has('rt_test_cmd')).toBe(true);
+    // 新建筑可建（World 快照同步）
+    const p = t.sim.pawnPositions.get(t.sim.pawns[0])!;
+    let placed = false;
+    outer: for (let r = 1; r <= 8; r++) for (let dx = -r; dx <= r; dx++) for (let dy = -r; dy <= r; dy++) {
+      if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+      if (t.sim.world.placeBuilding(Math.round(p.x) + dx, Math.round(p.y) + dy, 'rt-test-hut', 'player')) { placed = true; break outer; }
+    }
+    expect(placed).toBe(true);
+    t.sim.step(1); // 新系统从下一 tick 生效，步进不崩
+  });
+
+  it('子包嵌套：父 DLC subpacks 自动先挂子 DLC', () => {
+    const t = createDlcTest('zone', { pawnCount: 1 });
+    const sub = {
+      id: 'rt-sub-pack', requires: [],
+      apply(m: typeof t.registry) { m.registerBuilding({ id: 'rt-sub-bld', name: '子包建筑', size: { x: 1, y: 1 }, hp: 60, color: '#a00', emoji: '🏰', passable: false, buildTime: 2, tags: ['defense'], meta: {}, costWood: 5 }); },
+    };
+    const parent = {
+      id: 'rt-parent-pack', requires: [], subpacks: [sub],
+      apply(m: typeof t.registry) { m.registerCommand('rt_parent_cmd', () => {}); },
+    };
+    (t.sim as unknown as { mountPack: (p: unknown) => void }).mountPack(parent);
+    // 子包先挂 → 子包建筑 + 父命令都生效
+    expect(t.sim.buildingDef('rt-sub-bld')).toBeDefined();
+    expect(t.registry.commandHandlers.has('rt_parent_cmd')).toBe(true);
+  });

@@ -9,6 +9,7 @@ import { World, type ChunkData } from './core/world';
 import { PathfindingService } from './pathfinding-service';
 import { registerNeedDef, getNeedDef, getAllNeedDefs, getDecayingNeeds, type NeedDef } from './core/need-defs';
 import { DEFAULT_BATCH, getBatch, advanceBatch, shouldEnableBatch, type BatchConfig } from './systems/batch-sim';
+import type { ModPack } from '../mods/pack';
 import { TECHS } from './defs/techs';
 import { findPath } from './core/pathfinding';
 import { SimRng } from './core/rng';
@@ -136,6 +137,9 @@ export class Sim implements SimContext {
   private get trailCache() { return this.path["trailCache"] as Map<string, { x: number; y: number }[]>; }
   // 2026-08-20 pawnProfile 缓存：HUD 每帧每 pawn 调用 → 每帧重建 ~15 字段对象 × 40 pawn = GC 压力
   private _profileCache = new Map<number, any>();
+  // 2026-08-20「DLC 里加 DLC」：已装配的系统 id 集合——mountPack 运行时热挂载时
+  // 只装配新注册的系统 def（已装配的不重复构造/注册），实现"DLC 运行中加入游戏"。
+  private _assembledSystemIds = new Set<string>();
   // 2026-08-20 十万级单位优化：时间分片批处理（pawnCount > threshold 时启用）
   batchConfig: BatchConfig = { ...DEFAULT_BATCH };
   _currentBatch: number[] = [];
@@ -448,6 +452,7 @@ export class Sim implements SimContext {
       if (!d.ctor) continue;         // 占位且无包提供 → 跳过（启用态不该发生）
       const sys = d.ctor(this);
       this.registry.register(sys);
+      this._assembledSystemIds.add(d.id);
       // 能力自报：玩法包系统构造时 self-provide（behavior/socialUnits/economy/bootstrap），
       // Sim 经 getter 消费——内核系统 behavior 也走同一路径（systems.ts 内联 ctor 里 provide），
       // 一致性：所有系统的能力供给/消费不区分内核还是插件
@@ -463,6 +468,52 @@ export class Sim implements SimContext {
 
   // ---- 系统可通过 SimContext 访问 ----
   // 数据驱动装配后的执行顺序（调试/工具/测试用）
+  // ---- 2026-08-20「DLC 里加 DLC」：运行时热挂载玩法包 ----
+  // 游戏运行中（不重启）挂载新 DLC：
+  //   ① mods.mount(pack) —— 注册建筑/物品/tile/敌人/卡/命令/配方 + 系统 def（apply 执行）
+  //   ② 增量装配新系统 —— 复用 registerSystems 的类别推导逻辑，只装配未装配过的系统 def
+  //      （新系统从装配后下一 tick 生效；已存在实体立即可用新建筑/新物品/新命令）
+  //  ③ 新命令自动进 cmdValidate 白名单（COMMAND_CONTRACTS 登记后 validate 通过）
+  mountPack(pack: ModPack | ModPack[]): void {
+    const packs = Array.isArray(pack) ? pack : [pack];
+    for (const p of packs) this.mods.mount(p); // 挂 def + 系统 def 注册（含 subpacks 递归）
+    // 2026-08-20 热挂载新建筑 → World 运行时注册（World.buildingsDefs 是构造时快照，
+    // 不同步则新建筑无法放置——见 World.registerBuildingDef 注释；mods.buildings 是
+    // mod 可覆盖的权威建筑表，World 只同步缺失的）
+    for (const [id, def] of Object.entries(this.mods.buildings)) {
+      if (!this.world.hasBuildingDef(id)) this.world.registerBuildingDef(id, def);
+    }
+    this.assemblePendingSystems();
+  }
+
+  // 装配 mods.systemDefs 里尚未装配的系统（mountPack 增量装配用；幂等——已装跳过）
+  // 复用 registerSystems 的推导语义：表内系统按类别序+注册序，表外按 before 锚点/表尾。
+  private assemblePendingSystems(): void {
+    const order: SystemDef[] = [];
+    const known = new Set<string>(this._assembledSystemIds);
+    for (let i = 0; i < this.mods.systemDefs.length; i++) {
+      const m = this.mods.systemDefs[i]!;
+      if (known.has(m.id)) continue;
+      if (!this.mods.isSystemEnabled(m.id)) continue;
+      // 表内系统：按类别序的组内位置插入（近似——动态装配不重排已装系统，新系统追加入序）
+      // 表外系统：按 before 锚点插位否则表尾（与 registerSystems 兜底循环同语义）
+      const idx = order.findIndex((d) => d.id === m.before);
+      if (m.before && idx >= 0) order.splice(idx, 0, m);
+      else order.push(m);
+    }
+    for (const d of order) {
+      if (!d.ctor) continue;
+      const sys = d.ctor(this);
+      this.registry.register(sys);
+      this._assembledSystemIds.add(d.id);
+    }
+    // 新挂意图/工作执行器交给行为系统（同 registerSystems 尾部）
+    if (this.behavior) {
+      for (const [id, fn] of this.mods.intents) this.behavior.registerIntent(id, fn);
+      for (const [type, fn] of this.mods.works) this.behavior.registerWork(type, fn);
+    }
+  }
+
   get systemIds(): readonly string[] { return this.registry.all.map((s) => s.id); }
   get pawnList(): readonly number[] { return this._pawnList; }
 

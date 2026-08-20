@@ -156,6 +156,9 @@ export class ModRegistry {
   // 前置包不在目录 → 抛错（提示先 registerPack / loadRemote 该前置）。
   // 同一包挂载两次（或跨 registry）→ 幂等跳过（apply 只执行一次）。
   mount(pack: ModPack): this {
+    // 2026-08-20「DLC 里加 DLC」：先递归挂子包（嵌套 DLC）——子包也走 requires 解析
+    // 与幂等去重。父包 apply 时可依赖子包已注册的 def（建筑/物品/系统等）。
+    for (const sp of pack.subpacks ?? []) this.mount(sp);
     registerPackGlobal(pack); // 幂等：同对象重复注册安全，不同定义抛错
     // 2026-08-15 自动组 DAG：topoSort 闭包收集（pack + 全部可达 requires）+ Kahn 拓扑
     // 排序推导挂载序（前置先 apply，环/缺前置在此检出）——顺序不再由调用方维护。
