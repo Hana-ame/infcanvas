@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>infcanvas 架构：Core + DLC 职责与加载顺序</title>
+<title>infcanvas 全架构图：Core + 66 DLC + 执行序 + 分层指挥栈</title>
 <style>
   :root {
     --bg: #0f1419; --panel: #1a2129; --panel2: #222c38; --text: #e6edf3;
@@ -12,81 +12,91 @@
     --red: #f85149; --border: #30363d;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: var(--bg); color: var(--text); font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; padding: 24px; line-height: 1.5; }
-  h1 { font-size: 22px; margin-bottom: 4px; }
-  .sub { color: var(--muted); font-size: 13px; margin-bottom: 24px; }
-  .stats { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 24px; }
-  .stat { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 8px 16px; font-size: 13px; }
-  .stat b { color: var(--accent); font-size: 18px; display: block; }
-  .stat span { color: var(--muted); }
-
-  h2 { font-size: 16px; margin: 24px 0 12px; color: var(--accent); border-left: 3px solid var(--accent); padding-left: 8px; }
-
-  /* Core */
-  .core-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; }
-  .core-card { background: linear-gradient(135deg, #2a1a14, #1a2129); border: 1px solid #5a3a2a; border-radius: 8px; padding: 12px; }
-  .core-card h3 { color: var(--core); font-size: 14px; margin-bottom: 6px; }
-  .core-card p { color: var(--muted); font-size: 12px; }
-
-  /* DLC sections */
-  .dlc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
-  .dlc-pill { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; font-size: 12px; }
-  .dlc-pill .name { font-weight: 600; }
-  .dlc-pill .desc { color: var(--muted); font-size: 11px; margin-top: 2px; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; padding: 20px; line-height: 1.5; }
+  h1 { font-size: 20px; margin-bottom: 2px; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 16px; }
+  .stats { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
+  .stat { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 6px 14px; font-size: 13px; }
+  .stat b { color: var(--accent); font-size: 16px; display: block; }
+  h2 { font-size: 15px; margin: 20px 0 8px; color: var(--accent); border-left: 3px solid var(--accent); padding-left: 8px; }
+  h3 { font-size: 13px; margin: 16px 0 6px; color: var(--yellow); }
+  .core-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; }
+  .core-card { background: linear-gradient(135deg, #2a1a14, #1a2129); border: 1px solid #5a3a2a; border-radius: 8px; padding: 10px; }
+  .core-card h3 { color: var(--core); font-size: 13px; margin-bottom: 4px; }
+  .core-card p { color: var(--muted); font-size: 11px; }
+  .dlc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 6px; }
+  .dlc-pill { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; font-size: 11px; }
+  .dlc-pill .name { font-weight: 600; font-size: 12px; }
+  .dlc-pill .desc { color: var(--muted); font-size: 10px; }
   .dlc-pill .sys { color: var(--green); font-size: 10px; }
-  .section-title { display: flex; align-items: center; gap: 8px; }
-
-  /* Flow */
-  .mount-flow { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start; }
-  .stage { min-width: 200px; }
-  .stage h4 { font-size: 13px; color: var(--yellow); margin-bottom: 8px; text-align: center; }
-  .stage-box { background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; padding: 10px; }
-  .stage-box .item { font-size: 12px; padding: 4px 8px; border-radius: 4px; margin-bottom: 4px; }
-  .arrow { display: flex; align-items: center; color: var(--accent); font-size: 20px; padding-top: 24px; }
-
-  /* Execution pipeline */
-  .pipeline { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
-  .sys-chip { background: var(--panel); border: 1px solid var(--border); border-radius: 4px; padding: 4px 8px; font-size: 11px; cursor: default; transition: all .15s; }
-  .sys-chip:hover { transform: translateY(-2px); border-color: var(--accent); }
-  .sys-chip .idx { color: var(--muted); font-size: 9px; margin-right: 4px; }
+  .pipeline { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+  .sys-chip { background: var(--panel); border: 1px solid var(--border); border-radius: 3px; padding: 3px 6px; font-size: 10px; cursor: default; }
+  .sys-chip:hover { transform: translateY(-1px); border-color: var(--accent); }
+  .sys-chip .idx { color: var(--muted); font-size: 8px; margin-right: 2px; }
   .cat-needs { border-color: #7d4a4a; } .cat-ai { border-color: #7a5a2a; }
   .cat-society { border-color: #4a6a4a; } .cat-production { border-color: #4a5a8a; }
   .cat-raid { border-color: #8a4a6a; } .cat-world { border-color: #4a7a8a; }
   .cat-boot { border-color: #6a6a6a; }
-
-  .legend { display: flex; flex-wrap: wrap; gap: 14px; margin: 8px 0; font-size: 12px; color: var(--muted); }
-  .legend .dot { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
-  .footer { color: var(--muted); font-size: 12px; margin-top: 32px; padding-top: 16px; border-top: 1px solid var(--border); }
+  .legend { display: flex; flex-wrap: wrap; gap: 10px; margin: 6px 0; font-size: 11px; color: var(--muted); }
+  .legend .dot { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 3px; vertical-align: middle; }
+  .stack { display: flex; flex-direction: column; gap: 4px; margin: 8px 0; }
+  .layer { display: flex; align-items: center; gap: 10px; padding: 6px 12px; border-radius: 6px; font-size: 12px; }
+  .layer .lbl { font-weight: 600; width: 80px; }
+  .layer .desc { color: var(--muted); flex: 1; }
+  .layer .src { color: var(--accent); font-size: 10px; }
+  .footer { color: var(--muted); font-size: 11px; margin-top: 24px; padding-top: 12px; border-top: 1px solid var(--border); }
 </style>
 </head>
 <body>
-<h1>🧭 infcanvas 架构：Core + DLC 职责与加载顺序</h1>
-<div class="sub">内核纯演算框架（0 系统）+ 一切玩法皆 DLC 包 · 类别序 × 组内注册序推导执行序 · 2026-08-20</div>
+<h1>🧭 infcanvas 全架构图</h1>
+<div class="sub">内核纯演算框架 + 66 玩法包 · 类别序 × 组内注册序 · 分层指挥栈 · 2026-08-20</div>
 
-<div class="stats">
-  <div class="stat"><b>1</b><span>内核系统（behavior 决策引擎）</span></div>
-  <div class="stat"><b>51</b><span>系统总数</span></div>
-  <div class="stat"><b>64</b><span>玩法包</span></div>
-  <div class="stat"><b>629</b><span>测试用例 / 61 文件</span></div>
-  <div class="stat"><b>82 / 336 / 21</b><span>建筑 / 物品 / 敌人</span></div>
-  <div class="stat"><b>13 种</b><span>ModRegistry 注册方法</span></div>
-</div>
+<div class="stats" id="stats"></div>
 
 <!-- ================= CORE ================= -->
 <h2>🔧 内核（Core，src/sim 纯演算框架）</h2>
 <div class="core-grid">
-  <div class="core-card"><h3>Sim</h3><p>ECS 实体管理 + step(dt) 驱动 51 系统 + 命令路由 + 快照/存档 + 运行时热挂载 mountPack</p></div>
-  <div class="core-card"><h3>World</h3><p>无限地图（chunk 64×64 + 负坐标 ±2²¹）+ 建筑/tile + 光照 + z 轴 + 动态建筑注册</p></div>
-  <div class="core-card"><h3>PathfindingService</h3><p>A* 寻路缓存（trailCache 字符串 key，无溢出碰撞）+ HPA* 分段</p></div>
-  <div class="core-card"><h3>EventBus / HistoryLog</h3><p>事件发布订阅 + 结构化历史（社交话题/传闻素材）</p></div>
-  <div class="core-card"><h3>need-defs</h3><p>数据驱动需求注册表（food/rest/mood/san + DLC 自定义 hygiene/entertainment）</p></div>
-  <div class="core-card"><h3>SimContext</h3><p>系统访问接口（51 方法：读写/命令/getCap 能力查询）</p></div>
-  <div class="core-card"><h3>contracts</h3><p>三类跨包契约校验：字段级 K_* 常量 / COMMAND_CONTRACTS / PROTOCOL_CONTRACTS</p></div>
-  <div class="core-card"><h3>SystemRegistry</h3><p>系统实例 + 类别序推导执行序 + profiling 统计</p></div>
+  <div class="core-card"><h3>Sim</h3><p>ECS 实体管理 + step 驱动 52 系统 + 命令路由 + 快照/存档 + mountPack 运行时热挂载 + killPawn 统一死亡事件</p></div>
+  <div class="core-card"><h3>World</h3><p>无限地图 chunk 64×64 ±2²¹ + 建筑/tile + 光照 z 轴 + 动态建筑注册</p></div>
+  <div class="core-card"><h3>PathfindingService</h3><p>A* + HPA* 分段 + trailCache 字符串 key（无溢出碰撞）+ FIFO 淘汰</p></div>
+  <div class="core-card"><h3>EventBus / HistoryLog</h3><p>GameEvent 统一发布订阅 + 结构化历史/社交话题</p></div>
+  <div class="core-card"><h3>need-defs</h3><p>数据驱动需求注册表（food/rest/mood/san + DLC 自定义）</p></div>
+  <div class="core-card"><h3>SimContext</h3><p>系统接口（51 方法：读写/命令/getCap 能力查询/playerActive）</p></div>
+  <div class="core-card"><h3>contracts</h3><p>三类跨包契约校验：K_* 常量 / COMMAND_CONTRACTS / PROTOCOL_CONTRACTS</p></div>
+  <div class="core-card"><h3>SystemRegistry</h3><p>系统实例 + 类别序推导执行序（51 占位全量）+ profiling</p></div>
 </div>
 
-<!-- ================= DLC GROUPS ================= -->
-<h2>📦 DLC 玩法包（按职责 7 类）</h2>
+<!-- ================= 分层指挥栈 ================= -->
+<h2>📋 分层指挥栈（4 层，玩家/AI 同协议）</h2>
+<div class="stack">
+  <div class="layer" style="background:#2a1a1a;border:1px solid #6a2a2a">
+    <span class="lbl" style="color:#f66">④ AI 总监</span>
+    <span class="desc">ai-director 包（可选）— 调度器：各能力包自注册 AI 动作，5s 节流按 weight 排序 → issueCommand source='ai'。玩家活跃 3s 内让位。</span>
+    <span class="src">source='ai'</span>
+  </div>
+  <div class="layer" style="background:#1a1a2a;border:1px solid #4a4a7a">
+    <span class="lbl" style="color:#7af">③ 玩家输入</span>
+    <span class="desc">human-input 包（可选）— 真人操作 → issueCommand source='player'。录制/回放（AI 教学）。卸载 = headless 纯 AI 服。</span>
+    <span class="src">source='player'</span>
+  </div>
+  <div class="layer" style="background:#1a2a1a;border:1px solid #4a7a4a">
+    <span class="lbl" style="color:#4f4">② 场指挥</span>
+    <span class="desc">field-command 包 — NPC 指挥官/战术 5 项（冲锋/固守/集火/撤退/集结）。受命者 underOrder + 征召。</span>
+    <span class="src">内部命令链</span>
+  </div>
+  <div class="layer" style="background:#2a1a2a;border:1px solid #6a4a6a">
+    <span class="lbl" style="color:#c8c">① 行为引擎</span>
+    <span class="desc">behavior 系统（内核）— 每 pawn 抽卡决定意图。被 commandCooldown 挡（玩家 3s / AI 1s / 自主 0s）。</span>
+    <span class="src">自主决策</span>
+  </div>
+</div>
+<div style="font-size:11px;color:var(--muted);margin:4px 0">
+  🔑 命令仲裁：source='player' → 3s cooldown 覆盖一切；source='ai' → 1s 短冷却（挡 behavior 但留空间）；玩家活跃 3s → AI 让位。
+  前置 DLC 可选 = AI 动作由各能力包 registerAiAction 自注册（卸载 zone → 其动作不在场 → AI 不划区）。
+</div>
+
+<!-- ================= DLC 玩法包 ================= -->
+<h2>📦 DLC 玩法包（66 包，按职责 7 类）</h2>
 <div class="legend">
   <span><span class="dot" style="background:#7d4a4a"></span>生存骨架</span>
   <span><span class="dot" style="background:#4a5a8a"></span>生产活动</span>
@@ -96,30 +106,10 @@
   <span><span class="dot" style="background:#a88a4a"></span>文明结构</span>
   <span><span class="dot" style="background:#8a8a8a"></span>扩展内容</span>
 </div>
-
 <div id="groups"></div>
 
-<!-- ================= MOUNT FLOW ================= -->
-<h2>🔄 挂载顺序（topoSort 依赖 DAG）</h2>
-<div class="mount-flow">
-  <div class="stage">
-    <h4>① 无依赖包（先挂）</h4>
-    <div class="stage-box" id="stage-free"></div>
-  </div>
-  <div class="arrow">→</div>
-  <div class="stage">
-    <h4>② 依赖包（requires 解析后挂）</h4>
-    <div class="stage-box" id="stage-dep"></div>
-  </div>
-  <div class="arrow">→</div>
-  <div class="stage">
-    <h4>③ 子包（subpacks 递归）</h4>
-    <div class="stage-box" id="stage-sub"><div class="item" style="color:var(--muted)">DLC 里加 DLC：父包 mount 自动先挂子包</div></div>
-  </div>
-</div>
-
-<!-- ================= EXECUTION PIPELINE ================= -->
-<h2>⚙️ 系统执行序（类别序 × 组内注册序，51 系统）</h2>
+<!-- ================= 执行序 ================= -->
+<h2>⚙️ 系统执行序（52 系统 · 7 类别 · bootstrap 恒表尾）</h2>
 <div class="legend">
   <span><span class="dot" style="background:#7d4a4a"></span>needs 生存</span>
   <span><span class="dot" style="background:#7a5a2a"></span>ai 决策</span>
@@ -131,94 +121,126 @@
 </div>
 <div class="pipeline" id="pipeline"></div>
 
+<!-- ================= 死亡机制 ================= -->
+<h2>💀 死亡机制（6 种死因 + 尸体/墓碑文化）</h2>
+<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:6px;font-size:12px">
+  <div style="background:var(--panel);border:1px solid #5a3a3a;border-radius:6px;padding:8px">
+    <b style="color:#f66">衰老</b><br>age > 500 天 → HP 衰减 → 自然死亡+尸体
+  </div>
+  <div style="background:var(--panel);border:1px solid #5a3a3a;border-radius:6px;padding:8px">
+    <b style="color:#f66">饥饿</b><br>food=0 → starvationDmg=2.5/s → HP 归零
+  </div>
+  <div style="background:var(--panel);border:1px solid #5a3a3a;border-radius:6px;padding:8px">
+    <b style="color:#f66">过劳死</b><br>san < -20 持续掉 HP（精神崩溃致死）
+  </div>
+  <div style="background:var(--panel);border:1px solid #5a3a3a;border-radius:6px;padding:8px">
+    <b style="color:#f66">探险受伤</b><br>距营地 >50 格 >30s → 切/扭伤/坠落概率
+  </div>
+  <div style="background:var(--panel);border:1px solid #5a3a3a;border-radius:6px;padding:8px">
+    <b style="color:#f66">难产</b><br>生育时 8% 死亡，母亲 >300 天翻倍
+  </div>
+  <div style="background:var(--panel);border:1px solid #5a3a3a;border-radius:6px;padding:8px">
+    <b style="color:#f66">处决</b><br>execute { pawnId } 命令
+  </div>
+  <div style="background:var(--panel);border:1px solid #4a4a5a;border-radius:6px;padding:8px">
+    <b style="color:#7af">尸体→墓碑</b><br>死亡生成 corpse（aura -mood），bury 5木变 tomb（+mood）
+  </div>
+  <div style="background:var(--panel2);border:1px solid #4a4a5a;border-radius:6px;padding:8px">
+    <b style="color:#aaa">killPawn 统一事件</b><br>cause 参数 + pawn_died 事件→所有死因统一入口
+  </div>
+</div>
+
+<!-- ================= 双端交互 ================= -->
+<h2>📱 双端交互矩阵（PC + 手机）</h2>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:12px">
+  <div style="background:var(--panel);border:1px solid var(--border);border-radius:6px;padding:8px">
+    <b>PC</b>
+    <div style="color:var(--muted)">左键单击=点选 · 左键拖=框选(Shift追加) · 右键=移动 · 滚轮=缩放 · 中键拖=平移</div>
+  </div>
+  <div style="background:var(--panel);border:1px solid var(--border);border-radius:6px;padding:8px">
+    <b>手机</b>
+    <div style="color:var(--muted)">轻点=点选 · 单指拖=平移 · 双指=缩放 · 长按=移动 · 按钮≥40px</div>
+  </div>
+</div>
+
 <div class="footer">
-  内核职责 = 纯演算框架（零游戏玩法）· 一切玩法通过 ModRegistry 13 种注册方法接入（registerSystemDef/registerBuilding/registerTile/registerItem/registerEnemy/registerCardDef/registerRecipe/registerWork/registerCommand/registerStrategyCard/registerTech/registerHook/overrideTuning）· 执行序唯一人工语义 = 类别序，组内序 = apply 序（requires 拓扑自动拉齐）
+  内核职责 = 纯演算框架（零游戏玩法）· 一切玩法通过 ModRegistry 13 种注册方法接入 · 执行序唯一人工语义 = 类别序 · 包依赖 = topoSort Kahn 自动推导 · 玩家/AI 同协议（Command.source）· 前置 DLC 可选（getCap/registerAiAction 探测）
 </div>
 
 <script>
-// ============ DLC 数据 ============
+const CAT_COLOR = { needs:'#7d4a4a', ai:'#7a5a2a', society:'#4a6a4a', production:'#4a5a8a', raid:'#8a4a6a', world:'#4a7a8a', boot:'#6a6a6a' };
+
 const GROUPS = [
-  { cat: 'needs', title: '🤝 生存骨架（社会系统）', color: '#7d4a4a', packs: [
-    ['needs','需求衰减+恢复','needs'], ['san','篝火/崩溃','san'], ['desire','欲望漂移','desire'],
+  { cat:'needs', title:'🤝 生存骨架（社会系统）', color:'#7d4a4a', packs:[
+    ['needs','需求衰减/恢复','needs'], ['san','篝火/崩溃','san'], ['desire','欲望漂移','desire'],
     ['economy','派系优先级','economy'], ['socialUnit','篝火记忆','socialUnit'], ['social','社交互动','social'],
     ['bootstrap','出生刷人(表尾)','bootstrap'], ['population','补员','population'],
+    ['human-input','玩家输入(可选)','human-input'], ['ai-director','AI 总监(可选)','ai-director'],
   ]},
-  { cat: 'production', title: '🏭 生产活动', color: '#4a5a8a', packs: [
+  { cat:'production', title:'🏭 生产活动', color:'#4a5a8a', packs:[
     ['gathering','采集/伐木/采矿','gather'], ['build','建造队列','build'], ['farming','农田/配方','farm'],
     ['crafting','手工/工作台','craft'], ['repair','修缮','repair'], ['medicine','伤口/治疗','medicine'],
     ['power','动力','power'], ['thermo','温度/暖炉','thermo'], ['trade','贸易','trade'],
     ['prison','囚笼','prison'], ['cooking','烹饪','cook'], ['clothing','制衣','clothing'],
+    ['industrial','工业','industrial'], ['belt','传送带','belt'],
   ]},
-  { cat: 'raid', title: '⚔️ 战斗体系', color: '#8a4a6a', packs: [
-    ['raid','敌袭/战斗结算','raid'], ['wildmouse','野外鼠生态','—'],
-    ['drafting','征召/追击','drafting'], ['field-command','指挥链/战术5项','field-command'],
-    ['weapons','火器科技树/远程','weapons'], ['urban-combat','巷战视野 LOS','urban-combat'],
-    ['fortifications','壕沟/拒马/碉堡','—'], ['beast-taming','驯猫守卫','beastTaming'],
-    ['hot-cold','热区征召/冷区生产','hot-cold'],
+  { cat:'raid', title:'⚔️ 战斗体系', color:'#8a4a6a', packs:[
+    ['raid','敌袭/战斗','raid'], ['wildmouse','野外鼠生态','—'], ['drafting','征召/追击','drafting'],
+    ['field-command','指挥链/战术5项','field-command'], ['weapons','火器科技/远程','weapons'],
+    ['urban-combat','巷战视野 LOS','urban-combat'], ['fortifications','壕沟/拒马/碉堡','—'],
+    ['beast-taming','驯猫守卫','beastTaming'], ['hot-cold','热区征召/冷区生产','hot-cold'],
   ]},
-  { cat: 'world', title: '🌍 世界演化', color: '#4a7a8a', packs: [
+  { cat:'world', title:'🌍 世界演化', color:'#4a7a8a', packs:[
     ['seasons','春夏秋冬','seasons'], ['astronomy','日食月食/潮汐','astronomy'],
     ['sailing','船/渡水','sailing'], ['disease','瘟疫/草药','disease'],
-    ['breeding','伴侣/怀孕/出生','breeding'], ['lineage','家族谱系/血脉天赋','lineage'],
+    ['breeding','伴侣/怀孕/出生','breeding'], ['lineage','家族谱系/血脉','lineage'],
     ['genetics','DNA 混合/突变','genetics'], ['flying','鹰/弓箭手','flying'],
     ['meteor','陨石冲击波','meteor'], ['visitor','天外来客','visitor'],
     ['neutral-fauna','中立生物','neutral-fauna'], ['ruins','旧世界遗迹','ruins'],
-    ['story','20 故事模板','—'],
+    ['story','20 故事模板','—'], ['death','死亡机制/衰老/尸体','death'],
   ]},
-  { cat: 'production', title: '🚂 工业 / 物流', color: '#6a8a4a', packs: [
-    ['rail','铁轨/矿车','rail'], ['industrial','蒸汽机/烟囱污染','industrial'],
-    ['belt','传送带搬运','belt'], ['waterworks','水渠/水车/灌溉','—'],
-    ['buildings-extra','箭塔/城墙/灯塔+','—'], ['buildings-2','酒馆/庄园/花园+','—'],
-    ['buildings-3','陷阱/医院/竞技场+','—'],
+  { cat:'production', title:'🚂 工业 / 物流', color:'#6a8a4a', packs:[
+    ['rail','铁轨/矿车','rail'], ['waterworks','水渠/水车/灌溉','—'],
+    ['buildings-extra','箭塔/城墙/灯塔','—'], ['buildings-2','酒馆/庄园/花园','—'],
+    ['buildings-3','陷阱/医院/竞技场','—'],
   ]},
-  { cat: 'society', title: '🏛️ 文明 / 社会结构', color: '#a88a4a', packs: [
-    ['zone','工作区/禁区','zone'], ['work-priority','职业优先级','work-priority'],
+  { cat:'society', title:'🏛️ 文明 / 社会结构', color:'#a88a4a', packs:[
+    ['zone','工作区/禁区','zone'], ['work-priority','职业优先级(ai组)','work-priority'],
     ['diplomacy','派系外交/贸易','diplomacy'], ['masterpiece','工匠杰作','masterpiece'],
     ['gossip-facts','事件→事实→传闻','gossip-facts'], ['extra-needs','数据驱动需求','—'],
   ]},
-  { cat: 'world', title: '🧩 扩展内容', color: '#8a8a8a', packs: [
+  { cat:'world', title:'🧩 扩展内容', color:'#8a8a8a', packs:[
     ['biomes','沙漠/雪原/沼泽/火山','—'], ['biomes-2','丛林/草原/苔原','—'],
     ['enemies-2','狼群/巨熊/石巨人','—'], ['events-2','瘟疫/丰收/迁徙','—'],
     ['oracle-guidance','神谕策略卡','—'], ['techPool','科技碎片池','techPool'], ['autobuild','AI 建造','autobuild'],
   ]},
 ];
 
-const FREE_PACKS = ['needs','economy','socialUnit','social','gathering','build','farming','crafting','repair','medicine','power','thermo','trade','prison','wildmouse','cooking','raid','population','events','techPool','clothing','oracle-guidance','drafting','beast-taming','seasons','astronomy','disease','lineage','genetics','flying','biomes','meteor','visitor','neutral-fauna','extra-needs','zone','work-priority','diplomacy','masterpiece','gossip-facts','ruins','biomes-2','enemies-2','events-2','story','hot-cold'];
-const DEP_PACKS = [
-  ['autobuild','requires build'], ['bootstrap','requires socialUnit'],
-  ['sailing','requires build'], ['waterworks','requires build'], ['rail','requires build'],
-  ['industrial','requires build'], ['buildings-extra','requires build'], ['buildings-2','requires build'],
-  ['buildings-3','requires build'], ['fortifications','requires build'], ['belt','requires build'],
-  ['breeding','requires social'], ['clothing-2','requires clothing'], ['clothing-3','requires clothing'],
-  ['weapons','requires clothing'], ['urban-combat','requires drafting'],
-];
-
 const PIPELINE = [
-  { id:'needs', cat:'needs' }, { id:'san', cat:'needs' }, { id:'desire', cat:'needs' }, { id:'economy', cat:'needs' },
-  { id:'behavior', cat:'ai' }, { id:'socialUnit', cat:'society' }, { id:'social', cat:'society' },
-  { id:'gather', cat:'production' }, { id:'build', cat:'production' }, { id:'farm', cat:'production' },
-  { id:'craft', cat:'production' }, { id:'repair', cat:'production' }, { id:'medicine', cat:'production' },
-  { id:'power', cat:'production' }, { id:'thermo', cat:'production' }, { id:'trade', cat:'production' },
-  { id:'prison', cat:'production' }, { id:'cook', cat:'production' }, { id:'clothing', cat:'production' },
-  { id:'beastTaming', cat:'raid' }, { id:'raid', cat:'raid' }, { id:'drafting', cat:'raid' },
-  { id:'field-command', cat:'raid' }, { id:'population', cat:'world' }, { id:'events', cat:'world' },
-  { id:'techPool', cat:'world' }, { id:'autobuild', cat:'world' }, { id:'bootstrap', cat:'boot' },
-  { id:'seasons', cat:'world' }, { id:'astronomy', cat:'world' }, { id:'disease', cat:'world' },
-  { id:'lineage', cat:'world' }, { id:'genetics', cat:'world' }, { id:'flying', cat:'world' },
-  { id:'meteor', cat:'world' }, { id:'visitor', cat:'world' }, { id:'neutral-fauna', cat:'world' },
-  { id:'zone', cat:'world' }, { id:'work-priority', cat:'ai' }, { id:'diplomacy', cat:'society' },
-  { id:'masterpiece', cat:'world' }, { id:'gossip-facts', cat:'society' }, { id:'ruins', cat:'world' },
-  { id:'hot-cold', cat:'raid' }, { id:'breeding', cat:'world' }, { id:'sailing', cat:'world' },
-  { id:'rail', cat:'world' }, { id:'industrial', cat:'production' }, { id:'belt', cat:'production' },
-  { id:'weapons', cat:'raid' }, { id:'urban-combat', cat:'raid' },
+  {id:'needs',cat:'needs'},{id:'san',cat:'needs'},{id:'desire',cat:'needs'},{id:'economy',cat:'needs'},
+  {id:'behavior',cat:'ai'},{id:'work-priority',cat:'ai'},
+  {id:'socialUnit',cat:'society'},{id:'social',cat:'society'},{id:'diplomacy',cat:'society'},{id:'gossip-facts',cat:'society'},
+  {id:'gather',cat:'production'},{id:'build',cat:'production'},{id:'farm',cat:'production'},{id:'craft',cat:'production'},
+  {id:'repair',cat:'production'},{id:'medicine',cat:'production'},{id:'power',cat:'production'},{id:'thermo',cat:'production'},
+  {id:'trade',cat:'production'},{id:'prison',cat:'production'},{id:'cook',cat:'production'},{id:'clothing',cat:'production'},
+  {id:'industrial',cat:'production'},{id:'belt',cat:'production'},
+  {id:'beastTaming',cat:'raid'},{id:'raid',cat:'raid'},{id:'drafting',cat:'raid'},{id:'field-command',cat:'raid'},
+  {id:'hot-cold',cat:'raid'},{id:'weapons',cat:'raid'},{id:'urban-combat',cat:'raid'},
+  {id:'population',cat:'world'},{id:'events',cat:'world'},{id:'techPool',cat:'world'},{id:'autobuild',cat:'world'},
+  {id:'seasons',cat:'world'},{id:'astronomy',cat:'world'},{id:'disease',cat:'world'},{id:'lineage',cat:'world'},
+  {id:'genetics',cat:'world'},{id:'flying',cat:'world'},{id:'meteor',cat:'world'},{id:'visitor',cat:'world'},
+  {id:'neutral-fauna',cat:'world'},{id:'zone',cat:'world'},{id:'masterpiece',cat:'world'},{id:'ruins',cat:'world'},
+  {id:'breeding',cat:'world'},{id:'sailing',cat:'world'},{id:'rail',cat:'world'},{id:'death',cat:'world'},
+  {id:'bootstrap',cat:'boot'},
 ];
 
-// ============ 渲染 ============
+const $ = id => document.getElementById(id);
+
 function renderGroups() {
-  const root = document.getElementById('groups');
+  const root = $('groups');
   GROUPS.forEach(g => {
     const sec = document.createElement('div');
-    sec.innerHTML = `<h2 class="section-title" style="border-color:${g.color}"><span style="color:${g.color}">${g.title}</span></h2>`;
+    sec.innerHTML = `<h2 class="section-title" style="border-color:${g.color};font-size:14px;margin:16px 0 6px;"><span style="color:${g.color}">${g.title}</span></h2>`;
     const grid = document.createElement('div'); grid.className = 'dlc-grid';
     g.packs.forEach(([name, desc, sys]) => {
       const pill = document.createElement('div'); pill.className = 'dlc-pill';
@@ -230,33 +252,30 @@ function renderGroups() {
   });
 }
 
-function renderMount() {
-  const free = document.getElementById('stage-free');
-  FREE_PACKS.forEach(id => {
-    const d = document.createElement('div'); d.className = 'item';
-    d.style.background = '#2a2a35'; d.style.color = '#aab'; d.textContent = id;
-    free.appendChild(d);
-  });
-  const dep = document.getElementById('stage-dep');
-  DEP_PACKS.forEach(([id, req]) => {
-    const d = document.createElement('div'); d.className = 'item';
-    d.style.background = '#2a352a'; d.style.color = '#9b9'; d.textContent = `${id}  ←  ${req}`;
-    dep.appendChild(d);
-  });
-}
-
 function renderPipeline() {
-  const root = document.getElementById('pipeline');
+  const root = $('pipeline');
   PIPELINE.forEach((s, i) => {
     const c = document.createElement('div');
     c.className = 'sys-chip cat-' + s.cat;
-    c.title = `#${i+1} · 类别 ${s.cat}`;
+    c.title = `#${i+1} · ${s.cat}`;
     c.innerHTML = `<span class="idx">${i+1}</span>${s.id}`;
     root.appendChild(c);
   });
 }
 
-renderGroups(); renderMount(); renderPipeline();
+$('stats').innerHTML =
+  `<div class="stat"><b>52</b><span>系统</span></div>` +
+  `<div class="stat"><b>66</b><span>玩法包</span></div>` +
+  `<div class="stat"><b>637</b><span>测试用例</span></div>` +
+  `<div class="stat"><b>82</b><span>建筑</span></div>` +
+  `<div class="stat"><b>336</b><span>物品</span></div>` +
+  `<div class="stat"><b>21</b><span>敌人</span></div>` +
+  `<div class="stat"><b>7</b><span>类别</span></div>` +
+  `<div class="stat"><b>4</b><span>指挥层</span></div>`;
+
+renderGroups();
+renderPipeline();
+document.title = 'infcanvas 全架构图';
 </script>
 </body>
 </html>
