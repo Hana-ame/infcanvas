@@ -8,6 +8,9 @@ const r = (p: string) => fileURLToPath(new URL(p, import.meta.url));
 export default defineConfig({
   server: {
     port: 5173,
+    // 2026-08-20 允许任意 Host 访问（用户经 wsl-5173.moonchan.xyz 代理访问——Vite 默认
+    // 只放行 localhost/127.0.0.1，代理 Host 会 403 "Blocked request"）
+    allowedHosts: true,
     watch: {
       ignored: ['**/scripts/**', '**/docs/**', '**/README.md'],
     },
