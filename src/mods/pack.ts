@@ -1,8 +1,9 @@
 // 玩法包（2026-08-21 从零重写·精简插件化）
 // 一切可装卸玩法 = ModPack。内核只提供：==注册表 + 挂载拓扑 + 执行序推导==。
 
-import type { Sim } from './sim';
-import type { GameSystem } from './systems';
+import type { Sim } from '../sim/sim';
+import type { ModRegistry } from './registry';
+import type { GameSystem } from '../sim/systems';
 
 export type Category = 'needs' | 'ai' | 'society' | 'production' | 'raid' | 'world' | 'boot';
 

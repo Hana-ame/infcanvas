@@ -25,6 +25,7 @@ export interface Pawn {
   path: Pos[];            // 移动路径（A* 结果）
   target?: Pos;           // 当前目标格
   trait?: string;         // 天赋（决定外观/行为倾向）：'strong'|'lazy'|'owl'...
+  commandCd: number;      // 玩家命令冷却（秒）——期间不自主决策
 }
 
 /** 地图地形 */

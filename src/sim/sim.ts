@@ -44,11 +44,12 @@ export class Sim {
     const p: Pawn = {
       eid,
       name: `鼠${eid}`,
-      pos: x !== undefined ? { x, y } : this.findSpawn(),
+      pos: x !== undefined && y !== undefined ? { x, y } : this.findSpawn(),
       needs: { food: 90, rest: 90, mood: 60, san: 90 },
       health: { hp: 100, maxHp: 100 },
       job: '闲逛',
       path: [],
+      commandCd: 0,
       trait: ['strong', 'lazy', 'owl', 'workaholic'][Math.floor(Math.random() * 4)],
     };
     this.pawns.set(eid, p);

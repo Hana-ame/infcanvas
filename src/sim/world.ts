@@ -1,6 +1,6 @@
 // 世界（2026-08-21 从零重写）——地形 + 建筑 + 光照 + 视野查询
 // 固定尺寸地图（从零阶段不做无限地图；简单直接，后续可扩展）
-import type { Building, TileId } from './types';
+import type { Building, Pos, TileId } from './types';
 
 export const MAP_W = 64;
 export const MAP_H = 64;
