@@ -133,7 +133,7 @@ export class Sim implements SimContext {
   // 2026-08-20 架构优化：寻路缓存委托到 PathfindingService
   private path!: PathfindingService;
   // 向后兼容：旧代码读 sim.trailCache → 返回 service 内部 Map
-  private get trailCache() { return this.path["trailCache"] as Map<number, { x: number; y: number }[]>; }
+  private get trailCache() { return this.path["trailCache"] as Map<string, { x: number; y: number }[]>; }
   // 2026-08-20 pawnProfile 缓存：HUD 每帧每 pawn 调用 → 每帧重建 ~15 字段对象 × 40 pawn = GC 压力
   private _profileCache = new Map<number, any>();
   // 2026-08-20 十万级单位优化：时间分片批处理（pawnCount > threshold 时启用）

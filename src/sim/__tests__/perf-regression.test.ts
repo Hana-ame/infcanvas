@@ -55,12 +55,14 @@ describe('性能优化回归（2026-08-20）', () => {
     expect(sim.readNeeds(eid)!.san).toBe(0);
   });
 
-  // trailCache 数字 key
-  it('trailCache：数字 key 缓存命中（同一路径第二次调用不重算）', () => {
+  // trailCache 字符串 key（2026-08-20 修复：原数字 key 溢出静默碰撞 → 改字符串）
+  it('trailCache：缓存命中（同一路径第二次调用不重算）', () => {
     const sim = new Sim({ seed: 6, pawnCount: 0, registry: ModRegistry.default() });
-    const p1 = sim.getPath(10, 10, 20, 20);
-    const p2 = sim.getPath(10, 10, 20, 20); // 应命中缓存
-    expect(p1).toEqual(p2); // 路径一致
+    // (96,96)→(60,60) 在 seed=6 生成的世界中路径非空（可通行）
+    const p1 = sim.getPath(96, 96, 60, 60);
+    expect(p1.length).toBeGreaterThan(0);
+    const p2 = sim.getPath(96, 96, 60, 60); // 应命中缓存
+    expect(p1).toEqual(p2);
     const hits = (sim as unknown as { trailHits: number }).trailHits;
     expect(hits).toBeGreaterThan(0);
   });
