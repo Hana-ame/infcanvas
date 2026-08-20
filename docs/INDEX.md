@@ -35,6 +35,7 @@
 | `docs/COLAB.md` | 与用户的设计问答、实现报告、方向决策 | 追溯“为什么这么设计”时读 |
 | `docs/RESEARCH.md` | 竞品玩法研究报告（DF/RimWorld/LLM 游戏等） | 理解灵感来源和差异化时读 |
 | `docs/DLC_REFERENCE.md` | DLC 种子库：大航海/一战/二战/2077/帝国等 | 做 DLC/新玩法包时读 |
+| `docs/DLC_PACKS.md` | 当前全部 DLC/玩法包清单 | 查看当前默认挂了哪些包时读 |
 
 ### 计划 / 进度 / 实施
 
@@ -54,7 +55,7 @@
 ## 3. 当前状态快照
 
 - 测试：`npm test` 当前 **625 用例 / 62 文件** 全绿；`npx tsc --noEmit` 干净。
-- 默认装配：**49 系统 / 60 玩法包**。
+- 默认装配：**50 系统 / 62 玩法包**。
 - 入口：单机 `npm run dev`；联机 `npm run server -- 8080` + `?remote=ws://127.0.0.1:8080`。
 - 最新文档变更请优先看 `AGENTS.md` 末尾的“当前装配态快照”和 `docs/PROGRESS.md` 末尾。
 
@@ -127,6 +128,7 @@ docs/
   REPLAYS.md          趣味回放
   RESEARCH.md         竞品研究
   DLC_REFERENCE.md    DLC 种子库
+  DLC_PACKS.md       当前 DLC/玩法包清单
   COLAB.md            设计问答/决策记录
   RW_SPRINT.md        RW-1 第一批
   RW_SPRINT2.md       RW-1 修订

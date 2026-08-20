@@ -57,6 +57,6 @@
 - 纯逻辑游玩：`npx tsx scripts/play.ts`（CLI：state/pawns/sel/move/build/job/oracle/map/f）
 - 联机 server：`npm run server -- 8080`，客户端 `?remote=ws://127.0.0.1:8080`（神谕抽卡默认启用，LLM_ENDPOINT 仅可选增强）
 - DLC 基线自动更新：`npx tsx scripts/update-baselines.ts`（加完 DLC 后运行 → 自动更新 assembly/dlc-stress/dlc-deploy 的系统数基线）
-- **当前装配态快照**（2026-08-20 终版）：`npm test` 当前 = **625 用例 / 62 文件**；默认装配 = **49 系统** / **60 包**。
+- **当前装配态快照**（2026-08-20 终版）：`npm test` 当前 = **625 用例 / 62 文件**；默认装配 = **50 系统** / **62 包**。
 - **DLC 添加指南**：`docs/DLC_GUIDE.md`（6 步流程 + 检查清单 + 模板 + 可注册内容速查表）
 - 历史功能演进、性能优化、DLC/玩法包、审查修复记录统一见 `docs/PROGRESS.md` 与 `docs/CHANGELOG.md`。
