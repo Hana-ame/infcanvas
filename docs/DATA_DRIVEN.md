@@ -529,3 +529,58 @@ overrideTuning(patch: DeepPartial<TuningConfig>): this  // 覆盖平衡参数（
 | hygiene.urgentAt | 15 | 紧急阈值 |
 | entertainment.decay | 0.08/s | 娱乐衰减 |
 | entertainment.urgentAt | 10 | 紧急阈值 |
+
+
+## 系统执行序最终态（2026-08-20 顺序审计修复）
+
+> 历史演进见上文 §10.1.x（BASE_SYSTEM_ORDER 各阶段）。**当前态**：
+
+- **推导机制**：执行序 = 类别序（CATEGORY_ORDER 7 类 needs→ai→society→production→raid→world→boot）× 组内注册序（apply 序）。唯一人工语义 = 类别序。
+- **SYSTEM_DEFS 51 占位全量**（2026-08-20 审计修复）：此前 23 个表外系统（seasons/weapons/hot-cold 等）不在表内 → 兜底整体追加到 bootstrap 后 = 类别语义丢失（世界类跑 boot 后、战斗类排末尾、bootstrap 恒表尾被破坏、work-priority 声明 ai 组却排不进）。修复 = 全部补占位（仅类别声明，ctor 由玩法包回填）+ 修正 4 包 category（disease/lineage/genetics/flying → world）。
+- **当前执行序（51 系统）**：
+```
+needs(4)      needs san desire economy
+ai(2)         behavior work-priority            ← 决策读职业加成
+society(4)    socialUnit social diplomacy gossip-facts
+production(14) gather build farm craft repair medicine power thermo trade prison cook clothing industrial belt
+raid(7)       raid drafting beastTaming hot-cold weapons field-command urban-combat
+world(19)     population events techPool seasons astronomy disease lineage genetics flying meteor visitor neutral-fauna zone masterpiece ruins breeding autobuild sailing rail
+boot(1)       bootstrap（恒表尾——出生刷人晚于全体系统）
+```
+- 留知：autobuild 世界组尾 = requires build 拓扑稳定副作用（依赖者入队晚），无正确性影响。
+- 装配：50 表内 + 1 内核？否——51 全量（behavior 内核内联 ctor，其余 50 由玩法包回填）。包数 62（默认清单）。
+
+## 新 DLC 数值表（2026-08-20 追加）
+
+### weapons 武器数值
+| 武器 | 伤害 | 射程 | 射速 | 配方 |
+|---|---|---|---|---|
+| 燧发枪 musket | 15 | 12 | 3s | 矿5+木3+火药1（military:gunpowder） |
+| 步枪 rifle | 20 | 20 | 2s | 矿8+火药1（military:rifle） |
+| 机枪 lmg | 8 | 15 | 0.5s | 矿15+钢3（military:lmg） |
+| 冲锋枪 smg | 5 | 8 | 0.2s | 钢5（military:smg） |
+| 大炮 cannon | 50 | 25 | 8s | 矿30+钢10（military:artillery） |
+
+### fortifications 工事数值
+| 工事 | HP | 特性 |
+|---|---|---|
+| 壕沟 trench | 500 | 不可通行（敌人绕行） |
+| 拒马 abatis | 200 | 不可通行 + 接触伤害 5 |
+| 鹿角 cheval | 150 | 不可通行 + 减速 0.5x |
+| 胸墙 parapet | 300 | 不可通行 + road（垫平 z） |
+| 地堡 bunker | 800 | 可藏人 + 射击 range8 dmg3 |
+| 铁丝网 barbed-wire | 80 | 不可通行 + 减速 0.3x |
+| 碉堡 pillbox | 600 | 不可通行 + 射击 range10 dmg4 |
+| 炮台基座 emplacement | 400 | 射程 ×1.5 |
+
+### urban-combat 巷战视野数值
+| 参数 | 值 | 说明 |
+|---|---|---|
+| visionRange | 12 | 小人视野基础范围 |
+| highGroundBonus | 4/格 | 每 1 z 差 +4 格视野 |
+| visionCheckInterval | 0.5s | LOS 节流 |
+| barrierTags | ['barrier'] | 遮挡视线建筑 tag（墙/碉堡/胸墙） |
+
+### 运行时热挂载（DLC 里加 DLC）
+- `ModPack.subpacks`：父 DLC 声明子 DLC，mount 时自动先挂（requires 解析 + 幂等去重）。
+- `Sim.mountPack(pack)`：运行中热挂载——mods.mount（def + 系统 def）+ assemblePendingSystems 增量装配 + World.registerBuildingDef 同步新建筑 + 新命令进 cmdValidate。

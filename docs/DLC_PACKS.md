@@ -59,7 +59,7 @@
 | `buildings-2` | 建筑扩展二期 |
 | `clothing-2` | 服饰扩展二期 |
 | `zone` | 区域系统 |
-| `work-priority` | 职业优先级（未完成接入） |
+| `work-priority` | 职业优先级（ai 组：指派职业 utility +10 进决策抽卡） |
 | `diplomacy` | 派系外交 |
 | `belt` | 传送带物流 |
 | `masterpiece` | 工匠杰作 |
@@ -73,7 +73,8 @@
 | `story` | 故事模板事件 |
 | `hot-cold` | 前线/后方热区冷区 |
 | `fortifications` | 防御工事 |
-| `weapons` | 武器扩展 |
+| `weapons` | 武器扩展（火器科技树：燧发枪→步枪→机枪→冲锋枪→大炮） |
+| `urban-combat` | 巷战视野（Bresenham LOS 视线遮挡，墙后不可射击） |
 
 ## 说明
 

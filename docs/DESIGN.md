@@ -964,3 +964,25 @@ registerHook('beforeRoll', (prob, ctx) => ...);          // check 流程阶段�
 - events-2：瘟疫/丰收/迁徙/火山/商队
 - buildings-3：陷阱/医院/学校/市场/竞技场/信号塔
 - clothing-3：鞋/手套/面具/披肩（4 部位 × 2 材质 = 8 新穿戴物）
+
+
+## 新增战斗玩法架构（2026-08-20 追加）
+
+### weapons 武器系统
+- 武器 = 物品（meta.weapon = { dmg, range, cd, type }）→ wear 命令装备 → 武器系统读 meta 射击。
+- 科技树：火药(3) → 燧发枪 → 步枪 → 机枪(5) / 冲锋枪(4)；火药 → 大炮(5) + 炮兵。
+- 兵种：骑兵（高速冲锋 dash）/ 装甲车（500HP 厚）/ 炮兵（远程重击）。
+- 设计：LOS 门——无视野的敌人不能射击（巷战转角遭遇）。
+
+### urban-combat 巷战视野
+- Bresenham 射线投射 LOS：逐格推进遇 barrier 建筑（墙/碉堡/胸墙）→ 遮挡。
+- 视野范围 = 基础 12 + z 差 ×4（站得高看得远）；0.5s 节流；只算征召/指挥官。
+- 能力：ctx.getCap('vision') → canSee/visibleCount/hasLOS；weapons 射击前查 LOS。
+
+### fortifications 战场工事
+- 种子原则：工事 = 建筑 + tag（barrier/defense/fortify）→ raid 遍历时自然消费。
+- 拒马/鹿角/铁丝网 = 经行伤害/减速；地堡/碉堡 = 藏人 + 射击；炮台基座 = 射程 ×1.5。
+
+### 运行时热挂载（mountPack）
+- ModPack.subpacks 嵌套：大 DLC = 小 DLC 组合（DLC 商店拆装）。
+- Sim.mountPack：游戏运行中挂载新 DLC——新系统增量装配（下一 tick 生效）、新建筑同步 World、新命令即用。

@@ -54,8 +54,10 @@
 
 ## 3. 当前状态快照
 
-- 测试：`npm test` 当前 **625 用例 / 62 文件** 全绿；`npx tsc --noEmit` 干净。
-- 默认装配：**50 系统 / 62 玩法包**。
+- 测试：`npm test` 当前 **632 用例 / 62 文件** 全绿；`npx tsc --noEmit` 干净。
+- 默认装配：**51 系统 / 62 玩法包**（另 62 包 = 60 默认 + 2 可选：weapons/urban-combat 等在默认清单）。
+- 执行序：**7 类别 × 组内注册序推导**（SYSTEM_DEFS 51 占位全量；bootstrap 恒表尾），见 `docs/DATA_DRIVEN.md`。
+- 运行：单机 `npm run dev`；联机 `npm run server -- 8080`；DLC 加载 `npx tsx scripts/loader.ts mods [--sim]`。
 - 入口：单机 `npm run dev`；联机 `npm run server -- 8080` + `?remote=ws://127.0.0.1:8080`。
 - 最新文档变更请优先看 `AGENTS.md` 末尾的“当前装配态快照”和 `docs/PROGRESS.md` 末尾。
 
@@ -129,6 +131,9 @@ docs/
   RESEARCH.md         竞品研究
   DLC_REFERENCE.md    DLC 种子库
   DLC_PACKS.md       当前 DLC/玩法包清单
+  architecture-visual.html  架构可视化（内核+DLC 职责/加载顺序）
+  dependency-graph.html     依赖 DAG / 执行序 / 类别星图（交互 SVG）
+  loader-visual.html        DLC 加载器可视化界面
   COLAB.md            设计问答/决策记录
   RW_SPRINT.md        RW-1 第一批
   RW_SPRINT2.md       RW-1 修订

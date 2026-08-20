@@ -227,3 +227,27 @@ const sim = new Sim({ seed: 42, pawnCount: 40, registry: mods });
 ```
 
 级联排除：排除 `drafting` 会自动排除依赖它的 `field-command`。
+
+
+## 进阶：DLC 里加 DLC（2026-08-20 追加）
+
+### 子包嵌套（subpacks）
+大 DLC = 若干小 DLC 的组合（适合 DLC 商店拆装/聚合包）：
+```ts
+export const megaDlc: ModPack = {
+  id: 'mega-dlc', requires: [],
+  subpacks: [dlcA, dlcB, dlcC],   // mount 时自动先挂子包（requires 解析 + 幂等去重）
+  apply(m) { /* 父包逻辑 */ },
+};
+```
+
+### 运行时热挂载（Sim.mountPack）
+游戏运行中（不重启）挂载新 DLC：
+```ts
+sim.mountPack(newDlc);
+```
+- 新建筑/物品/系统 def/命令即时注册
+- 新系统增量装配（复用类别序推导，已装配不重复），下一 tick 生效
+- 新建筑自动同步到 World（registerBuildingDef）
+- 新命令自动进 cmdValidate 白名单
+- 前提：包 def 无重复 id（与编译期挂载同一规则）
