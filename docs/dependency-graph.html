@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>infcanvas 依赖图 / 执行序图</title>
+<style>
+  :root {
+    --bg:#0f1419; --panel:#1a2129; --text:#e6edf3; --muted:#8b98a5;
+    --accent:#58a6ff; --green:#3fb950; --yellow:#d29922; --purple:#bc8cff;
+    --red:#f85149; --cyan:#39c5cf; --border:#30363d;
+  }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:var(--bg); color:var(--text); font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif; padding:16px; }
+  h1 { font-size:19px; margin-bottom:2px; }
+  .sub { color:var(--muted); font-size:12px; margin-bottom:12px; }
+  .tabs { display:flex; gap:8px; margin-bottom:10px; }
+  .tab { background:var(--panel); border:1px solid var(--border); color:var(--muted); padding:7px 18px; border-radius:6px; cursor:pointer; font-size:13px; }
+  .tab.active { background:var(--accent); color:#04121f; font-weight:600; border-color:var(--accent); }
+  .canvas-wrap { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:8px; }
+  svg { width:100%; height:auto; display:block; }
+  .legend { display:flex; gap:16px; flex-wrap:wrap; margin:8px 2px; font-size:12px; color:var(--muted); }
+  .legend .dot { display:inline-block; width:11px; height:11px; border-radius:50%; margin-right:4px; vertical-align:-2px; }
+  .tooltip { font-size:12px; color:var(--muted); margin:6px 2px; line-height:1.6; }
+  .node { cursor:pointer; }
+  .node text { font-size:10px; fill:var(--text); text-anchor:middle; pointer-events:none; }
+  .node circle { stroke-width:1.5; }
+  .edge { stroke:var(--border); stroke-width:1.2; fill:none; marker-end:url(#arrow); }
+  .edge.hl { stroke:var(--yellow); stroke-width:2; }
+  .node.hl circle { stroke:var(--yellow); stroke-width:3; }
+  .node.fade { opacity:.15; }
+  .edge.fade { opacity:.08; }
+  .stat { background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:6px 14px; font-size:12px; display:inline-block; margin:0 6px 6px 0; }
+  .stat b { color:var(--accent); }
+</style>
+</head>
+<body>
+<h1>🧭 infcanvas 图：DLC 依赖 DAG + 系统执行序</h1>
+<div class="sub">节点 = 包/系统 · 边 = requires 依赖 · 悬停高亮相邻关系 · 2026-08-20</div>
+
+<div class="stats" id="stats"></div>
+
+<div class="tabs">
+  <button class="tab active" data-tab="depgraph">① DLC 依赖图（64 包）</button>
+  <button class="tab" data-tab="execgraph">② 系统执行序（51 系统流水线）</button>
+  <button class="tab" data-tab="factiongraph">③ 玩法包类别星图</button>
+</div>
+
+<div class="legend" id="legend"></div>
+<div class="canvas-wrap"><svg id="graph" viewBox="0 0 1200 720"></svg></div>
+<div class="tooltip" id="tip"></div>
+
+<script>
+// ================= 数据 =================
+// 包 → requires 依赖（仅列出有依赖的；无依赖 = 自由节点）
+const DEP = {
+  autobuild:['build'], bootstrap:['socialUnit'], sailing:['build'], breeding:['social'],
+  clothing2:['clothing'], clothing3:['clothing'], weapons:['clothing'], urbancombat:['drafting'],
+  'buildings-extra':['build'], waterworks:['build'], rail:['build'], industrial:['build'],
+  belt:['build'], 'buildings-2':['build'], 'buildings-3':['build'], fortifications:['build'],
+  fieldcommand:['drafting'],
+};
+const PACK_LABEL = {
+  autobuild:'AI 建造', bootstrap:'引导', sailing:'航海', breeding:'生育',
+  clothing2:'服饰Ⅱ', clothing3:'服饰Ⅲ', weapons:'武器', urbancombat:'巷战',
+  'buildings-extra':'建筑+', waterworks:'水利', rail:'铁道', industrial:'工业',
+  belt:'传送带', 'buildings-2':'建筑Ⅱ', 'buildings-3':'建筑Ⅲ', fortifications:'工事',
+  fieldcommand:'指挥链', build:'建造', socialUnit:'派系单位', social:'社交', clothing:'制衣', drafting:'征召',
+};
+
+// 全部包（有依赖 + 自由节点）
+const ALL = [
+  ...Object.keys(DEP),
+  'needs','economy','desire','gathering','farming','crafting','repair','medicine','power','thermo','trade','prison','wildmouse','cooking','raid','population','events','techPool','oracle-guidance','beast-taming','seasons','astronomy','disease','lineage','genetics','flying','biomes','meteor','visitor','neutral-fauna','extra-needs','zone','work-priority','diplomacy','masterpiece','gossip-facts','ruins','biomes-2','enemies-2','events-2','story','hot-cold'
+];
+const LABEL = (id) => PACK_LABEL[id] ?? id;
+
+// 系统执行序（7 类别）
+const CATS = ['needs','ai','society','production','raid','world','boot'];
+const CAT_COLOR = { needs:'#7d4a4a', ai:'#7a5a2a', society:'#4a6a4a', production:'#4a5a8a', raid:'#8a4a6a', world:'#4a7a8a', boot:'#6a6a6a' };
+const PIPELINE = [
+  ['needs','needs'],['san','needs'],['desire','needs'],['economy','needs'],['behavior','ai'],['socialUnit','society'],['social','society'],
+  ['gather','production'],['build','production'],['farm','production'],['craft','production'],['repair','production'],['medicine','production'],['power','production'],['thermo','production'],['trade','production'],['prison','production'],['cook','production'],['clothing','production'],
+  ['beastTaming','raid'],['raid','raid'],['drafting','raid'],['field-command','raid'],
+  ['population','world'],['events','world'],['techPool','world'],['autobuild','world'],['bootstrap','boot'],
+  ['seasons','world'],['astronomy','world'],['disease','world'],['lineage','world'],['genetics','world'],['flying','world'],['meteor','world'],['visitor','world'],['neutral-fauna','world'],['zone','world'],['work-priority','ai'],['diplomacy','society'],['masterpiece','world'],['gossip-facts','society'],['ruins','world'],['hot-cold','raid'],['breeding','world'],['sailing','world'],['rail','world'],['industrial','production'],['belt','production'],['weapons','raid'],['urban-combat','raid']
+];
+
+const $ = (id) => document.getElementById(id);
+const svg = $('graph');
+const NS = 'http://www.w3.org/2000/svg';
+let defs, edges, nodes, tipEl;
+
+function el(name, attrs) {
+  const e = document.createElementNS(NS, name);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  return e;
+}
+function arrowDef() {
+  defs = el('defs', {});
+  const m = el('marker', { id:'arrow', viewBox:'0 0 10 10', refX:'9', refY:'5', markerWidth:'7', markerHeight:'7', orient:'auto-start-reverse' });
+  m.appendChild(el('path', { d:'M0,0 L10,5 L0,10 z', fill:'#8b98a5' }));
+  defs.appendChild(m); svg.appendChild(defs);
+}
+
+// ================= Tab 1: DLC 依赖 DAG =================
+function depGraph() {
+  svg.innerHTML = ''; arrowDef();
+  const W = 1200, H = 720;
+  // 分层：深度 0 = 自由节点（环形），深度 1 = 被依赖（build/clothing/drafting/socialUnit/social/…），深度 2 = 依赖者
+  const roots = [...new Set(Object.values(DEP).flat())]; // 被依赖集合
+  const layered = Object.keys(DEP);                       // 依赖者
+  const free = ALL.filter(id => !layered.includes(id) && !roots.includes(id));
+
+  const pos = {};
+  // 自由节点：外环
+  free.forEach((id, i) => {
+    const a = (i / free.length) * Math.PI * 2 - Math.PI / 2;
+    pos[id] = { x: W/2 + Math.cos(a) * 470, y: H/2 + Math.sin(a) * 290 };
+  });
+  // 根节点（被依赖）：中环
+  roots.forEach((id, i) => {
+    const a = (i / roots.length) * Math.PI * 2 - Math.PI / 2;
+    pos[id] = { x: W/2 + Math.cos(a) * 260, y: H/2 + Math.sin(a) * 190 };
+  });
+  // 依赖者：内环
+  layered.forEach((id, i) => {
+    const a = (i / layered.length) * Math.PI * 2 - Math.PI / 2;
+    pos[id] = { x: W/2 + Math.cos(a) * 140, y: H/2 + Math.sin(a) * 120 };
+  });
+
+  // 边
+  edges = [];
+  for (const [to, deps] of Object.entries(DEP)) {
+    for (const from of deps) edges.push({ from, to });
+  }
+  for (const e of edges) {
+    const p = pos[e.from], q = pos[e.to];
+    svg.appendChild(el('line', { x1:p.x, y1:p.y, x2:q.x, y2:q.y, class:'edge', 'data-from':e.from, 'data-to':e.to }));
+  }
+  // 节点
+  nodes = ALL.map(id => {
+    const p = pos[id];
+    const g = el('g', { class:'node', transform:`translate(${p.x},${p.y})`, 'data-id':id });
+    const r = 20;
+    const cir = el('circle', { r, fill:'#222c38', stroke: roots.includes(id) ? '#4a6a4a' : (Object.keys(DEP).includes(id) ? '#4a5a8a' : '#8b98a5') });
+    g.appendChild(cir);
+    g.appendChild(el('text', { y:3, 'font-size':9.5, fill:'#8b98a5' })).textContent = LABEL(id);
+    g.appendChild(el('title', {})).textContent = `id: ${id}\n依赖: ${(DEP[id] ?? []).join(', ') || '无'}\n被依赖: ${edges.filter(e=>e.from===id).map(e=>e.to).join(', ') || '无'}`;
+    svg.appendChild(g);
+    return g;
+  });
+  bindHover();
+  $('tip').textContent = '💡 悬停节点 → 高亮依赖关系。外环=无依赖自由包，中环=被依赖核心(build/clothing/drafting/socialUnit/social)，内环=依赖者。边箭头 = requires →';
+}
+
+// ================= Tab 2: 系统执行序流水线 =================
+function execGraph() {
+  svg.innerHTML = ''; arrowDef();
+  const W = 1200, H = 720;
+  const groups = {};
+  PIPELINE.forEach(([id, cat]) => { (groups[cat] ??= []).push(id); });
+  const xs = { needs:170, ai:340, society:510, production:680, raid:850, world:1020, boot:1150 };
+  const pos = {};
+  // 类别列 → 组内垂直排列
+  for (const cat of CATS) {
+    const ids = groups[cat] ?? [];
+    ids.forEach((id, i) => {
+      const colH = 620;
+      const y = 60 + (colH / Math.max(1, ids.length)) * (i + 0.5);
+      pos[id] = { x: xs[cat], y };
+    });
+  }
+  // 流水线边（相邻执行）
+  edges = PIPELINE.slice(0, -1).map(([a], i) => ({ from: PIPELINE[i][0], to: PIPELINE[i+1][0] }));
+  // 画边（虚线流水线 + 实线跳类别）
+  for (const e of edges) {
+    const p = pos[e.from], q = pos[e.to];
+    svg.appendChild(el('line', { x1:p.x, y1:p.y, x2:q.x, y2:q.y, class:'edge', 'data-from':e.from, 'data-to':e.to, 'stroke-dasharray': p.y !== q.y ? '4 3' : 'none', opacity: q.x - p.x > 170 ? 0.5 : 0.9 }));
+  }
+  // 类别标签
+  CATS.forEach(cat => {
+    const txt = el('text', { x: xs[cat], y: 30, 'text-anchor':'middle', 'font-size':13, fill:CAT_COLOR[cat], 'font-weight':700 });
+    txt.textContent = `${cat} (${groups[cat]?.length ?? 0})`;
+    svg.appendChild(txt);
+  });
+  // 节点
+  nodes = PIPELINE.map(([id, cat]) => {
+    const p = pos[id];
+    const g = el('g', { class:'node', transform:`translate(${p.x},${p.y})`, 'data-id':id });
+    const r = 15;
+    const cir = el('circle', { r, fill:'#222c38', stroke:CAT_COLOR[cat], 'stroke-width':1.5 });
+    g.appendChild(cir);
+    g.appendChild(el('text', { y:3, 'font-size':8.5, fill:'#e6edf3', 'font-weight':600 })).textContent = id;
+    g.appendChild(el('title', {})).textContent = `#${PIPELINE.findIndex(p=>p[0]===id)+1} · ${cat}`;
+    svg.appendChild(g);
+    return g;
+  });
+  bindHover();
+  $('tip').textContent = '💡 系统执行序（类别序 × 组内注册序）：needs → ai → society → production → raid → world → boot。悬停看相邻执行关系。bootstrap 恒表尾（出生刷人晚于全体系统 init）';
+}
+
+// ================= Tab 3: 玩法包类别星图 =================
+const CATEGORY_PACKS = {
+  '生存骨架': ['needs','san','desire','economy','socialUnit','social','bootstrap','population'],
+  '生产活动': ['gathering','build','farming','crafting','repair','medicine','power','thermo','trade','prison','cooking','clothing'],
+  '战斗体系': ['raid','wildmouse','drafting','fieldcommand','weapons','urbancombat','fortifications','beast-taming','hot-cold'],
+  '世界演化': ['seasons','astronomy','sailing','disease','breeding','lineage','genetics','flying','meteor','visitor','neutral-fauna','ruins','story'],
+  '工业物流': ['rail','industrial','belt','waterworks','buildings-extra','buildings-2','buildings-3'],
+  '文明结构': ['zone','work-priority','diplomacy','masterpiece','gossip-facts','extra-needs'],
+  '扩展内容': ['biomes','biomes-2','enemies-2','events-2','oracle-guidance','techPool','autobuild'],
+};
+const CAT_COLORS = ['#7d4a4a','#4a5a8a','#8a4a6a','#4a7a8a','#6a8a4a','#a88a4a','#8a8a8a'];
+function factionGraph() {
+  svg.innerHTML = ''; arrowDef();
+  const W = 1200, H = 720, cx = W/2, cy = H/2;
+  const cats = Object.keys(CATEGORY_PACKS);
+  nodes = []; edges = [];
+  let all = 0;
+  cats.forEach((cat, ci) => {
+    const packs = CATEGORY_PACKS[cat];
+    const baseA = (ci / cats.length) * Math.PI * 2 - Math.PI/2;
+    packs.forEach((id, pi) => {
+      const a = baseA + (0.9 / packs.length) * pi;
+      const r = 300;
+      const x = cx + Math.cos(a) * r;
+      const y = cy + Math.sin(a) * r;
+      const g = el('g', { class:'node', transform:`translate(${x},${y})`, 'data-id':id });
+      g.appendChild(el('circle', { r:17, fill:'#222c38', stroke:CAT_COLORS[ci], 'stroke-width':1.5 }));
+      g.appendChild(el('text', { y:3, 'font-size':8, fill:'#e6edf3' })).textContent = id;
+      g.appendChild(el('title', {})).textContent = `${id} · ${cat}`;
+      svg.appendChild(g); nodes.push(g); all++;
+    });
+    // 类别标签
+    const la = baseA;
+    const lx = cx + Math.cos(la) * 330, ly = cy + Math.sin(la) * 330;
+    const t = el('text', { x:lx, y:ly, 'text-anchor':'middle', 'font-size':12, fill:CAT_COLORS[ci], 'font-weight':700 });
+    t.textContent = `${cat} (${packs.length})`;
+    svg.appendChild(t);
+  });
+  bindHover();
+  $('tip').textContent = `💡 玩法包 7 大类别，${all} 个包。悬停看归属类别。`;
+  $('stats').innerHTML = `<div class="stat"><b>${all}</b> 玩法包</div>`;
+}
+
+// ================= 交互 =================
+function bindHover() {
+  nodes.forEach(g => {
+    const id = g.getAttribute('data-id');
+    g.addEventListener('mouseenter', () => highlight(id));
+    g.addEventListener('mouseleave', () => unhighlight());
+  });
+}
+function highlight(id) {
+  const adj = new Set([id]);
+  edges.forEach(e => { if (e.from===id || e.to===id) { adj.add(e.from); adj.add(e.to); } });
+  nodes.forEach(g => {
+    const nid = g.getAttribute('data-id');
+    if (!adj.has(nid)) g.classList.add('fade'); else g.classList.add('hl');
+  });
+  edges.forEach(e => {
+    const eEl = svg.querySelector(`line[data-from="${e.from}"][data-to="${e.to}"]`);
+    if (eEl && (e.from===id || e.to===id)) eEl.classList.add('hl'); else if (eEl) eEl.classList.add('fade');
+  });
+}
+function unhighlight() {
+  nodes.forEach(g => g.classList.remove('hl','fade'));
+  svg.querySelectorAll('line').forEach(l => l.classList.remove('hl','fade'));
+}
+
+// ================= Tab 切换 =================
+const RENDER = { depgraph:depGraph, execgraph:execGraph, factiongraph:factionGraph };
+document.querySelectorAll('.tab').forEach(t => {
+  t.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+    t.classList.add('active');
+    RENDER[t.dataset.tab]();
+  });
+});
+$('stats').innerHTML =
+  `<div class="stat"><b>64</b> 玩法包</div><div class="stat"><b>18</b> 依赖边</div><div class="stat"><b>51</b> 系统</div><div class="stat"><b>7</b> 类别</div><div class="stat"><b>629+</b> 测试</div>`;
+
+depGraph();
+</script>
+</body>
+</html>
