@@ -506,11 +506,29 @@ export function createHud(
     onJumpTo(x, y);
     toggle(histPanel); // 跳转后收起面板，避免挡视野
   });
+  // 2026-08-20 修复「菜单无法收回」：面板右上角加关闭按钮 + 点击面板外关闭
+  const closeBtn = document.createElement('button');
+  closeBtn.textContent = '×';
+  closeBtn.style.cssText = 'position:absolute;top:6px;right:8px;border:none;background:transparent;color:#eee;font-size:16px;cursor:pointer;padding:2px 6px;z-index:30;';
+  closeBtn.addEventListener('click', (e) => { e.stopPropagation(); for (const q of panels) q.style.display = 'none'; });
   const toggle = (p: HTMLElement): void => {
     const show = p.style.display !== 'block';
-    for (const q of panels) q.style.display = 'none';
+    // 关闭其他面板
+    for (const q of panels) { q.style.display = 'none'; if (q !== p && closeBtn.parentNode === q) q.removeChild(closeBtn); }
     p.style.display = show ? 'block' : 'none';
+    // 关闭按钮挂在当前面板（只挂一次）
+    if (show && !p.querySelector('.panel-close')) {
+      closeBtn.classList.add('panel-close');
+      p.style.position = 'relative';
+      p.appendChild(closeBtn);
+    }
   };
+  // 点击面板外区域关闭所有面板（触摸/鼠标通用）
+  root.addEventListener('click', (e) => {
+    const target = e.target as HTMLElement;
+    if (target.closest('.hud-pop') || target.closest('.hud-card') || target.closest('.hud-sel') || target.closest('button')) return;
+    for (const q of panels) q.style.display = 'none';
+  });
   helpBtn.addEventListener('click', () => toggle(helpPanel));
   histBtn.addEventListener('click', () => toggle(histPanel));
   facBtn.addEventListener('click', () => toggle(facPanel));
