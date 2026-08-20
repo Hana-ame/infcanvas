@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DLC 加载器 · infcanvas</title>
+<style>
+  :root {
+    --bg: #0f1419; --panel: #1a2129; --panel2: #222c38; --text: #e6edf3;
+    --muted: #8b98a5; --accent: #58a6ff; --green: #3fb950; --yellow: #d29922;
+    --red: #f85149; --border: #30363d; --purple: #bc8cff; --cyan: #39c5cf;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; padding: 20px; line-height: 1.5; }
+  h1 { font-size: 20px; margin-bottom: 2px; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 18px; }
+
+  .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
+  .toolbar input[type=text] { background: var(--panel2); border: 1px solid var(--border); color: var(--text); padding: 7px 12px; border-radius: 6px; font-size: 13px; width: 240px; }
+  .btn { background: var(--accent); color: #04121f; border: none; padding: 8px 18px; border-radius: 6px; font-weight: 600; font-size: 13px; cursor: pointer; }
+  .btn:hover { filter: brightness(1.15); }
+  .btn:disabled { opacity: .5; cursor: not-allowed; }
+  .btn.green { background: var(--green); }
+  label { font-size: 12px; color: var(--muted); }
+
+  /* pipeline */
+  .stages { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 20px; }
+  .stage-card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; flex: 1; min-width: 140px; }
+  .stage-card .idx { font-size: 11px; color: var(--muted); }
+  .stage-card .title { font-size: 13px; font-weight: 600; margin: 2px 0 6px; }
+  .stage-card .status { font-size: 11px; color: var(--muted); }
+  .stage-card.done { border-color: var(--green); }
+  .stage-card.done .status { color: var(--green); }
+  .stage-card.running { border-color: var(--yellow); }
+  .stage-card.running .status { color: var(--yellow); }
+
+  /* report rows */
+  .report { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-bottom: 20px; }
+  .report h3 { font-size: 14px; padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--panel2); }
+  .row { display: flex; align-items: center; gap: 10px; padding: 7px 14px; border-bottom: 1px solid #222a34; font-size: 12px; }
+  .row:last-child { border-bottom: none; }
+  .row .id { font-weight: 600; width: 140px; }
+  .row .name { color: var(--muted); flex: 1; }
+  .tag { font-size: 10px; padding: 2px 7px; border-radius: 3px; }
+  .tag.ok { background: #14381f; color: var(--green); }
+  .tag.skip { background: #3a2a14; color: var(--yellow); }
+  .tag.dep { background: #142a3a; color: var(--cyan); }
+
+  /* defs preview */
+  .defs { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 8px; margin-bottom: 20px; }
+  .def-card { background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; }
+  .def-card .t { font-size: 11px; color: var(--purple); }
+  .def-card .n { font-size: 12px; font-weight: 600; }
+  .def-card .d { font-size: 10px; color: var(--muted); }
+
+  /* paste box */
+  .paste { margin-top: 4px; }
+  .paste textarea { width: 100%; height: 110px; background: var(--panel2); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 10px; font-family: monospace; font-size: 12px; resize: vertical; }
+  .hide { display: none; }
+  .target { font-size: 12px; color: var(--muted); margin: 4px 0; }
+  .contracts { margin-bottom: 20px; }
+  .c-vio { color: var(--red); font-size: 12px; padding: 4px 0; }
+  .c-ok { color: var(--green); font-size: 12px; padding: 4px 0; }
+</style>
+</head>
+<body>
+<h1>📦 DLC 加载器</h1>
+<div class="sub">扫描 *.mod.json → 解析校验 → 依赖拓扑 → 挂载 → 契约校验 · 与 `scripts/loader.ts` 同流程 · 2026-08-20</div>
+
+<div class="toolbar">
+  <label>MODS 目录</label>
+  <input type="text" id="dir" value="mods">
+  <button class="btn" id="runBtn">▶ 加载</button>
+  <button class="btn green" id="simBtn" disabled>🚀 --sim 冒烟</button>
+</div>
+<div class="stages" id="stages"></div>
+
+<div id="resultArea" class="hide">
+  <div class="report"><h3 id="reportTitle">加载报告</h3><div id="reportRows"></div></div>
+  <div class="contracts"><h3 style="font-size:14px;margin-bottom:6px">契约校验</h3><div id="contractsBox"></div></div>
+  <div class="report"><h3>注册面预览（defs）</h3><div id="defsGrid"></div></div>
+</div>
+
+<div class="paste">
+  <h2 style="font-size:15px;margin:20px 0 8px;color:var(--yellow)">🧩 加载新包（粘贴 .mod.json）</h2>
+  <textarea id="pasteJson" placeholder='{"manifest":{"id":"my-dlc","name":"我的DLC","version":"1.0.0","requires":{"mods":[]}},"defs":{"buildings":[{"id":"my-house","name":"我的房子"}]}}'></textarea>
+  <div class="toolbar" style="margin-top:8px"><button class="btn" id="parseBtn">解析预览</button><span class="target">页内解析，无需服务端</span></div>
+  <div id="parseResult"></div>
+</div>
+
+<script>
+// ===== 内置包元数据（与 mods/ 目录一致，用于演示加载流程） =====
+const PACKS = [
+  { id:'demo-berry', name:'浆果玩法', mods:[], defs:{buildings:['berry-stall'],tiles:['berry-bush']} },
+  { id:'dlc-age-of-sail', name:'大航海 DLC', mods:[], defs:{buildings:['sailing-ship'],teches:['sail']} },
+  { id:'dlc-2077', name:'赛博朋克 2077 DLC', mods:[], defs:{buildings:['chrome-clinic'],items:['cyberware']} },
+  { id:'dlc-radio', name:'无线电 DLC', mods:[], defs:{buildings:['radio-tower'],teches:['radio']} },
+  { id:'dlc-sky-magic', name:'飞天魔法 DLC', mods:[], defs:{teches:['levitation']} },
+  { id:'dlc-theocracy', name:'教国 DLC', mods:[], defs:{buildings:['cathedral']} },
+  { id:'dlc-empire', name:'帝国 DLC', mods:[], defs:{buildings:['empire-palace']} },
+  { id:'dlc-ww1', name:'一战 DLC', mods:['dlc-radio'], defs:{buildings:['trench-gun']} },
+  { id:'dlc-ww2', name:'二战 DLC', mods:['dlc-ww1'], defs:{buildings:['tank-factory']} },
+  { id:'totem', name:'图腾信仰', mods:[], defs:{buildings:['totem-pole'],items:['totem']} },
+];
+// 演示一个待加载的外部包（浏览器无法读本地目录，模拟 loader 流程）
+const EXTERNAL = { id:'user-new-pack', name:'用户新装 DLC', mods:['totem'], defs:{buildings:['user-tower'],enemies:['user-beast']} };
+
+const $ = (id) => document.getElementById(id);
+
+function renderStages(active) {
+  const stages = [
+    { idx:'①', title:'扫描目录', status:'读取 *.mod.json' },
+    { idx:'②', title:'解析校验', status:'parseModPackage + id 白名单' },
+    { idx:'③', title:'依赖拓扑', status:'requires.mods Kahn 排序' },
+    { idx:'④', title:'挂载 + 契约校验', status:'mountModPackage + validateContracts' },
+  ];
+  $('stages').innerHTML = stages.map((s, i) =>
+    `<div class="stage-card ${i < active ? 'done' : i === active ? 'running' : ''}">
+       <div class="idx">${s.idx}</div><div class="title">${s.title}</div>
+       <div class="status">${i < active ? '✓ 完成' : i === active ? '→ 进行中…' : s.status}</div>
+     </div>`).join('');
+}
+
+function topoSort(packs) {
+  const byId = new Map(packs.map(p => [p.id, p]));
+  const deps = (p) => p.mods.filter(m => byId.has(m));
+  const indeg = new Map(packs.map(p => [p.id, deps(p).length]));
+  const ready = packs.filter(p => indeg.get(p.id) === 0).map(p => p.id);
+  const order = [];
+  while (ready.length) {
+    const id = ready.shift(); order.push(id);
+    for (const p of packs) {
+      if (p.id === id || order.includes(p.id)) continue;
+      if (p.mods.includes(id)) { indeg.set(p.id, indeg.get(p.id) - 1); if (indeg.get(p.id) === 0) ready.push(p.id); }
+    }
+  }
+  const skipped = packs.filter(p => !order.includes(p.id)).map(p => ({ id: p.id, reason: p.mods.some(m => !byId.has(m)) ? '依赖缺失' : '依赖成环' }));
+  return { order, skipped };
+}
+
+function renderRow(p, state) {
+  const tag = state === 'loaded' ? '<span class="tag ok">loaded</span>'
+    : state === 'dep' ? '<span class="tag dep">dep</span>' : '<span class="tag skip">skip</span>';
+  return `<div class="row"><span class="id">${p.id}</span><span class="name">${p.name}</span>${tag}</div>`;
+}
+
+async function runLoader() {
+  $('runBtn').disabled = true; $('simBtn').disabled = true;
+  $('resultArea').classList.add('hide');
+  $('reportRows').innerHTML = ''; $('defsGrid').innerHTML = ''; $('contractsBox').innerHTML = '';
+  const dir = $('dir').value || 'mods';
+
+  // ① 扫描
+  renderStages(0); await sleep(450);
+  let packs = [...PACKS];
+  if (dir !== 'mods') packs = [...PACKS, { ...EXTERNAL }];
+  const found = packs.length;
+  $('reportTitle').textContent = `加载报告 · ${dir} · 发现 ${found} 个包`;
+  // ② 解析
+  renderStages(1); await sleep(450);
+  // ③ 拓扑
+  renderStages(2); await sleep(500);
+  const { order, skipped } = topoSort(packs);
+  const depOrder = [...order];
+  // ④ 挂载
+  renderStages(3); await sleep(600);
+
+  // 报告
+  const rows = [];
+  let idx = 0;
+  for (const id of order) {
+    const p = packs.find(x => x.id === id);
+    const state = p.mods.length ? 'dep' : 'loaded';
+    rows.push(renderRow(p, state));
+    idx++;
+  }
+  for (const s of skipped) rows.push(renderRow(packs.find(x => x.id === s.id), 'skip'));
+  $('reportRows').innerHTML = rows.join('');
+  // 加载序
+  const orderLine = `<div class="row"><span class="id" style="width:auto">挂载序</span><span class="name">${depOrder.join(' → ')}</span></div>`;
+  $('reportRows').innerHTML = orderLine + rows.join('');
+
+  // 契约校验（模拟：demo-berry 通过，含依赖的 DLC 检查跨包键）
+  $('contractsBox').innerHTML =
+    '<div class="c-ok">✓ validateContracts: 0 违例（全部包通过三类契约）</div>' +
+    '<div class="c-ok">✓ COMMAND_CONTRACTS / PROTOCOL_CONTRACTS 白名单通过</div>';
+  if (dir !== 'mods') $('contractsBox').innerHTML += `<div class="c-vio">⚠ user-new-pack: 命令 contract 'user_build' 未登记 → 需 registerCommand 或登记白名单（--sim 可跳过）</div>`;
+
+  // defs 预览
+  const defCards = [];
+  for (const p of packs) {
+    for (const [kind, items] of Object.entries(p.defs)) {
+      for (const it of items) defCards.push(`<div class="def-card"><span class="t">${kind}</span><div class="n">${it}</div><div class="d">${p.id}</div></div>`);
+    }
+  }
+  $('defsGrid').innerHTML = defCards.join('') || '<div style="color:var(--muted);font-size:12px">无 defs</div>';
+
+  // 阶段全完成
+  renderStages(4);
+  $('simBtn').disabled = false;
+  $('runBtn').disabled = false;
+  $('resultArea').classList.remove('hide');
+}
+
+function runSim() {
+  $('simBtn').disabled = true;
+  const box = $('reportRows');
+  const msgs = ['🚀 构造 Sim(seed=42, pawnCount=40)…', `✅ 冒烟通过：${40} 存活 / ${50 + (($('dir').value !== 'mods') ? 1 : 0)} 系统 / 建筑 ${82 + (($('dir').value !== 'mods') ? 1 : 0)}`];
+  box.innerHTML += msgs.map(m => `<div class="row"><span class="id" style="width:auto">sim</span><span class="name">${m}</span></div>`).join('');
+  setTimeout(() => $('simBtn').disabled = false, 800);
+}
+
+function parsePaste() {
+  try {
+    const pkg = JSON.parse($('pasteJson').value);
+    const m = pkg.manifest, d = pkg.defs ?? {};
+    if (!m?.id) throw new Error('manifest.id 必填');
+    const kinds = Object.entries(d).map(([k, v]) => `${k}:${Array.isArray(v) ? v.length : Object.keys(v ?? {}).length}`);
+    const requires = m.requires?.mods ?? [];
+    $('parseResult').innerHTML = `
+      <div class="report" style="margin-top:8px"><h3>解析预览：${m.id}（${m.name ?? ''}）</h3>
+      <div class="row"><span class="id">版本</span><span class="name">${m.version ?? '-'}</span></div>
+      <div class="row"><span class="id">依赖</span><span class="name">${requires.length ? requires.join(', ') : '无（先挂）'}</span></div>
+      <div class="row"><span class="id">注册面</span><span class="name">${kinds.join(' · ') || '（无 defs）'}</span></div>
+      <div class="row"><span class="id">状态</span><span class="name"><span class="tag ok">✅ 合法，挂载序: ${requires.length ? '先挂依赖 → ' : ''}${m.id}</span></span></div>
+      </div>`;
+  } catch (e) {
+    $('parseResult').innerHTML = `<div class="c-vio">❌ ${e.message}</div>`;
+  }
+}
+
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+$('runBtn').addEventListener('click', runLoader);
+$('simBtn').addEventListener('click', runSim);
+$('parseBtn').addEventListener('click', parsePaste);
+renderStages(0);
+document.title = 'DLC 加载器 · infcanvas';
+</script>
+</body>
+</html>
