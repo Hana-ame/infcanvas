@@ -9,4 +9,9 @@ export default defineConfig({
   build: {
     target: 'es2022',
   },
+  // 2026-08-21 从零重写：测试只跑新 src/（test/ 是旧实现归档，不参与）
+  test: {
+    include: ['src/**/*.test.ts'],
+    exclude: ['test/**', 'node_modules/**'],
+  },
 });
