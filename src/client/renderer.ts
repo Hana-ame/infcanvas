@@ -123,9 +123,12 @@ export class Renderer {
   // 切换视角：2D 俯视 / 2.5D 同轴（前后遮挡）
   setViewMode(mode: 'top' | 'iso'): void {
     this.viewMode = mode;
-    // 2026-08-20 修复：清 tile 缓存（同轴模式地面偏移，旧缓存 tile 不重绘 = 视觉错位）
+    // 2026-08-20 修复：清 tile 缓存 + 重置 lastCamTile → refreshViewportTerrain 检测到视口
+    // 变化 → 重绘地面（不清缓存=切换后旧 tile 仍在=不动；不重置 lastCamTile=
+    // refreshViewportTerrain 看到 tile 范围没变 → 直接 return → 不重绘 → tiles 消失）
     for (const [, g] of this.terrainChunkSprites) this.terrainLayer.removeChild(g);
     this.terrainChunkSprites.clear();
+    this.lastCamTile = { x0: 0, y0: 0, x1: 0, y1: 0 }; // 强制 refreshViewportTerrain 重绘
     // 树/建筑重定位到新锚点，全部实体重排 z 顺序
     for (const t of this.treeSprites) this.placeEntity(t.g, t.x, t.y);
     for (const b of this.buildingSprites) this.placeEntity(b.g, b.x, b.y);
@@ -410,8 +413,6 @@ export class Renderer {
   private drawTileGround(): void {
     const w = this.sim.world;
     const r = this.lastCamTile;
-    // 2026-08-20 修复：同轴模式地面 tiles 也要偏移（原 sprites 下移半格但地面不动 = 视觉错位）
-    const dy = this.viewMode === 'iso' ? TILE / 2 : 0;
     // 卸载视口外 chunk（超出范围即丢对象；出生区外未知区 getTile 返回 'mountain' 也能画）
     for (const [ck, g] of [...this.terrainChunkSprites]) {
       const c = ck.split(',');
@@ -431,7 +432,7 @@ export class Renderer {
         for (let y = y0; y <= y1; y++) {
           for (let x = x0; x <= x1; x++) {
             const def = this.tileDefOf(w.getTile(x, y));
-            g.rect(x * TILE, y * TILE + dy, TILE, TILE);
+            g.rect(x * TILE, y * TILE, TILE, TILE);
             g.fill(def.color);
           }
         }
