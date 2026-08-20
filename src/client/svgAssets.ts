@@ -15,7 +15,10 @@ export const TERRAIN_SVG: Record<string, string> = {
 };
 
 // 建筑
+// 建筑图标复用：通用类型图标（多建筑共用一个 SVG），专用图标独立文件。
+// 查找优先级：BuildingDef.sprite → def.id → def.tags 匹配通用类型 → emoji
 export const BUILDING_SVG: Record<string, string> = {
+  // 专用图标（建筑 id → 独立 SVG）
   campfire: `${BASE}/building/campfire.svg`,
   wall: `${BASE}/building/wall.svg`,
   floor: `${BASE}/building/floor.svg`,
@@ -30,6 +33,44 @@ export const BUILDING_SVG: Record<string, string> = {
   raft: `${BASE}/building/raft.svg`,
   boat: `${BASE}/building/boat.svg`,
   bridge: `${BASE}/building/bridge.svg`,
+
+  // 通用类型图标（按 tag 复用——多个建筑共用一个图标）
+  // house：住宅/小屋类 → house.svg
+  shelter: `${BASE}/building/house.svg`,
+  house: `${BASE}/building/house.svg`,
+  manor: `${BASE}/building/house.svg`,
+  caveHouse: `${BASE}/building/house.svg`,
+  // storage：存储类 → storage.svg
+  silo: `${BASE}/building/storage.svg`,
+  armory: `${BASE}/building/storage.svg`,
+  stockpile: `${BASE}/building/storage.svg`,
+  // defense：防御工事类 → defense.svg
+  trap: `${BASE}/building/defense.svg`,
+  'arrow-tower': `${BASE}/building/defense.svg`,
+  watchtower: `${BASE}/building/defense.svg`,
+  pillbox: `${BASE}/building/defense.svg`,
+  bunker: `${BASE}/building/defense.svg`,
+  emplacement: `${BASE}/building/defense.svg`,
+  signalTower: `${BASE}/building/defense.svg`,
+  // production：生产类 → production.svg
+  market: `${BASE}/building/production.svg`,
+  school: `${BASE}/building/production.svg`,
+  hospital: `${BASE}/building/production.svg`,
+  // worship：信仰类 → worship.svg
+  shrine: `${BASE}/building/worship.svg`,
+  'bell-tower': `${BASE}/building/worship.svg`,
+  'clan-totem': `${BASE}/building/worship.svg`,
+  // social：社交类 → social.svg
+  tavern: `${BASE}/building/social.svg`,
+  library: `${BASE}/building/social.svg`,
+  garden: `${BASE}/building/social.svg`,
+  arena: `${BASE}/building/social.svg`,
+  // fortify：工事类 → fortify.svg
+  trench: `${BASE}/building/fortify.svg`,
+  parapet: `${BASE}/building/fortify.svg`,
+  'barbed-wire': `${BASE}/building/fortify.svg`,
+  abatis: `${BASE}/building/fortify.svg`,
+  cheval: `${BASE}/building/fortify.svg`,
 };
 
 // 鼠鼠（按天赋 6 种）
