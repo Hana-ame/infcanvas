@@ -6,7 +6,7 @@ import { createDlcTest } from './dlc-test-helper';
 describe('AI 总监 + 玩家输入插件化', () => {
   it('玩家/ai 命令来源可区分 + 玩家活跃记录', () => {
     const t = createDlcTest('zone', { pawnCount: 2 });
-    const sim = t.sim as unknown as { lastPlayerCommandAt: number; playerActive: (w?: number) => boolean; time: number };
+    const sim = t.sim as unknown as { lastPlayerCommandAt: number; playerActive: (w?: number) => boolean; time: number; issueCommand: (c: never) => void };
     expect(sim.lastPlayerCommandAt).toBe(-Infinity);
     sim.time = 100;
     sim.issueCommand({ type: 'pause', x: 0, y: 0, source: 'player' });
