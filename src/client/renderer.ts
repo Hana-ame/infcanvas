@@ -123,6 +123,9 @@ export class Renderer {
   // 切换视角：2D 俯视 / 2.5D 同轴（前后遮挡）
   setViewMode(mode: 'top' | 'iso'): void {
     this.viewMode = mode;
+    // 2026-08-20 修复：清 tile 缓存（同轴模式地面偏移，旧缓存 tile 不重绘 = 视觉错位）
+    for (const [, g] of this.terrainChunkSprites) this.terrainLayer.removeChild(g);
+    this.terrainChunkSprites.clear();
     // 树/建筑重定位到新锚点，全部实体重排 z 顺序
     for (const t of this.treeSprites) this.placeEntity(t.g, t.x, t.y);
     for (const b of this.buildingSprites) this.placeEntity(b.g, b.x, b.y);
@@ -407,6 +410,8 @@ export class Renderer {
   private drawTileGround(): void {
     const w = this.sim.world;
     const r = this.lastCamTile;
+    // 2026-08-20 修复：同轴模式地面 tiles 也要偏移（原 sprites 下移半格但地面不动 = 视觉错位）
+    const dy = this.viewMode === 'iso' ? TILE / 2 : 0;
     // 卸载视口外 chunk（超出范围即丢对象；出生区外未知区 getTile 返回 'mountain' 也能画）
     for (const [ck, g] of [...this.terrainChunkSprites]) {
       const c = ck.split(',');
@@ -426,7 +431,7 @@ export class Renderer {
         for (let y = y0; y <= y1; y++) {
           for (let x = x0; x <= x1; x++) {
             const def = this.tileDefOf(w.getTile(x, y));
-            g.rect(x * TILE, y * TILE, TILE, TILE);
+            g.rect(x * TILE, y * TILE + dy, TILE, TILE);
             g.fill(def.color);
           }
         }
@@ -717,7 +722,7 @@ export class Renderer {
     for (const h of this.sim.hostiles) {
       let g = this.hostileSprites.get(idx);
       if (!g) {
-        const icon = this.makeIcon(hostileAssetId(h.enemyId), 0.9);
+        const icon = this.makeIcon(hostileAssetId(h.enemyId ?? "generic"), 0.9);
         if (!icon) continue;
         g = icon;
         g.eventMode = 'none';
