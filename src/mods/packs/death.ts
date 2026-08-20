@@ -48,11 +48,20 @@ class DeathSystem {
     // 监听死亡事件 → 放尸体建筑
     _bus.on('pawn_died', (ev: unknown) => {
       const e = ev as { eid: number; x: number; y: number; cause: string };
-      // 只在死亡格放尸体（非捕获/处决可能没尸体）
+      // 处决/被叼走不留尸体（处决是命令、捕获尸体在猫那边）
       if (e.cause === 'executed' || e.cause === 'captured') return;
       const def = this.ctx.mods.buildings['corpse'];
       if (!def) return;
-      this.ctx.world.placeBuilding(Math.round(e.x), Math.round(e.y), 'corpse', 'player');
+      const x = Math.round(e.x), y = Math.round(e.y);
+      // 2026-08-20 修复：死亡格可能被建筑/障碍占据（pawn 挤在墙脚死）→ 原格失败时
+      // 8 邻域就近找可建格放尸体（否则尸体会静默消失，墓碑/葬礼链断裂）
+      if (this.ctx.world.placeBuilding(x, y, 'corpse', 'player')) return;
+      outer: for (let r = 1; r <= 3; r++) {
+        for (let dx = -r; dx <= r; dx++) for (let dy = -r; dy <= r; dy++) {
+          if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+          if (this.ctx.world.placeBuilding(x + dx, y + dy, 'corpse', 'player')) break outer;
+        }
+      }
     });
   }
 
@@ -78,9 +87,10 @@ class DeathSystem {
       if (ageDays > CFG.lifespan) {
         const hp = this.ctx.readHealth(eid);
         if (hp) {
-          this.ctx.setHealth(eid, { hp: Math.max(0, hp.hp - 5), maxHp: Math.max(1, hp.maxHp - 1) });
-          if (hp.hp <= 0) {
-            this.ctx.killPawn(eid);
+          const newHp = Math.max(0, hp.hp - 5); // 2026-08-20 修复：用新值判定（旧值判定晚一 tick 死亡）
+          this.ctx.setHealth(eid, { hp: newHp, maxHp: Math.max(1, hp.maxHp - 1) });
+          if (newHp <= 0) {
+            this.ctx.killPawn(eid, 'old_age');
             this.ctx.logEvent(`💀 #${eid} 寿终正寝，享年 ${Math.floor(ageDays)} 天`);
             continue;
           }
@@ -98,9 +108,10 @@ class DeathSystem {
       if (n && n.san < CFG.sanDeathThreshold) {
         const hp = this.ctx.readHealth(eid);
         if (hp && hp.hp > 0) {
-          this.ctx.setHealth(eid, { hp: Math.max(0, hp.hp - CFG.sanDeathDmg), maxHp: hp.maxHp });
-          if (hp.hp <= 0) {
-            this.ctx.killPawn(eid);
+          const newHp = Math.max(0, hp.hp - CFG.sanDeathDmg);
+          this.ctx.setHealth(eid, { hp: newHp, maxHp: hp.maxHp });
+          if (newHp <= 0) {
+            this.ctx.killPawn(eid, 'overwork');
             this.ctx.logEvent(`💀 #${eid} 精神崩溃至死`);
             continue;
           }
@@ -118,10 +129,11 @@ class DeathSystem {
           const hp = this.ctx.readHealth(eid);
           if (hp) {
             const dmg = injury === 'fall' ? 15 : injury === 'cut' ? 10 : 5;
-            this.ctx.setHealth(eid, { hp: Math.max(0, hp.hp - dmg), maxHp: hp.maxHp });
+            const newHp = Math.max(0, hp.hp - dmg);
+            this.ctx.setHealth(eid, { hp: newHp, maxHp: hp.maxHp });
             this.ctx.logEvent(`⚠ #${eid} 探险中${injury === 'fall' ? '坠落' : injury === 'cut' ? '受伤' : '扭伤'} -${dmg}HP`);
-            if (hp.hp <= 0) {
-              this.ctx.killPawn(eid);
+            if (newHp <= 0) {
+              this.ctx.killPawn(eid, 'exploration');
               this.ctx.logEvent(`💀 #${eid} 探险中不幸身亡`);
             }
           }
