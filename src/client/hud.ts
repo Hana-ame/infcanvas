@@ -77,7 +77,35 @@ function injectStyle(): void {
 .hud-tag{font-size:11px;}
 /* RW-1 M1 修订（2026-08-15）：Work Tab 数字优先级已撤回（用户裁决：直接管理意图进选择链
    违背一切皆抽卡）；神谕/策略面板用普通 hud-pop 列表，不再需要 .hud-work 表格 CSS */
+/* 2026-08-20 双端适配（手机 + PC）：
+   - 触控目标 >= 44px（Apple 人机指南），按钮大号、间隙加大
+   - 窄屏（<=820px）：保留顶部资源条（单行滚动），底部按钮加大、面板全屏化、feed 压缩 */
+@media (pointer: coarse) {
+  .hud button{min-height:40px;padding:8px 12px;font:13px system-ui;}
+  .hud-top{min-height:48px;gap:14px;font-size:14px;padding:8px 10px;}
+  .hud-bottom{bottom:6px;gap:8px;padding:10px;}
+  .hud-buildrow{gap:8px;}
+  .hud-corner{bottom:6px;left:8px;gap:6px;}
+  .hud-sel{top:64px;left:8px;min-width:150px;max-width:200px;}
+  .hud-pop{max-width:94vw;max-height:65vh;font-size:12px;}
+  .hud-feed{bottom:6px;right:8px;max-width:180px;font-size:10px;}
+}
+@media (max-width: 820px) {
+  .hud-top{min-height:44px;padding:6px 8px;gap:10px;}
+  .hud button{min-height:34px;}
+  .hud-sel{top:52px;max-width:180px;}
+  .hud-hint{top:52px;right:8px;max-width:200px;font-size:11px;}
+  .hud-center{top:52px;}
+  .hud-card{top:70px;font-size:11px;white-space:normal;max-width:92vw;}
+  .hud-pop{top:100px;}
+  .hud-feed{display:none;} /* 窄屏隐藏 feed（占位给操作按钮）——事件日志可从面板看 */
+}
+@media (max-width: 480px) {
+  .hud-sel{min-width:132px;}
+  #selPortrait{width:72px;height:72px;}
+}
 `;
+
   document.head.appendChild(st);
 }
 

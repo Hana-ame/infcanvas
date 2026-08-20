@@ -73,6 +73,12 @@ export class Renderer {
   private selectedRing: Graphics;
   // 选中头顶职业标签（UIUX 2026-08-14：与圆环一起给"谁被选中+在干嘛"）
   private selLabel: Text | null = null;
+  // 2026-08-20 多选计数气泡
+  private selCountLabel: Text | null = null;
+  // 2026-08-20 框选（PC 左键拖/触摸单指拖）：虚线矩形 overlay + 框内 pawn 实时预览
+  private selBox: Graphics;
+  private selBoxRect: { x0: number; y0: number; x1: number; y1: number } | null = null;
+  private selPreview = new Set<number>(); // 框内 pawn（画绿色淡圈预览）
   // 血条层（UIUX 2026-08-14：hostile 全部 + 选中 pawn，比 alpha 变暗直观）
   private hpBarLayer: Graphics;
   // 状态阈值（对齐 tuning：hungerAt=30 / crazyAt=25；rest 无 urgentAt 暴露给渲染层，取 20）
@@ -97,6 +103,9 @@ export class Renderer {
     this.statusLayer.eventMode = 'none';
     this.selectedRing = new Graphics();
     this.selectedRing.eventMode = 'none';
+    this.selBox = new Graphics();
+    this.selBox.eventMode = 'none';
+    this.selBox.zIndex = 90; // 选框盖在世界上层
     this.hpBarLayer = new Graphics();
     this.hpBarLayer.eventMode = 'none';
     this.worldContainer.addChild(this.terrainLayer);
@@ -105,6 +114,7 @@ export class Renderer {
     this.worldContainer.addChild(this.markerLayer);
     this.worldContainer.addChild(this.statusLayer); // 状态图标随世界 y 排（2.5D 遮挡自然）
     this.worldContainer.addChild(this.selectedRing);
+    this.worldContainer.addChild(this.selBox);
     this.worldContainer.addChild(this.hpBarLayer);
     this.worldContainer.addChild(this.pawnLayer); // 飘字等屏幕上层
     this.worldContainer.addChild(this.ghost);
@@ -237,21 +247,52 @@ export class Renderer {
 
   // 选中高亮圆环（UIUX 2026-08-14）：黄色圆环跟随选中 pawn，替代原来仅 scale 的弱反馈
   // 线宽按 1/zoom 反缩放 → 屏幕恒定（zoom 0.3 时世界变小，环线不跟着变细）
+  // 2026-08-20 框选：多选环（selectedIds 全部画环；>4 只画 3 环）+ 计数气泡 + 首位职业标签
   private renderSelectedRing(): void {
     this.selectedRing.clear();
-    const eid = this.sim.selectedIds[0];
-    if (eid === undefined) return;
-    const pos = this.sim.pawnPositions.get(eid);
-    if (!pos) return;
-    const interp = this.interpPos(eid, { x: pos.x, y: pos.y }, this.pawnAnim);
-    const cx = interp.x * TILE + TILE / 2;
-    const cy = this.viewMode === 'iso' ? interp.y * TILE + TILE : interp.y * TILE + TILE / 2;
-    const r = TILE * 0.72;
-    const w = Math.max(1, 3 / this.camera.zoom);
-    this.selectedRing.circle(cx, cy, r);
-    this.selectedRing.stroke({ color: 0xffd966, width: w, alpha: 0.95 });
-    // 选中头顶职业标签（名字在仿真内层，渲染层只给职业标签 + 血条）
-    const p = this.sim.pawnProfile(eid);
+    const ids = this.sim.selectedIds;
+    if (ids.length === 0) {
+      if (this.selCountLabel) this.selCountLabel.visible = false;
+      if (this.selLabel) this.selLabel.visible = false;
+      return;
+    }
+    const show = ids.length > 4 ? ids.slice(0, 3) : ids;
+    // 首位 pawn 位置（环 + 职业标签 + 计数气泡锚点）
+    const p0 = this.sim.pawnPositions.get(ids[0]);
+    if (!p0) return;
+    const interp0 = this.interpPos(ids[0], { x: p0.x, y: p0.y }, this.pawnAnim);
+    const cx0 = interp0.x * TILE + TILE / 2;
+    const cy0 = this.viewMode === 'iso' ? interp0.y * TILE + TILE : interp0.y * TILE + TILE / 2;
+    for (const eid of show) {
+      const pos = this.sim.pawnPositions.get(eid);
+      if (!pos) continue;
+      const interp = this.interpPos(eid, { x: pos.x, y: pos.y }, this.pawnAnim);
+      const cx = interp.x * TILE + TILE / 2;
+      const cy = this.viewMode === 'iso' ? interp.y * TILE + TILE : interp.y * TILE + TILE / 2;
+      const w = Math.max(1, 3 / this.camera.zoom);
+      this.selectedRing.lineStyle(w, 0xffd700, 0.9);
+      this.selectedRing.drawCircle(cx, cy, TILE * 0.72);
+    }
+    // 多选计数气泡（>1）
+    if (ids.length > 1) {
+      if (!this.selCountLabel) {
+        this.selCountLabel = new Text({ text: '', style: new TextStyle({ fontSize: 16, fontFamily: 'system-ui', fill: '#ffffff', fontWeight: 'bold' }) });
+        this.selCountLabel.resolution = this.app.renderer.resolution;
+        this.selCountLabel.anchor.set(0.5, 0.5);
+        this.selCountLabel.zIndex = 95;
+        this.worldContainer.addChild(this.selCountLabel);
+      }
+      const br = TILE * 0.34;
+      this.selectedRing.beginFill(0x111111, 0.85);
+      this.selectedRing.drawCircle(cx0 + TILE * 0.72, cy0 - TILE * 0.72, br);
+      this.selectedRing.endFill();
+      this.selCountLabel.text = `${ids.length}`;
+      this.selCountLabel.position.set(cx0 + TILE * 0.72, cy0 - TILE * 0.72);
+      this.selCountLabel.scale.set(Math.max(0.6, Math.min(1.6, 1 / this.camera.zoom)));
+      this.selCountLabel.visible = true;
+    } else if (this.selCountLabel) this.selCountLabel.visible = false;
+    // 首位职业标签（多选时显示首个 selected 职业）
+    const p = this.sim.pawnProfile(ids[0]);
     if (p && p.job) {
       if (!this.selLabel) {
         this.selLabel = new Text({ text: '', style: new TextStyle({ fontSize: 12, fontFamily: 'system-ui', fill: '#ffd966', fontWeight: 'bold' }) });
@@ -262,10 +303,9 @@ export class Renderer {
       const lift = this.viewMode === 'iso' ? -1.35 : -1.1;
       this.selLabel.text = jobLabelOf(p.job);
       this.selLabel.scale.set(Math.max(0.6, Math.min(1.6, 1 / this.camera.zoom)));
-      this.selLabel.position.set(cx, cy + lift * TILE * this.selLabel.scale.x);
-    } else if (this.selLabel) {
-      this.selLabel.visible = false;
-    }
+      this.selLabel.position.set(cx0, cy0 + lift * TILE * this.selLabel.scale.x);
+      this.selLabel.visible = true;
+    } else if (this.selLabel) this.selLabel.visible = false;
   }
 
   // 血条（UIUX 2026-08-14）：hostile 全部 + 选中 pawn；高 4 屏幕像素（/zoom），颜色随 hp 绿→橙→红
@@ -513,6 +553,7 @@ export class Renderer {
     this.renderHostiles();
     this.renderPawnStatus();
     this.renderSelectedRing();
+    this.renderSelPreview();
     this.renderHpBars();
     this.sortEntities();
     this.renderGhost();
@@ -834,6 +875,64 @@ export class Renderer {
     const wx = cam.x + (sx - this.app.screen.width / 2) / (TILE * cam.zoom);
     const wy = cam.y + (sy - this.app.screen.height / 2) / (TILE * cam.zoom);
     return { x: Math.floor(wx), y: Math.floor(wy) };
+  }
+
+  // ---- 2026-08-20 框选 ----
+  // 屏幕坐标框选矩形（虚线 overlay + 框内 pawn 预览高亮）
+  setSelBox(sx0: number, sy0: number, sx1: number, sy1: number): void {
+    this.selBoxRect = { x0: Math.min(sx0, sx1), y0: Math.min(sy0, sy1), x1: Math.max(sx0, sx1), y1: Math.max(sy0, sy1) };
+    this.selBox.clear();
+    const r = this.selBoxRect;
+    const w = Math.max(1, 1.5 / this.camera.zoom);
+    this.selBox.lineStyle(w, 0x4cf, 0.9);
+    this.selBox.drawRect(r.x0, r.y0, r.x1 - r.x0, r.y1 - r.y0);
+    this.selBox.beginFill(0x4cf, 0.12);
+    this.selBox.drawRect(r.x0, r.y0, r.x1 - r.x0, r.y1 - r.y0);
+    this.selBox.endFill();
+    // 框内 pawn 预览（世界坐标收集）
+    this.selPreview.clear();
+    const w0 = this.screenToWorld(r.x0, r.y0);
+    const w1 = this.screenToWorld(r.x1, r.y1);
+    const x0 = Math.min(w0.x, w1.x), x1 = Math.max(w0.x, w1.x);
+    const y0 = Math.min(w0.y, w1.y), y1 = Math.max(w0.y, w1.y);
+    for (const eid of this.sim.pawns) {
+      const pos = this.sim.pawnPositions.get(eid);
+      if (!pos) continue;
+      if (pos.x >= x0 && pos.x <= x1 && pos.y >= y0 && pos.y <= y1) this.selPreview.add(eid);
+    }
+  }
+
+  // 框内 valid pawn id 列表（collectInBox —— 提交框选时读取）
+  get boxPawnIds(): number[] { return [...this.selPreview]; }
+
+  // 清选框（结束/取消框选）
+  clearSelBox(): void {
+    this.selBoxRect = null;
+    this.selBox.clear();
+    this.selPreview.clear();
+  }
+
+  // 框选预览：绿色淡圈标记框内 pawn（ticker 里随 renderSelectedRing 一起画）
+  renderSelPreview(): void {
+    // 无活动框选 → 无预览（selPreview 已清）
+    this.selBox.clear();
+    if (!this.selBoxRect) return;
+    const r = this.selBoxRect;
+    const w = Math.max(1, 1.5 / this.camera.zoom);
+    this.selBox.lineStyle(w, 0x4cf, 0.9);
+    this.selBox.drawRect(r.x0, r.y0, r.x1 - r.x0, r.y1 - r.y0);
+    this.selBox.beginFill(0x4cf, 0.12);
+    this.selBox.drawRect(r.x0, r.y0, r.x1 - r.x0, r.y1 - r.y0);
+    this.selBox.endFill();
+    for (const eid of this.selPreview) {
+      const pos = this.sim.pawnPositions.get(eid);
+      if (!pos) continue;
+      const cx = pos.x * TILE + TILE / 2;
+      const cy = this.viewMode === 'iso' ? pos.y * TILE + TILE : pos.y * TILE + TILE / 2;
+      const pw = Math.max(1, 2 / this.camera.zoom);
+      this.selBox.lineStyle(pw, 0x3fb950, 0.7);
+      this.selBox.drawCircle(cx, cy, TILE * 0.62);
+    }
   }
 
   destroy(): void {

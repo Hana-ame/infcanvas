@@ -173,8 +173,10 @@ function attachScene(
     // 移动选中 pawn。带 pawnId：远程模式 server 无 selected 镜像，显式指定
     } else if (sim.selectedIds.length > 0) {
       targetHostileIdx = null; // 右键空地 = 清目标敌人
-      sim.issueCommand({ type: 'move', x: world.x, y: world.y, pawnId: sim.selectedIds[0] });
-      renderer.showMoveMarker(sim.pawnPositions.get(sim.selectedIds[0]) ?? null, world);
+      // 2026-08-20 框选批量移动：整组移动到目标点（每个 pawn 一条 move 命令，单机/远程同路由）
+      const ids = sim.selectedIds;
+      for (const eid of ids) sim.issueCommand({ type: 'move', x: world.x, y: world.y, pawnId: eid });
+      renderer.showMoveMarker(sim.pawnPositions.get(ids[0] ?? 0) ?? null, world);
     }
   };
 
@@ -191,10 +193,14 @@ function attachScene(
     hud.update(null);
   };
 
-  // 鼠标左键拖动：建造模式 → 连铺（沿途每格放置一次）；否则 → 平移（PC）
+  // 2026-08-20 框选（PC 左键拖 + 触摸单指拖）：拖动 = 画框选矩形 → 提交选入框内 pawn
+  // 平移迁移：PC 用中键拖动 / 边缘滚动；触摸用双指（都已在现有 handler）。左键拖动不再平移。
   let mouseDragging = false;
   let mouseDragStart: Pt | null = null;
-  let dragPlaced = new Set<number>(); // 本次拖拽已放置的格（去重）
+  let dragPlaced = new Set<number>(); // 本次拖拽已放置的格（去重；建造连铺用）
+  let boxSelectStart: Pt | null = null; // 框选起点（屏幕）
+  let boxSelecting = false;            // 拖动 >5px 判定为框选
+  let shiftBox = false;                // 框选时追加选区（Shift/触摸第二指抬后）
 
   const tryDragPlace = (e: { clientX: number; clientY: number }): void => {
     if (!buildMode) return;
@@ -211,6 +217,9 @@ function attachScene(
       mouseDragStart = screenPos(e);
       mouseDragging = false;
       dragPlaced.clear();
+      boxSelectStart = screenPos(e);
+      boxSelecting = false;
+      shiftBox = e.shiftKey;
       if (buildMode) tryDragPlace(e); // 按下即放第一格
     }
   });
@@ -222,8 +231,10 @@ function attachScene(
       if (buildMode) {
         // 建造模式：按住拖动 = 连铺（不平移）
         tryDragPlace(e);
-      } else if (mouseDragging) {
-        renderer.setCamera(e.movementX, e.movementY);
+      } else if (mouseDragging && boxSelectStart) {
+        // 2026-08-20 框选：左键拖 = 画框（平移改为中键/边缘/touch 双指）
+        if (!boxSelecting) { boxSelecting = true; renderer.clearSelection(); }
+        renderer.setSelBox(boxSelectStart.x, boxSelectStart.y, cur.x, cur.y);
       }
     }
     // 建造模式：显示幽灵预览
@@ -235,6 +246,21 @@ function attachScene(
     }
   });
   window.addEventListener('mouseup', () => {
+    if (boxSelecting && boxSelectStart) {
+      // 提交框选：采集框内 pawn → 设 sim.selected（Shift=追加）
+      const ids = renderer.boxPawnIds;
+      renderer.clearSelBox();
+      if (ids.length > 0) {
+        if (shiftBox) {
+          const merged = new Set([...sim.selectedIds, ...ids]);
+          sim.selected = [...merged];
+        } else sim.selected = ids;
+        renderer.selectPawn(ids[0] ?? 0); // 同步 renderer.selected 高亮（首 pawn）
+        hud.update(null);
+      }
+    }
+    boxSelectStart = null;
+    boxSelecting = false;
     mouseDragStart = null;
     mouseDragging = false;
   });
@@ -273,6 +299,10 @@ function attachScene(
   canvas.addEventListener('pointerdown', (e) => {
     pointers.set(e.pointerId, screenPos(e));
     touchActive = touchActive || e.pointerType !== 'mouse';
+    if (pointers.size === 1 && e.pointerType !== 'mouse' && !buildMode) {
+      boxSelectStart = screenPos(e); // 触摸单指候选框选起点（>12px 才确认为框选）
+      boxSelecting = false;
+    }
     if (pointers.size >= 2) {
       twoMoved = true;
       clearLP();
@@ -305,6 +335,15 @@ function attachScene(
       if (pinchDist > 0 && d > 0) renderer.zoomBy(d / pinchDist);
       midLast = mid;
       pinchDist = d;
+    } else if (pointers.size === 1 && !buildMode) {
+      // 2026-08-20 触摸单指拖动 = 框选（双指才平移缩放）
+      const start = boxSelectStart ?? prev;
+      if (!boxSelecting && dist(start, cur) > 12) {
+        boxSelecting = true;
+        boxSelectStart = start;
+        renderer.clearSelection();
+      }
+      if (boxSelecting) renderer.setSelBox(start.x, start.y, cur.x, cur.y);
     }
   });
 
@@ -313,8 +352,20 @@ function attachScene(
     const wasTwo = pointers.size >= 2;
     pointers.delete(e.pointerId);
     if (wasTwo) return;
-    if (!twoMoved && e.pointerType !== 'mouse' && pointers.size === 0) {
-      placeLong(screenPos(e));
+    if (e.pointerType === 'mouse') return; // PC 走 mouseup 提交框选
+    // 触摸：单指抬起——若是框选拖动 → 提交；否则（轻点）走 click 点选；长按已处理移动
+    if (boxSelecting && boxSelectStart) {
+      const ids = renderer.boxPawnIds;
+      renderer.clearSelBox();
+      if (ids.length > 0) {
+        sim.selected = ids;
+        renderer.selectPawn(ids[0] ?? 0);
+        hud.update(null);
+      }
+      boxSelectStart = null;
+      boxSelecting = false;
+    } else if (!twoMoved && pointers.size === 0) {
+      // 轻点（未拖动、未长按）→ click 合成事件走点选；此处不重复
     }
   });
 
@@ -322,6 +373,7 @@ function attachScene(
     clearLP();
     pointers.delete(e.pointerId);
     if (pointers.size < 2) twoMoved = false;
+    if (pointers.size === 0) { renderer.clearSelBox(); boxSelectStart = null; boxSelecting = false; }
   });
 
   // 鼠标右键：移动（或放置）
