@@ -57,6 +57,36 @@ export interface SimContext {  // ---- 时钟与随机 ----
   addBuilding(defId: string, x: number, y: number): BuildingState | null;
   removeBuilding(id: string): void;
 
+  // ---- 科技抽卡池（R2-1）----
+  // 设计取舍：为什么科技进度放 Sim 而非 SimContext 抽象层？
+  // 科技解锁是**世界事实**（随存档、要进 SaveData、要进协议），不是"系统可替换的玩法"。
+  // 所以查询面挂在 SimContext（tech-pool 包与 building 包都只见接口，测试可注入假 ctx），
+  // 而**真实存储**在 Sim 上（scratch 之外的显式字段，见 sim.ts techFragments/techsUnlocked）。
+  /** 已解锁科技 id 集合（权威存储在 Sim；此处只读视图） */
+  techUnlocked(): ReadonlySet<string>;
+  /** 某科技已攒碎片数（缺省 0）。命名说明：存储字段 Sim.techFragments 才是裸名，
+   *  这里用 from 动词避免与存储字段同名（否则实现类会字段/方法冲突，TS 报重复标识符）。 */
+  techFragmentsOf(techId: string): number;
+  /**
+   * 授予一块科技碎片：攒满自动解锁并记事件。
+   * 返回 'progress'（进度 +1）/ 'unlocked'（本块凑满最后一片）/ 'dup'（已解锁的重复卡，不累计）。
+   * 为什么抽到已解锁科技不累计：用户 2026-08-15 裁决「重复可开出」——抽到重复 = 稀释，
+   * 让新科技解锁期望更慢（渐进节奏），而不是给白拿的碎片奖励。
+   */
+  grantTechFragment(techId: string): 'progress' | 'unlocked' | 'dup' | 'unknown';
+  /** 科技抽卡池顺序（TECH_ORDER：order 升序 = 权重递减方向） */
+  techOrder(): string[];
+  /**
+   * 建筑科技门控判定（R2-1 消费端）：给定 BuildingTuningEntry.tech 列表，
+   * 判断是否全部已解锁。语义三条：
+   *  - 缺省/空数组 = 无门控（放行）；
+   *  - 引用的科技**不在表里** = 放行（mod 未挂/热卸载的数据半残不许锁死世界）；
+   *  - 表里有但未解锁 = 拒绝。
+   * 放在 SimContext 而非让 building 包自己遍历 techUnlocked()：
+   * 判定规则（"表外放行"这条尤其）是契约，只允许一处实现，避免两包各写一遍漂移。
+   */
+  techSatisfied(tech?: readonly string[]): boolean;
+
   // ---- 资源池（营地仓库抽象；键 = contracts K_STOCK_*，跨包契约）----
   stockpile: Record<string, number>;
 

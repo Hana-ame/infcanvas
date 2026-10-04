@@ -65,6 +65,8 @@ export function createGameServer(opts: GameServerOptions): Promise<GameServerHan
       buildings: [...sim.world.buildings.values()].map((b) => structuredClone(b)),
       events: structuredClone(sim.events),
       world: sim.world.exportState(),
+      techs: [...sim.techUnlocked()], // 科技抽卡池状态（R2-1；只随 full/welcome 走，delta 不带）
+      techFragments: { ...sim.techFragments },
     };
   }
 

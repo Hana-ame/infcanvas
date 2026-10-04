@@ -27,6 +27,25 @@ export interface BuildingTuningEntry {
    *  缺省=免维护。语义：篝火是与寻路组合的营地核心，需要持续投入形成
    *  木料经济闭环（2026-08-21 用户裁定加维护成本）。 */
   fuelSec?: number;
+  /**
+   * 科技门控（R2-1，2026-08-21 追加）：本建筑需要先解锁的科技 id（tuning.techs 表键）。
+   * 缺省 = 无门控（开局就能造）。**门控不是"直控解锁"**——解锁权只属于科技抽卡池
+   * （tech-pool 包发碎片，玩家碰不到）；这里只是消费端读表判断。
+   * 语义：空数组 = 科技表里没有任何科技（tech-pool 包未挂）→ 一律放行，
+   * 保证"卸载科技包 = 永无科技但核心照跑"（卸载不破坏核心纪律）。
+   */
+  tech?: string[];
+}
+
+/**
+ * 科技条目（R2-1）：抽卡池候选 + 建筑门控查表键。纯数据，无逻辑。
+ * order = 抽卡权重位（0 最靠前）；fragments = 攒齐所需碎片数。
+ */
+export interface TechTuningEntry {
+  name: string;      // 科技名（HUD 面板与事件文案）
+  fragments: number; // 攒齐所需碎片数（≥1）
+  order: number;     // TECH_ORDER 位次（0 = 权重最高）
+  unlocks: string[]; // 该科技解锁的建筑 defId（信息登记，门控看 BuildingTuningEntry.tech）
 }
 
 export interface EnemyTuningEntry {
@@ -132,6 +151,25 @@ export interface Tuning {
     senseRadius: number;
     fleeHpRatio: number;
   };
+  /**
+   * techs —— 科技抽卡池数据表（R2-1，2026-08-21 追加：ROADMAP「科技 = 独立抽卡池，碎片制」）。
+   *
+   * 为什么进表而不是硬编码（原则③）：科技条目既是抽卡池的**候选集合**，又是建筑门控的
+   * **查表键**，两个消费方都必须能读到同一份事实；mod 追加科技 = 往这张表加条目。
+   *
+   * 字段语义：
+   *  - fragments：解锁该科技所需碎片数（碎片制——抽卡池每次只发一块碎片，不是直发整卡）。
+   *  - order：抽卡池顺序位（0 = 最靠前 = 权重最高 = 最先攒齐），线性递减见 tech-pool 包。
+   *  - unlocks：本科技解锁的建筑 defId 列表（信息性登记，门控以建筑自身 tech 字段为准）。
+   */
+  techs: Record<string, TechTuningEntry>;
+  /** 科技抽卡池自身的节奏参数（tech-pool 包消费） */
+  techPool: {
+    /** 发碎片间隔（秒）：每隔这么久抽一次科技池 */
+    intervalSec: number;
+    /** 每次抽池真正发出碎片的概率（0..1）：其余轮次空转，制造"科技不来"的节奏感 */
+    chance: number;
+  };
   bootstrap: {
     pawnCount: number; // 出生引导：开局鼠数（玩法包数据，可被 override）
   };
@@ -221,6 +259,16 @@ export const DEFAULT_TUNING: Tuning = {
     attackRange: 1.25,
     senseRadius: 18, // 集结迎敌的感知圈：太小会被各个击破
     fleeHpRatio: 0.6,
+  },
+  // 科技表**出厂为空**：科技是玩法包种子（同 buildings/enemies 的纪律——内核零玩法内容）。
+  // tech-pool 包挂载时 registerTech 注入条目。
+  techs: {},
+  techPool: {
+    // 节奏锚点：约每 120s 抽一次科技池，其中 55% 真的发出一块碎片
+    // → 期望 ~218s 一块碎片；首个科技 3 块 ≈ 11 分钟（短于一场 900s 的生存循环，
+    // 玩家能看到"科技真的来了"，又不至于开局就通）。
+    intervalSec: 120,
+    chance: 0.55,
   },
   bootstrap: { pawnCount: 4 },
   events: { maxLog: 200 },

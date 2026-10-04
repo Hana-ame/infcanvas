@@ -37,6 +37,9 @@ export const buildingPack: ModPack = {
       passable: false,
       w: 2,
       h: 2,
+      // 科技门控（R2-1）：科技抽卡池解锁 shelter:hut 之后才盖得起。
+      // 门控是"消费端读表"，不是玩家能点的解锁按钮——解锁权只在抽卡池手里。
+      tech: ['shelter:hut'],
     });
     // 仓库：2×2，木料经济锚点
     m.registerBuilding({
@@ -48,6 +51,7 @@ export const buildingPack: ModPack = {
       passable: false,
       w: 2,
       h: 2,
+      tech: ['storage:store'], // 科技门控（R2-1）：解锁仓储术才建仓库
     });
 
     // ---- 系统：燃料维护（production 组）。数据驱动：
@@ -129,6 +133,8 @@ export const buildingPack: ModPack = {
       series: SER_BUILD,
       weight: 3,
       condition: (p, ctx) => {
+        // 科技门控前置（R2-1）：同 wantHut 语义
+        if (!ctx.techSatisfied(ctx.tuning.buildings['store']?.tech)) return false;
         if ((ctx.stockpile[K_STOCK_WOOD] ?? 0) < costOf(ctx, 'store')) return false;
         let stores = 0;
         for (const b of ctx.buildingsAll()) {
@@ -166,6 +172,9 @@ function wantNewFire(p: PawnState, ctx: SimContext): boolean {
 /** 棚屋刚需：材料够 + 棚屋数 < 按人口比例的上限。
  *  4 只鼠 × 0.5 = 2 座就够——此前只查木料，900s 狂盖 28~43 座（用户反馈）。 */
 function wantHut(p: PawnState, ctx: SimContext): boolean {
+  // 科技门控前置（R2-1）：未解锁就不进候选池——门控写在**卡谓词**里（成本门同款），
+  // 这样"门控"与"材料不够"表现一致：都是这张卡抽不中，而不是抽中了才失败。
+  if (!ctx.techSatisfied(ctx.tuning.buildings['hut']?.tech)) return false;
   if ((ctx.stockpile[K_STOCK_WOOD] ?? 0) < costOf(ctx, 'hut')) return false;
   let shelters = 0;
   let pawns = 0;

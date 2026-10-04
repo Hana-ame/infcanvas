@@ -51,6 +51,21 @@ export class LocalView implements WorldView {
   cardLabel(id: string | null | undefined): string {
     return CARD_LABEL[id ?? ''] ?? '';
   }
+  techProgress(): import('./view').TechProgressRow[] {
+    // 本地模式：直接读 Sim 的科技状态 + tuning 科技表，按 TECH_ORDER（抽卡顺序）排列
+    const order = this.sim.reg.techOrder();
+    return order.map((id) => {
+      const def = this.sim.tuning.techs[id];
+      return {
+        id,
+        name: def?.name ?? id,
+        have: this.sim.techFragments[id] ?? 0,
+        need: def?.fragments ?? 1,
+        unlocked: this.sim.techUnlocked().has(id), // 只走公开访问器（techsUnlocked 是 private）
+      };
+    });
+  }
+
   /** 单格悬停信息：地形/通行/特征（锚点才有）/建筑，一次拼好给 HUD */
   inspect(x: number, y: number): TileInspect {
     const w = this.sim.world;

@@ -22,6 +22,9 @@ function fullStateOf(sim: Sim): FullState {
     buildings: snap.world.buildings,
     events: snap.events,
     world: snap.world,
+    // 科技抽卡池状态（R2-1）：与 game-server 的 fullState() 同源同字段
+    techs: snap.techs,
+    techFragments: snap.techFragments,
   };
 }
 

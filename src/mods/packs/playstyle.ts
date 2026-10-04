@@ -14,6 +14,7 @@ import { buildingPack } from './building';
 import { socialPack } from './social';
 import { raidPack } from './raid';
 import { bootstrapPack } from './bootstrap';
+import { techPoolPack } from './tech-pool';
 
 export const DEFAULT_PLAYSTYLE_PACKS: ModPack[] = [
   needsPack, // 需求衰减 + 吃/睡 + 饥饿权重调制
@@ -22,4 +23,5 @@ export const DEFAULT_PLAYSTYLE_PACKS: ModPack[] = [
   socialPack, // 闲聊 / 口角 / 关系值
   raidPack, // 叙事压力敌袭 + 战/逃卡
   bootstrapPack, // 开局篝火 + 出生（requires building，拓扑自动殿后）
+  techPoolPack, // 科技抽卡池（碎片制）：按间隔发碎片，靠前科技先攒齐；门控 hut/store 建造
 ];

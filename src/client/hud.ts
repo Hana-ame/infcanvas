@@ -15,6 +15,8 @@ export interface HudCallbacks {
 
 export class Hud {
   private feedCache = '';
+  /** 科技面板内容缓存（R2-1）：只在碎片进度/解锁状态真的变化时重排 DOM */
+  private techCache = '';
   constructor(
     private view: WorldView,
     private cb: HudCallbacks,
@@ -56,6 +58,8 @@ export class Hud {
         `<span>🐱 ${v.hostiles().length}</span>` +
         `<span>${selTxt}</span>`;
     }
+    this.frameTech();
+
     // feed
     const recent = v.events().map((e) => `[${String(Math.floor(e.time)).padStart(4)}s] ${e.text}`);
     const html = recent.join('<br>');
@@ -91,4 +95,40 @@ export class Hud {
       panel.style.display = inner ? 'block' : 'none';
     }
   }
+
+  /**
+   * 科技抽卡池面板（R2-1）：🔩 have/need 碎片进度 + 已解锁态。
+   *
+   * 为什么面板在 HUD 而不在 renderer：科技是 DOM 层信息（文字+进度），
+   * Pixi 层画它要自己搓字形布局，纯属重复劳动。
+   *
+   * 空表（tech-pool 包未挂）→ 显示"无科技池"而不是空白面板：
+   * 空白面板会让玩家怀疑界面坏了；显式说明 = 卸载语义对玩家可见。
+   */
+  private frameTech(): void {
+    const body = document.getElementById('hud-tech-body');
+    if (!body) return;
+    const rows = this.view.techProgress();
+    const key = rows.map((r) => `${r.id}:${r.have}/${r.need}:${r.unlocked ? 1 : 0}`).join('|');
+    if (key === this.techCache) return;
+    this.techCache = key;
+    if (rows.length === 0) {
+      body.innerHTML = '<div class="empty">（无科技池）</div>';
+      return;
+    }
+    body.innerHTML = rows
+      .map(
+        (r) =>
+          `<div class="tech${r.unlocked ? ' done' : ''}">` +
+          `<span>${escapeHtml(r.name)}</span>` +
+          `<span class="fr">${r.unlocked ? '已解锁' : `🔩 ${r.have}/${r.need}`}</span>` +
+          `</div>`,
+      )
+      .join('');
+  }
+}
+
+/** HUD 文案转义：mod 内容（科技名/事件文本）可能带尖括号，直接进 innerHTML 会破版 */
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
