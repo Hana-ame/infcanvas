@@ -1,165 +1,233 @@
-// 浏览器入口（2026-08-21 从零重写 v2）——Pixi 渲染 + HUD + 全输入
-// PC: 左键点选/拖=框选 · 右键=移动 · 滚轮=缩放 · 中键拖=平移 · 空格=回营地
-// 触摸: 单指拖=平移 · 双指=缩放 · 轻点=点选 · 长按=移动(450ms)
-import { Sim } from '../sim/sim';
-import { ModRegistry } from '../mods/registry';
-import { CORE_PACKS, defaultPlaystyle } from '../mods/packs';
+/**
+ * client/main.ts —— 客户端入口：本地单机 / ?remote= 联机 双模（阶段④）。
+ *
+ * - 本地模式：浏览器内直跑 Sim（与 Node 同一份零 DOM 代码），固定步长推进。
+ * - 联机模式（?remote=ws://host:port）：RemoteSim 合入服务端快照，命令上行；
+ *   渲染/HUD 与本地共用同一 WorldView，零分支。
+ * 存档按钮走 localStorage（本地模式专属；联机的存档权在服务器侧）。
+ */
+import './style.css';
+import { Application } from 'pixi.js';
+import { Sim } from '../sim';
+import { snapshotOf, loadSim, type SaveData } from '../sim/sim-save';
+import { ModRegistry } from '../mods';
 import { Renderer } from './render';
-import { createHud } from './hud';
+import { Hud } from './hud';
+import { RemoteSim } from './remote';
+import { LocalView } from './local-view';
+import type { WorldView } from './view';
 
-function main(): void {
-  const reg = new ModRegistry();
-  reg.mountMany(CORE_PACKS);
-  reg.mount(defaultPlaystyle);
-  const sim = new Sim({ registry: reg, pawnCount: 4 });
-  const container = document.getElementById('app')!;
-  const renderer = new Renderer(sim, container);
-  const hud = createHud(sim, () => {});
+const SAVE_KEY = 'infcanvas-save-v3';
 
-  (window as unknown as { __sim: unknown }).__sim = sim;
-
-  const canvas = renderer.app.canvas;
-  type Pt = { x: number; y: number };
-  const screenPos = (e: { clientX: number; clientY: number }): Pt => ({ x: e.clientX, y: e.clientY });
-  const pointers = new Map<number, Pt>();
-
-  let downStart: Pt | null = null;
-  let dragging = false;
-  let boxStart: Pt | null = null;
-  let boxActive = false;
-  let longPress: ReturnType<typeof setTimeout> | null = null;
-  const clearLP = () => { if (longPress) { clearTimeout(longPress); longPress = null; } };
-
-  canvas.addEventListener('pointerdown', (e) => {
-    pointers.set(e.pointerId, screenPos(e));
-    if (pointers.size === 1 && (e.pointerType === 'mouse' ? e.button === 0 : true)) {
-      downStart = screenPos(e);
-      boxStart = screenPos(e);
-      dragging = false;
-      boxActive = false;
-      if (e.pointerType !== 'mouse' && (hud as unknown as { buildMode: { current: string | null } }).buildMode === undefined ) {
-        const sx = screenPos(e);
-        longPress = setTimeout(() => {
-          if (pointers.size === 1 && downStart) {
-            const w = renderer.screenToWorld(sx.x, sx.y);
-            sim.issueCommand('move', { eids: hud.selected.current, x: w.x, y: w.y }, 'player');
-          }
-        }, 450);
-      }
-    }
-  });
-
-  canvas.addEventListener('pointermove', (e) => {
-    const prev = pointers.get(e.pointerId);
-    pointers.set(e.pointerId, screenPos(e));
-    if (!prev) return;
-    const cur = screenPos(e);
-    // 双指：跟手平移（简化，缩放另测距离）
-    if (pointers.size === 2) { clearLP(); renderer.pan(prev.x - cur.x, prev.y - cur.y); return; }
-    if (downStart && Math.hypot(cur.x - downStart.x, cur.y - downStart.y) > 6) dragging = true;
-    // 触摸单指 = 平移
-    if (e.pointerType !== 'mouse' && pointers.size === 1 && downStart && Math.hypot(cur.x - downStart.x, cur.y - downStart.y) > 12) {
-      clearLP();
-      renderer.pan(prev.x - cur.x, prev.y - cur.y);
-      return;
-    }
-    // PC 左键拖 = 框选
-    if (e.pointerType === 'mouse' && dragging && boxStart) {
-      boxActive = true;
-      renderer.setSelBox(boxStart, cur);
-    }
-  });
-
-  const endPointer = (e: PointerEvent): void => {
-    clearLP();
-    pointers.delete(e.pointerId);
-    if (e.pointerType === 'mouse' && e.button === 0 && downStart) {
-      if (boxActive && boxStart) {
-        const a = renderer.screenToWorld(boxStart.x, boxStart.y);
-        const b = renderer.screenToWorld(e.clientX, e.clientY);
-        const x0 = Math.min(a.x, b.x), x1 = Math.max(a.x, b.x);
-        const y0 = Math.min(a.y, b.y), y1 = Math.max(a.y, b.y);
-        hud.selected.current = [...sim.pawns.values()]
-          .filter((p) => p.pos.x >= x0 && p.pos.x <= x1 && p.pos.y >= y0 && p.pos.y <= y1)
-          .map((p) => p.eid);
-        renderer.clearSelBox();
-      } else if (!dragging) {
-        const w = renderer.screenToWorld(e.clientX, e.clientY);
-        const hit = [...sim.pawns.values()].find((p) => Math.hypot(p.pos.x - w.x, p.pos.y - w.y) < 0.6);
-        hud.selected.current = hit ? [hit.eid] : [];
-      }
-    }
-    downStart = null; dragging = false; boxStart = null; boxActive = false;
-  };
-  canvas.addEventListener('pointerup', endPointer);
-  canvas.addEventListener('pointercancel', endPointer);
-
-  // 右键 = 移动
-  canvas.addEventListener('contextmenu', (e) => {
-    e.preventDefault();
-    const w = renderer.screenToWorld(e.clientX, e.clientY);
-    sim.issueCommand('move', { eids: hud.selected.current, x: w.x, y: w.y }, 'player');
-    const s = renderer.worldToScreen(w.x, w.y);
-    renderer.moveMark.clear();
-    renderer.moveMark.circle(s.x, s.y, 6).fill(0x4cf);
-  });
-
-  // 滚轮缩放
-  canvas.addEventListener('wheel', (e) => {
-    e.preventDefault();
-    renderer.zoomAt(e.clientX, e.clientY, e.deltaY > 0 ? 0.9 : 1.1);
-  });
-
-  // 中键拖 = 平移
-  let midDrag = false, midPrev: Pt | null = null;
-  canvas.addEventListener('pointerdown', (e) => { if (e.pointerType === 'mouse' && e.button === 1) { midDrag = true; midPrev = screenPos(e); } });
-  canvas.addEventListener('pointermove', (e) => {
-    if (midDrag && midPrev && e.pointerType === 'mouse') {
-      const cur = screenPos(e);
-      renderer.pan(cur.x - midPrev.x, cur.y - midPrev.y);
-      midPrev = cur;
-    }
-  });
-  canvas.addEventListener('pointerup', (e) => { if (e.button === 1) midDrag = false; });
-
-  // 触摸双指缩放
-  let pinchDist = 0;
-  canvas.addEventListener('pointermove', (e) => {
-    if (pointers.size === 2 && e.pointerType !== 'mouse') {
-      const [a, b] = [...pointers.values()];
-      const d = Math.hypot(a!.x - b!.x, a!.y - b!.y);
-      if (pinchDist > 0 && d > 0) {
-        const mid = { x: (a!.x + b!.x) / 2, y: (a!.y + b!.y) / 2 };
-        renderer.zoomAt(mid.x, mid.y, d / pinchDist);
-      }
-      pinchDist = d;
-    } else pinchDist = 0;
-  });
-
-  // 键盘
-  window.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') hud.selected.current = [];
-    if (e.key === ' ' && (e.target as HTMLElement).tagName !== 'BUTTON') {
-      e.preventDefault();
-      const camp = sim.campPos();
-      if (camp) { renderer.cam.x = camp.x; renderer.cam.y = camp.y; }
-    }
-  });
-
-  // 主循环
-  let last = performance.now();
-  const TICK = 1000 / 20;
-  function frame(): void {
-    const now = performance.now();
-    const dt = Math.min(100, now - last);
-    last = now;
-    let acc = dt;
-    while (acc >= TICK) { sim.step(TICK / 1000); acc -= TICK; }
-    renderer.render();
-    hud.update();
-    requestAnimationFrame(frame);
-  }
-  requestAnimationFrame(frame);
+interface Controller {
+  view: WorldView;
+  /** 本地模式推进时间；联机模式为 no-op（时间由服务器推） */
+  tick(realDt: number): void;
+  move(x: number, y: number): void;
+  paused(): boolean;
 }
 
-main();
+async function boot(): Promise<void> {
+  const app = new Application();
+  // resolution 必须跟物理像素走：缺省 1 时高 DPI 屏会把低分辨率画面拉伸，
+  // 整个画面发虚像蒙了层雾（2026-08-21 用户反馈「为什么雾蒙蒙的」）；autoDensity 让
+  // CSS 尺寸保持逻辑像素、背缓冲用物理像素。
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  await app.init({
+    background: '#101410',
+    resizeTo: window,
+    antialias: true,
+    resolution: dpr,
+    autoDensity: true,
+  });
+  document.getElementById('app')!.appendChild(app.canvas);
+
+  const remoteArg = new URLSearchParams(location.search).get('remote');
+  const selected = new Set<number>();
+  let paused = false;
+  let speed = 3;
+
+  let ctrl: Controller;
+  if (remoteArg) {
+    document.title = 'infcanvas · 联机观察/指挥';
+    // 本地专属按钮在联机模式是哑按钮：存档权在服务器侧，直接隐藏防误导
+    for (const id of ['btn-save', 'btn-load', 'btn-new']) {
+      document.getElementById(id)!.style.display = 'none';
+    }
+    const remote = new RemoteSim();
+    // 等首包（welcome）到达再起渲染，否则没有 tuning 无法建地形推导器
+    await remote.connect(remoteArg);
+    ctrl = {
+      view: remote,
+      tick() {}, // 时间由服务器推进
+      move(x, y) {
+        remote.sendCommand('move', { eids: [...selected], x, y });
+      },
+      paused: () => false,
+    };
+  } else {
+    // 本地：支持 ?seed=；?save=1 从 localStorage 恢复
+    const params = new URLSearchParams(location.search);
+    const savedRaw = params.get('save') === '1' ? localStorage.getItem(SAVE_KEY) : null;
+    let sim: Sim;
+    if (savedRaw) {
+      sim = loadSim(JSON.parse(savedRaw), ModRegistry.default());
+      history.replaceState(null, '', location.pathname + location.search.replace(/[?&]save=1/, ''));
+    } else {
+      sim = new Sim({ seed: Number(params.get('seed') ?? 42), registry: ModRegistry.default() });
+    }
+    let acc = 0;
+    const view = new LocalView(sim);
+    ctrl = {
+      view,
+      tick(realDt: number) {
+        if (paused) return;
+        acc += realDt * speed;
+        let steps = 0;
+        while (acc >= 0.25 && steps < 32) {
+          sim.step(0.25);
+          acc -= 0.25;
+          steps++;
+        }
+        if (acc > 8) acc = 0; // 后台标签页回来不补帧雪崩
+      },
+      move(x, y) {
+        sim.selected = [...selected];
+        sim.issueCommand('move', { eids: [...selected], x, y });
+      },
+      paused: () => paused,
+    };
+  }
+
+  let followCam = true; // 默认跟随：否则鼠走远了用户看到空地（按钮可关）
+  const renderer = new Renderer(app, ctrl.view, {
+    onSelect(eid) {
+      selected.clear();
+      if (eid !== null) selected.add(eid);
+      renderer.selected = selected;
+    },
+    onMove(x, y) {
+      if (selected.size === 0) return;
+      ctrl.move(x, y);
+    },
+    onUserPan() {
+      // 手动平移即交出镜头控制权：跟随若开着会被 lerp 拉回去，两个力打架
+      if (followCam) {
+        followCam = false;
+        const b = document.getElementById('btn-follow');
+        if (b) b.textContent = '🎯 跟随鼠群：关';
+      }
+    },
+  });
+  renderer.centerOn(0, 0);
+
+  const hud = new Hud(ctrl.view, {
+    onPauseToggle() {
+      paused = !paused;
+      return paused;
+    },
+    onSpeedCycle() {
+      speed = speed === 1 ? 3 : speed === 3 ? 8 : 1;
+      return speed;
+    },
+    onFollowToggle() {
+      followCam = !followCam;
+      if (followCam) renderer.centerOn(...centroid(ctrl.view));
+      return followCam;
+    },
+    onNewWorld() {
+      location.search = `seed=${Math.floor(Math.random() * 100000)}`;
+    },
+    onSave() {
+      if (!(ctrl.view instanceof Sim)) return; // 联机模式存档权在服务器
+      localStorage.setItem(SAVE_KEY, JSON.stringify(snapshotOf(ctrl.view)));
+      flash('💾 已保存到浏览器');
+    },
+    onLoad() {
+      const raw = localStorage.getItem(SAVE_KEY);
+      if (!raw) {
+        flash('⚠ 没有找到存档');
+        return;
+      }
+      location.href = `${location.pathname}?save=1`;
+    },
+  });
+
+  // 相机跟随开关（默认关）；centroid 供开启瞬间直接对准质心
+  function centroid(v: WorldView): [number, number] {
+    let sx = 0;
+    let sy = 0;
+    let n = 0;
+    for (const p of v.pawns()) {
+      sx += p.pos.x;
+      sy += p.pos.y;
+      n++;
+    }
+    return n ? [sx / n, sy / n] : [0, 0];
+  }
+  addEventListener('keydown', (e) => {
+    if (e.code === 'Space') {
+      e.preventDefault();
+      paused = !paused;
+    }
+  });
+  function flash(text: string): void {
+    const el = document.getElementById('hud-hint')!;
+    el.textContent = text;
+    setTimeout(() => {
+      el.textContent = HINT;
+    }, 2000);
+  }
+  const HINT = '左键点鼠选中 → 点地面/右键指挥移动｜拖拽平移·滚轮缩放｜空格暂停｜移动鼠标看左下角地块信息';
+
+  // ---- 地块信息面板：固定在左下角，不跟随鼠标；可开关隐藏 ----
+  const tip = document.getElementById('hud-tip')!;
+  let tipVisible = true;
+  document.getElementById('btn-tip')!.onclick = (ev) => {
+    tipVisible = !tipVisible;
+    tip.style.display = tipVisible ? 'block' : 'none';
+    (ev.target as HTMLElement).textContent = `📋 地块信息：${tipVisible ? '开' : '关'}`;
+  };
+  app.canvas.addEventListener('mousemove', (e) => {
+    if (!tipVisible) return;
+    const w = renderer.screenToWorld(e.clientX, e.clientY);
+    const info = ctrl.view.inspect(w.x, w.y);
+    const lines: string[] = [];
+    lines.push(`<span class="t-name">${info.terrainName}</span> <span class="muted">(${Math.round(info.x)},${Math.round(info.y)})</span>`);
+    // z 高度模型：海拔与立足性
+    if (info.liquid) lines.push('<span class="bad">z=0 · 水面无法立足</span>');
+    else {
+      lines.push(`<span class="ok">z=${info.z}</span><span class="muted">${info.standable ? '· 可立足' : `· 需攀爬 ≥${info.z}`}</span>`);
+    }
+    if (info.treeCanopy) lines.push('<span class="bad">大树树冠</span>');
+    if (info.feature) lines.push(`${info.feature.kind === 'tree' ? '🌳' : '🍓'} ${info.feature.label}`);
+    if (info.buildingName) lines.push(`🏠 ${info.buildingName}`);
+    tip.innerHTML = lines.join('<br>');
+    tip.style.display = 'block';
+  });
+  app.canvas.addEventListener('mouseleave', () => {
+    if (!tipVisible) return;
+    tip.style.display = 'block'; // 离开画布时保留最后一条信息（不隐藏）
+  });
+
+  let last = performance.now();
+  app.ticker.add(() => {
+    const now = performance.now();
+    const dt = Math.min(0.1, (now - last) / 1000);
+    last = now;
+    ctrl.tick(dt);
+    if (followCam) {
+      const [cx, cy] = centroid(ctrl.view);
+      renderer.lerpCam(cx, cy);
+    }
+    renderer.frame(now);
+    hud.frame(paused, selected);
+  });
+  void flash;
+}
+
+boot().catch((err) => {
+  document.getElementById('app')!.innerHTML =
+    `<div style="color:#f88;font:14px system-ui;padding:24px">启动失败：${String(err)}<br>` +
+    `联机地址是否正确？服务器是否已启动（npm run server -- 8080）？</div>`;
+});

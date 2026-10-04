@@ -1,82 +1,56 @@
-// 玩法包（2026-08-21 从零重写·精简插件化）
-// 一切可装卸玩法 = ModPack。内核只提供：==注册表 + 挂载拓扑 + 执行序推导==。
+/**
+ * pack.ts —— ModPack 契约 + 依赖拓扑排序。
+ *
+ * 一切皆插件（原则④）：玩法 = ModPack { id, requires, apply }。
+ * - requires 显式声明硬依赖；挂载序由 Kahn 拓扑从 requires 自动推导，
+ *   清单顺序不承担图约束（乱序也自动正确）——旧项目踩坑结论：靠清单顺序维护
+ *   挂载序迟早漂移，显式依赖才是唯一事实。
+ * - 无依赖必须写 requires: []（显式无依赖，与"忘了写"区分）。
+ */
 
-import type { Sim } from '../sim/sim';
-import type { ModRegistry } from './registry';
-import type { GameSystem } from '../sim/systems';
-
-export type Category = 'needs' | 'ai' | 'society' | 'production' | 'raid' | 'world' | 'boot';
-
-/** 系统定义（包注册，Sim 装配） */
-export interface SystemDef {
-  id: string;
-  category: Category;
-  ctor: (sim: Sim) => GameSystem;
-}
-
-/** 玩法包：注册 def + 声明依赖 */
 export interface ModPack {
   id: string;
-  name?: string;
-  /** 前置包 id（挂载拓扑：先挂依赖） */
   requires?: string[];
-  /** 子包（DLC 里加 DLC：父包自动先挂子包） */
-  subpacks?: ModPack[];
-  apply(m: ModRegistry): void;
+  apply(m: import('./registry').ModRegistry): void;
 }
 
-/** 类别执行序（唯一人工语义） */
-export const CATEGORY_ORDER: Category[] = ['needs', 'ai', 'society', 'production', 'raid', 'world', 'boot'];
-
-// ---- 包目录 + 拓扑 ----
-
-const directory = new Map<string, ModPack>();
-
-export function registerPack(pack: ModPack): void {
-  if (!directory.has(pack.id)) directory.set(pack.id, pack);
-}
-
-export function getPack(id: string): ModPack | undefined {
-  return directory.get(id);
-}
-
-/** Kahn 拓扑：闭包收集（pack + requires + subpacks）+ 依赖排序 */
+/**
+ * Kahn 拓扑排序：稳定（同层保持输入顺序 → 确定性装配）；
+ * 缺依赖 / 环 → 抛错（挂载失败要响亮，静默半挂载是事故源头）。
+ */
 export function topoSort(packs: ModPack[]): ModPack[] {
-  const seen = new Set<string>();
-  const closure: ModPack[] = [];
-  const queue = [...packs];
-  while (queue.length) {
-    const p = queue.shift()!;
-    if (seen.has(p.id)) continue;
-    seen.add(p.id);
-    closure.push(p);
-    for (const req of p.requires ?? []) {
-      const dep = getPack(req);
-      if (!dep) throw new Error(`玩法包 ${p.id} 缺前置包 ${req}`);
-      queue.push(dep);
-    }
-    for (const sub of p.subpacks ?? []) queue.push(sub);
+  const byId = new Map<string, ModPack>();
+  for (const p of packs) {
+    if (byId.has(p.id)) throw new Error(`包 id 重复：${p.id}`);
+    byId.set(p.id, p);
   }
-  const byId = new Map(closure.map((p) => [p.id, p]));
   const indeg = new Map<string, number>();
-  for (const p of closure) {
-    const deps = [...(p.requires ?? []), ...(p.subpacks ?? []).map((s) => s.id)];
-    indeg.set(p.id, deps.filter((d) => byId.has(d)).length);
-  }
-  const ready = closure.filter((p) => (indeg.get(p.id) ?? 0) === 0).map((p) => p.id);
-  const out: ModPack[] = [];
-  while (ready.length) {
-    const id = ready.shift()!;
-    out.push(byId.get(id)!);
-    for (const p of closure) {
-      if (p.id === id || out.includes(p)) continue;
-      const deps = [...(p.requires ?? []), ...(p.subpacks ?? []).map((s) => s.id)];
-      if (deps.includes(id)) {
-        indeg.set(p.id, (indeg.get(p.id) ?? 0) - 1);
-        if ((indeg.get(p.id) ?? 0) === 0) ready.push(p.id);
-      }
+  const dependents = new Map<string, string[]>(); // depId → 依赖它的包 id 列表
+  for (const p of packs) {
+    const reqs = p.requires ?? [];
+    indeg.set(p.id, reqs.length);
+    for (const r of reqs) {
+      if (!byId.has(r)) throw new Error(`包 ${p.id} 依赖的 ${r} 不在挂载清单中`);
+      const arr = dependents.get(r);
+      if (arr) arr.push(p.id);
+      else dependents.set(r, [p.id]);
     }
   }
-  if (out.length !== closure.length) throw new Error('玩法包依赖成环');
+  // 队列种子按输入序 → 同层稳定
+  const queue = packs.filter((p) => (indeg.get(p.id) ?? 0) === 0).map((p) => p.id);
+  const out: ModPack[] = [];
+  while (queue.length > 0) {
+    const id = queue.shift()!;
+    out.push(byId.get(id)!);
+    for (const nxt of dependents.get(id) ?? []) {
+      const left = (indeg.get(nxt) ?? 0) - 1;
+      indeg.set(nxt, left);
+      if (left === 0) queue.push(nxt);
+    }
+  }
+  if (out.length !== packs.length) {
+    const cyclic = packs.map((p) => p.id).filter((id) => !out.some((o) => o.id === id));
+    throw new Error(`包依赖成环：${cyclic.join(', ')}`);
+  }
   return out;
 }

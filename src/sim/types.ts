@@ -1,64 +1,82 @@
-// 核心类型（2026-08-21 从零重写·纯空白设计）
-// 最小数据模型：实体 = 数字 id（连续递增），状态存并行 Map。
-// 原则：能存 number 不存对象，能 O(1) 不扫表——但决不为性能牺牲可读性。
+/**
+ * types.ts —— 内核共享数据类型（零依赖，可被 sim/mods/客户端/服务端共同 import）。
+ *
+ * 设计取舍：
+ *  - PawnState 用普通对象字段（非 ECS 并行数组）：本阶段规模（几十只鼠）下可读性与
+ *    存档友好优先；性能回归时再迁并行数组，接口不变。
+ *  - 所有字段都是纯数据（JSON 可序列化）——存档即 JSON 是技术规格承诺。
+ */
 
-/** 实体 id（数字，连续） */
 export type Eid = number;
 
-/** 位置（世界格坐标） */
-export interface Pos { x: number; y: number }
+export interface Pos {
+  x: number;
+  y: number;
+}
 
-/** 需求值（0-100，越低越迫切） */
-export interface Needs { food: number; rest: number; mood: number; san: number }
+/** 需求四维：0..100，100 = 完全满足。衰减速率见 tuning.needs */
+export interface Needs {
+  food: number;
+  rest: number;
+  mood: number;
+  san: number;
+}
 
-/** 健康（hp 归零 = 死亡） */
-export interface Health { hp: number; maxHp: number }
+/** 熟练度条目：v = 0..100，t = 最后触碰时刻（惰性衰减用，读时先按流逝时间扣） */
+export interface MasteryEntry {
+  v: number;
+  t: number;
+}
 
-/** 小人状态（挂在实体上的可变状态） */
-export interface Pawn {
+export interface PawnState {
   eid: Eid;
   name: string;
   pos: Pos;
   needs: Needs;
-  health: Health;
-  job: string;            // 当前行为标签（显示用）
-  path: Pos[];            // 移动路径（A* 结果）
-  target?: Pos;           // 当前目标格
-  trait?: string;         // 天赋（决定外观/行为倾向）：'strong'|'lazy'|'owl'...
-  commandCd: number;      // 玩家命令冷却（秒）——期间不自主决策
-}
-
-/** 地图地形 */
-export type TileId = 'grass' | 'tree' | 'ore' | 'water' | 'stone';
-
-/** 建筑 */
-export interface Building {
-  id: string;             // 实例 id（位置 key）
-  defId: string;
-  x: number;
-  y: number;
-  hp: number;
-}
-
-/** 敌人 */
-export interface Hostile {
-  id: string;
-  x: number;
-  y: number;
   hp: number;
   maxHp: number;
-  dmg: number;
-  speed: number;
-  target?: Pos;           // 目标点（营地）
-  attacking?: Eid;        // 正在攻击的实体
+  /** 攀爬能力：可跨越的地形高差（tuning.pawn.climb 缺省，未来特质/mod 可改） */
+  climb: number;
+  trait: string; // tuning.traits 表键
+  // ---- 抽卡决策引擎状态（内核所有，玩法包只读/经 ctx 操作）----
+  cardId: string | null; // 当前执行卡
+  busyUntil: number; // 到期后重新抽卡
+  holdUntil: number; // 玩家命令优先窗口：期内不自主抽卡（命令层语义，非玩法 AI）
+  atkCd: number; // 近战攻击冷却
+  path: Pos[]; // 待走的路径（内核 moveStep 消费）
+  mastery: Record<string, MasteryEntry>;
+  uses: Record<string, number>; // 卡触发计数（验证抽卡驱动 / 统计用）
+  /** 单槽避让：寻路失败的目标格在 until 前不再尝试（防"看得见够不着"的抽卡死循环）。
+   *  可选字段=旧档兼容；只由 gathering 等工作卡写读（跨包词汇暂无第二使用者）。 */
+  avoidFeat?: { x: number; y: number; until: number };
 }
 
-/** 事件（社交素材 / 历史日志） */
-export interface GameEvent {
-  type: string;
-  text: string;
+export interface Hostile {
+  id: number;
+  kind: string; // tuning.enemies 表键
+  pos: Pos;
+  hp: number;
+  maxHp: number;
+  atkCd: number;
+}
+
+export interface BuildingState {
+  id: string;
+  defId: string; // tuning.buildings 表键
+  pos: Pos;
+  hp: number;
+}
+
+/** 世界特征（树/浆果丛）：无限地图上由哈希推导，本身不实例化存储；
+ *  FeatureHit 是查询时的瞬时快照。 */
+export interface FeatureHit {
+  x: number;
+  y: number;
+  kind: 'tree' | 'berry';
+  amount: number; // 浆果剩余份数 / 树可出木材份数
+}
+
+export interface LogEvent {
   time: number;
-  eid?: Eid;
-  x?: number;
-  y?: number;
+  text: string;
 }

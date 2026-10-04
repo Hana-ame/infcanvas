@@ -1,0 +1,25 @@
+/**
+ * playstyle.ts —— 默认玩法清单（纯数据，2026-08-21 从零 v3）。
+ *
+ * 纪律：
+ *  - 这里只决定"默认挂哪些包"，顺序不承担依赖约束（拓扑由 pack.topoSort 从
+ *    requires 推导，乱序也正确）。
+ *  - 新增玩法包：写包 → 声明 requires → 在此登记一行。完事。
+ *  - DLC 不进本清单（requires: [] 的独立包，按需显式 mountPacks）。
+ */
+import type { ModPack } from '../pack';
+import { needsPack } from './needs';
+import { gatheringPack } from './gathering';
+import { buildingPack } from './building';
+import { socialPack } from './social';
+import { raidPack } from './raid';
+import { bootstrapPack } from './bootstrap';
+
+export const DEFAULT_PLAYSTYLE_PACKS: ModPack[] = [
+  needsPack, // 需求衰减 + 吃/睡 + 饥饿权重调制
+  gatheringPack, // 采集野果 / 砍树
+  buildingPack, // 篝火 / 棚屋 + 自主建造
+  socialPack, // 闲聊 / 口角 / 关系值
+  raidPack, // 叙事压力敌袭 + 战/逃卡
+  bootstrapPack, // 开局篝火 + 出生（requires building，拓扑自动殿后）
+];

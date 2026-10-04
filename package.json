@@ -5,25 +5,23 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "server": "tsx src/server/index.ts",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "mod:pack": "tsx scripts/pack-mod.ts"
-  },
-  "dependencies": {
-    "bitecs": "^0.4.0",
-    "pixi.js": "^8.19.0",
-    "ws": "^8.21.3"
+    "play": "tsx scripts/play.ts",
+    "server": "tsx src/server/index.ts"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
     "@types/ws": "^8.18.1",
-    "jsdom": "^30.0.1",
     "tsx": "^4.23.11",
     "typescript": "^5.7.2",
     "vite": "^6.0.5",
     "vitest": "^2.1.8"
+  },
+  "dependencies": {
+    "pixi.js": "^8.20.0",
+    "ws": "^8.21.3"
   }
 }
