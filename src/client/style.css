@@ -173,3 +173,22 @@ button:hover {
   color: #cde;
   font-size: 12px;
 }
+
+/* R1-1 断连横幅：顶部居中警示条。默认 hidden（联机断开时由 main.ts 取消隐藏）。
+   刻意做成醒目的橙色半透明条——断连期间世界是冻结的，若提示太淡玩家会以为游戏卡死。 */
+#hud-banner {
+  position: fixed;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 30;
+  padding: 6px 14px;
+  border-radius: 6px;
+  background: rgba(200, 110, 40, 0.92);
+  color: #fff;
+  font: 13px system-ui, sans-serif;
+  pointer-events: none;
+}
+#hud-banner[hidden] {
+  display: none;
+}

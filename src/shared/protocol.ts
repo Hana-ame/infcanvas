@@ -48,16 +48,41 @@ export interface DeltaMsg {
     /** 特征运行态只在 full 里同步；delta 不带（低频变化可容忍 5s 延迟） */
   };
 }
-export type ServerMsg = WelcomeMsg | FullMsg | DeltaMsg;
+/**
+ * 心跳帧（R1-1）：服务端每 PING_MS_MS 一帧无条件广播。
+ * 为什么是**服务端主动发**而不是客户端发 ping 等 pong：
+ *  - 单向帧就够判定链路活着，不必为 pong 再加一条消息类型与状态机；
+ *  - 服务端主动发能同时探测"服务端→客户端"方向（NAT/代理下上行通不代表下行通）；
+ *  - 断连期间客户端也能靠它确认"服务端还活着，只是我这条断了"，从而立即重连
+ *    而不是傻等 15s 看门狗。
+ * 客户端只要 15s 内没收到**任何**消息（不只 ping）就判定假死。
+ */
+export interface PingMsg {
+  t: 'ping';
+  /** 服务端 sim.time（秒）：兼作链路活性 + 时间对齐的粗校验 */
+  d: { time: number };
+}
+export type ServerMsg = WelcomeMsg | FullMsg | DeltaMsg | PingMsg;
+
+/** 心跳广播周期（ms）。ROADMAP R1-1 规定 10s。 */
+export const PING_MS = 10000;
+
+/** 客户端看门狗阈值（ms）：超过这么久没收到任何消息即判定假死。ROADMAP R1-1 规定 15s。 */
+export const WATCHDOG_MS = 15000;
 
 export interface CmdMsg {
   t: 'cmd';
-  c: { type: string; args?: Record<string, unknown> };
+  c: { type: string; args?: Record<string, unknown>; src?: string; token?: string };
 }
 export type ClientMsg = CmdMsg;
 
-/** 服务端命令白名单：基础指挥面。新命令要上行必须在此登记（防任意调用注入）。 */
-export const SERVER_COMMANDS: readonly string[] = ['move'];
+/**
+ * 服务端命令白名单：基础指挥面。新命令要上行必须在此登记（防任意调用注入）。
+ * 注意：不登记 ≠ 报错，而是**静默丢弃并计入 rejectedCommands**（服务端不给客户端
+ * 错误回显通道是刻意的，见 game-server 头注释）——所以漏登记极难排查。
+ * R1-5 新增 save/load 即踩过这个坑：命令发出去没反应，必须在此登记才生效。
+ */
+export const SERVER_COMMANDS: readonly string[] = ['move', 'save', 'load'];
 
 /** move 参数校验：坐标有限且在防御边界内；eids 存在性由 Sim.issueCommand 自行过滤 */
 export function validMoveArgs(args: Record<string, unknown> | undefined): boolean {
@@ -67,4 +92,51 @@ export function validMoveArgs(args: Record<string, unknown> | undefined): boolea
   if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
   if (Math.abs(x) > 30000 || Math.abs(y) > 30000) return false;
   return true;
+}
+
+/**
+ * save 参数校验：无参或 { name }。
+ * name 是**存档名**（不含扩展名），服务端会拼成 saves/<name>.json。
+ * 这里只校字符集：挡掉 ../ 与绝对路径（目录穿越），不替代调用方的 admin 鉴权。
+ */
+export function validSaveArgs(args: Record<string, unknown> | undefined): boolean {
+  if (args === undefined) return true;
+  const name = args.name;
+  if (name === undefined) return true;
+  if (typeof name !== 'string') return false;
+  return isSafeSaveName(name);
+}
+
+/**
+ * load 参数校验：{ file } 必填，且必须是安全的存档名/文件名。
+ * 与 save 共用字符集校验——存档文件名同时是路径分量，必须同标准。
+ */
+export function validLoadArgs(args: Record<string, unknown> | undefined): boolean {
+  if (!args) return false;
+  const file = args.file;
+  if (typeof file !== 'string' || file === '') return false;
+  // 允许带不带 .json 后缀，两种写法都归一（玩家手敲命令行时最容易忘后缀）
+  const stem = file.endsWith('.json') ? file.slice(0, -'.json'.length) : file;
+  return isSafeSaveName(stem);
+}
+
+/**
+ * 存档名安全校验：只允许 [A-Za-z0-9_-]。
+ * 为什么这么严：name 会直接拼进文件路径 saves/<name>.json，放开 . / \ 就是
+ * 目录穿越（../../etc/passwd 之类）。宁可拒绝用户想要的中文名——那只是可用性损失，
+ * 而目录穿越是安全事故。名字里带时间戳正是设计者要的默认形态，纯 ASCII 够用。
+ */
+function isSafeSaveName(name: string): boolean {
+  return /^[A-Za-z0-9_-]{1,64}$/.test(name);
+}
+
+/**
+ * 管理命令（save/load）的入参校验分发表。
+ * 与 move 一样在服务端统一入口校验——白名单只管"这个命令存在吗"，
+ * 参数是否合法是第二道闸；两道都过才交给具体实现。
+ */
+export function validateAdminArgs(type: string, args: Record<string, unknown> | undefined): boolean {
+  if (type === 'save') return validSaveArgs(args);
+  if (type === 'load') return validLoadArgs(args);
+  return false;
 }

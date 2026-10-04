@@ -12,6 +12,7 @@
 import { Application, Container, Graphics, Sprite, Text, Texture } from 'pixi.js';
 import type { WorldView } from './view';
 import { TRAIT_COLOR, cardLabel } from './view';
+import { eidsInRect } from './selection';
 
 const TILE_COLORS: Record<string, string> = {
   grass: '#4a7a35',
@@ -32,6 +33,8 @@ interface PawnSprite {
 
 export interface RenderInput {
   onSelect(eid: number | null): void;
+  /** R1-4 框选：一次选中一批（单击点选走 onSelect，两者不冲突——拖动阈值区分） */
+  onSelectMany?(eids: number[]): void;
   onMove(x: number, y: number): void;
   onUserPan?(): void;
 }
@@ -42,6 +45,8 @@ export class Renderer {
   private terrainG = new Graphics();
   private floorG = new Graphics();
   private entityLayer = new Container();
+  /** 框选矩形图层（R1-4）：单独一层，画在实体之上且不参与 y 排序 */
+  private boxG = new Graphics();
   private pawnSprites = new Map<number, PawnSprite>();
   private hostileG = new Map<number, Graphics>();
   private buildingG = new Map<string, Container>();
@@ -65,6 +70,7 @@ export class Renderer {
     this.gameContainer.addChild(this.floorG);
     this.entityLayer.sortableChildren = true;
     this.gameContainer.addChild(this.entityLayer);
+    this.gameContainer.addChild(this.boxG);
     this.world.addChild(this.gameContainer);
     app.stage.addChild(this.world);
     this.bindInput();
@@ -110,37 +116,138 @@ export class Renderer {
     };
   }
   // ---------------- 输入 ----------------
-  private drag: { sx: number; sy: number; cx: number; cy: number } | null = null;
+  /**
+   * 拖拽会话。R1-4 之后左键拖不再是「平移」而是「画选框」，
+   * 所以这个结构体必须同时承载两种意图，靠 kind 区分。
+   */
+  private drag:
+    | {
+        kind: 'pan';
+        sx: number;
+        sy: number;
+        cx: number;
+        cy: number;
+        /** 0=左键(带空格) 1=中键 2=右键。右键不带拖动时是「指挥移动」而非平移 */
+        button: number;
+      }
+    | { kind: 'box'; sx: number; sy: number }
+    | null = null;
+  /** 空格按住 = 平移修饰键（左键拖画框时用） */
+  private spaceHeld = false;
+  /** 框选矩形（屏幕坐标；null = 当前没在画框） */
+  private boxRect: { x0: number; y0: number; x1: number; y1: number } | null = null;
+  /** 框选命中集合（每帧从权威 pawns 计算） */
+  private boxHits: number[] = [];
+  /**
+   * 屏幕矩形 → 命中哪些实体的 eid（R1-4）。
+   * 只做「屏幕→世界」的换算，判定本身交给 selection.ts 的纯函数。
+   *
+   * 判据用 view.pawns() 的**权威**坐标而非插值坐标：插值会让「框住」在边缘飘忽，
+   * 而命令要对的是服务端事实——所见未必所得在这里是有意为之。
+   */
+  eidsInBox(r: { x0: number; y0: number; x1: number; y1: number }): number[] {
+    // 先在屏幕上归一（反向拖拽也要得到同一个矩形），再换算成世界矩形
+    const minX = Math.min(r.x0, r.x1);
+    const maxX = Math.max(r.x0, r.x1);
+    const minY = Math.min(r.y0, r.y1);
+    const maxY = Math.max(r.y0, r.y1);
+    const a = this.toWorld(minX, minY);
+    const b = this.toWorld(maxX, maxY);
+    return eidsInRect({ x0: a.x, y0: a.y, x1: b.x, y1: b.y }, this.view.pawns());
+  }
+
+  /**
+   * 把选框画在实体层之上。
+   * 为什么用世界坐标而非屏幕坐标：相机一直在动，屏幕坐标的框会「粘」在屏幕上
+   * 相对地平移，看起来像是框跟着鼠标跑而不是框住世界。
+   */
+  private drawBox(g: Graphics): void {
+    if (!this.boxRect) return;
+    const a = this.toWorld(this.boxRect.x0, this.boxRect.y0);
+    const b = this.toWorld(this.boxRect.x1, this.boxRect.y1);
+    const x = Math.min(a.x, b.x);
+    const y = Math.min(a.y, b.y);
+    g.rect(x * this.TILE, y * this.TILE, Math.abs(b.x - a.x) * this.TILE, Math.abs(b.y - a.y) * this.TILE)
+      .fill({ color: 0x7ec97e, alpha: 0.15 })
+      .stroke({ color: 0x7ec97e, alpha: 0.9, width: 1.5 });
+  }
+
   private bindInput(): void {
     const cv = this.app.canvas;
+    // 左键（或按住空格时的左键）拖拽=画选框；中键/右键拖=平移。
+    // 为什么不把左键平移留着：框选需要「按下—拖动—抬起」这条手势，
+    // 若左键仍平移就与之冲突。改用中键/右键拖 + 空格+左键拖 两条平移入口。
     cv.addEventListener('mousedown', (e) => {
-      if (e.button === 0 || e.button === 1) {
-        this.drag = { sx: e.clientX, sy: e.clientY, cx: this.cam.x, cy: this.cam.y };
+      if (e.button === 0) {
+        this.drag = this.spaceHeld
+          ? { kind: 'pan', sx: e.clientX, sy: e.clientY, cx: this.cam.x, cy: this.cam.y, button: 0 }
+          : { kind: 'box', sx: e.clientX, sy: e.clientY };
+        if (!this.spaceHeld) this.boxRect = { x0: e.clientX, y0: e.clientY, x1: e.clientX, y1: e.clientY };
+        return;
       }
+      if (e.button === 1 || e.button === 2) {
+        // 中键拖 = 平移；中键还要显式 preventDefault，否则浏览器会开自动滚动条
+        if (e.button === 1) e.preventDefault();
+        // 右键：先记下位置，等 mouseup 时看是否拖动过——拖了=平移，没拖=指挥移动。
+        // 右键在抬起时才决定语义，是为了让「右键单击=指挥」这个高频操作不被拖动判断误伤。
+        this.drag = { kind: 'pan', sx: e.clientX, sy: e.clientY, cx: this.cam.x, cy: this.cam.y, button: e.button };
+      }
+    });
+    // 空格 = 平移修饰键。与 main.ts 的空格暂停冲突——这里按住不放才是平移，
+    // 单击（按下即松开）才触发暂停，见 keyup 分支的说明。
+    addEventListener('keydown', (e) => {
+      if (e.code === 'Space') this.spaceHeld = true;
+    });
+    addEventListener('keyup', (e) => {
+      if (e.code === 'Space') this.spaceHeld = false;
     });
     addEventListener('mousemove', (e) => {
       const d = this.drag;
       if (!d) return;
+      if (d.kind === 'box') {
+        this.boxRect = { x0: d.sx, y0: d.sy, x1: e.clientX, y1: e.clientY };
+        return;
+      }
       this.cam.x = d.cx - (e.clientX - d.sx) / this.TILE;
       this.cam.y = d.cy - (e.clientY - d.sy) / this.TILE;
       this.input.onUserPan?.();
     });
     addEventListener('mouseup', (e) => {
-      if (!this.drag) return;
-      const moved = Math.hypot(e.clientX - this.drag.sx, e.clientY - this.drag.sy);
+      const d = this.drag;
+      if (!d) return;
       this.drag = null;
-      if (moved > 5 || e.button !== 0) return;
-      const w = this.toWorld(e.clientX, e.clientY);
-      let hit: number | null = null;
-      for (const p of this.view.pawns()) {
-        if (Math.hypot(p.pos.x - w.x, p.pos.y - w.y) <= 1.2) hit = p.eid;
+      if (d.kind === 'box') {
+        const moved = Math.hypot(e.clientX - d.sx, e.clientY - d.sy);
+        this.boxRect = null;
+        if (moved > 5) {
+          // 拖动过 = 框选：一次选中框内全部（R1-4）
+          this.boxHits = this.eidsInBox({ x0: d.sx, y0: d.sy, x1: e.clientX, y1: e.clientY });
+          this.input.onSelectMany?.(this.boxHits);
+          return;
+        }
+        // 没拖动 = 普通点选（保持原有单击选单只的手感）
+        const w = this.toWorld(e.clientX, e.clientY);
+        let hit: number | null = null;
+        for (const p of this.view.pawns()) {
+          if (Math.hypot(p.pos.x - w.x, p.pos.y - w.y) <= 1.2) hit = p.eid;
+        }
+        this.input.onSelect(hit);
+        return;
       }
-      this.input.onSelect(hit);
+      // 平移：拖动过才算平移（并通知上层关掉相机跟随，否则两个力打架）
+      if (d.kind === 'pan') {
+        const moved = Math.hypot(e.clientX - d.sx, e.clientY - d.sy) > 5;
+        if (d.button === 2 && !moved) {
+          // 右键单击 = 指挥选中的一批鼠移动到此处（R1-4：eids 是数组，批量天然支持）
+          const w = this.toWorld(e.clientX, e.clientY);
+          this.input.onMove(Math.round(w.x), Math.round(w.y));
+          return;
+        }
+        if (moved) this.input.onUserPan?.();
+      }
     });
     cv.addEventListener('contextmenu', (e) => {
-      e.preventDefault();
-      const w = this.toWorld(e.clientX, e.clientY);
-      this.input.onMove(Math.round(w.x), Math.round(w.y));
+      e.preventDefault(); // 右键菜单会打断拖拽手势；指挥改在 mouseup 里发
     });
     cv.addEventListener('wheel', (e) => {
       e.preventDefault();
@@ -165,7 +272,10 @@ export class Renderer {
     this.redrawTerrain();
     this.redrawFloors();
     this.scanVisibleTrees();
-    this.syncEntities();
+    this.syncEntities(nowMs);
+    // 选框层每帧重画：内容只有一条矩形，开销可忽略（Graphics.clear 后重画）
+    this.boxG.clear();
+    this.drawBox(this.boxG);
   }
 
   /** 扫描视口内树锚点，更新 visibleTrees 集合 */
@@ -285,7 +395,7 @@ export class Renderer {
     }
   }
 
-  private syncEntities(): void {
+  private syncEntities(nowMs: number): void {
     const seenPawns = new Set<number>();
     for (const p of this.view.pawns()) {
       seenPawns.add(p.eid);
@@ -295,10 +405,13 @@ export class Renderer {
         this.pawnSprites.set(p.eid, sp);
         this.entityLayer.addChild(sp.root);
       }
-      const s = p.pos.x * this.TILE + this.TILE / 2;
-      const t = p.pos.y * this.TILE + this.TILE / 2;
+      // R1-3：绘制位置优先用渲染层插值坐标（联机），无该能力时回退权威 pos（本地）。
+      // 只影响「画在哪」，不影响命中判定——mouseup 里命中仍读 view.pawns() 的 p.pos。
+      const draw = this.view.renderPos?.(p.eid, nowMs) ?? p.pos;
+      const s = draw.x * this.TILE + this.TILE / 2;
+      const t = draw.y * this.TILE + this.TILE / 2;
       sp.root.position.set(s, t);
-      sp.root.zIndex = p.pos.y;
+      sp.root.zIndex = draw.y;
       const key = `${p.hp}|${cardLabel(p.cardId)}|${p.trait}|${this.selected.has(p.eid) ? 1 : 0}`;
       if (sp.key !== key) {
         sp.key = key;
