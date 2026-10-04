@@ -1,0 +1,52 @@
+{
+  "manifest": {
+    "id": "sample-berry",
+    "title": "浆果与刺蜂（数据化示例）",
+    "requires": [],
+    "author": "infcanvas",
+    "version": "1.0.0",
+    "description": "放文件即装：新增一种浆果建筑（蓝莓丛）与一个新敌人（刺蜂）。不改任何代码。"
+  },
+  "defs": {
+    "items": [
+      {
+        "id": "blueberry",
+        "name": "蓝莓"
+      }
+    ],
+    "buildings": [
+      {
+        "id": "blueberryBush",
+        "name": "蓝莓丛",
+        "cost": {
+          "wood": 6
+        },
+        "hp": 60,
+        "tags": [
+          "shelter"
+        ],
+        "passable": true
+      }
+    ],
+    "enemies": [
+      {
+        "id": "hornet",
+        "name": "刺蜂",
+        "hp": 18,
+        "dmg": 2,
+        "speed": 5.2,
+        "atkCd": 1.1,
+        "climb": 1
+      }
+    ],
+    "cards": [
+      {
+        "id": "sample_pick_berry",
+        "label": "摘蓝莓",
+        "series": "gather",
+        "weight": 6,
+        "duration": 4
+      }
+    ]
+  }
+}
