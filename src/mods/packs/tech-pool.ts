@@ -33,9 +33,9 @@ export const techPoolPack: ModPack = {
     // 为什么 hut/store 有门控而 campfire 没有：篝火是 bootstrap 开局引导的落脚点，
     // 加科技门控会让"新营地连火都生不起来" = 死锁开局（世界模型里没有地牢传送）。
     m.registerTech({ id: 'craft:tool', name: '简易工具', fragments: 3, order: 0, unlocks: [] });
-    m.registerTech({ id: 'shelter:hut', name: '棚屋营造', fragments: 3, order: 1, unlocks: ['hut'] });
-    m.registerTech({ id: 'storage:store', name: '仓储术', fragments: 4, order: 2, unlocks: ['store'] });
-    m.registerTech({ id: 'fire:ring', name: '火塘改良', fragments: 4, order: 3, unlocks: [] });
+    m.registerTech({ id: 'storage:store', name: '仓储术', fragments: 4, order: 1, unlocks: ['store'] });
+    m.registerTech({ id: 'fire:ring', name: '火塘改良', fragments: 4, order: 2, unlocks: [] });
+    m.registerTech({ id: 'craft:toolkit', name: '精工工具', fragments: 5, order: 3, unlocks: [] });
 
     // ---- 系统：科技抽卡池（类别 world：进度类，与战斗无关但也不是社会行为）----
     m.registerSystemDef({

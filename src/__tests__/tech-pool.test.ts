@@ -127,26 +127,34 @@ describe('R2-1 科技抽卡池', () => {
     expect(s.stockpile['wood']).toBeGreaterThanOrEqual(0);
   });
 
-  it('门控生效：hut/store 在未解锁时建不了，解锁后能建', () => {
+  it('门控生效：store 未解锁时 techSatisfied 为 false，解锁后放行', () => {
     const reg = ModRegistry.mountPacks([needsPack, gatheringPack, buildingPack, socialPack, bootstrapPack, techPoolPack]);
     const s = new Sim({ seed: 9, registry: reg });
-    // 未解锁 shelter:hut → techSatisfied 为 false
-    expect(s.techUnlocked().has('shelter:hut')).toBe(false);
-    expect(s.techSatisfied(s.tuning.buildings['hut'].tech)).toBe(false);
+    // 仓库是唯一带科技门控的建筑（2026-08-21 平衡复采修正，见 building.ts 注册处注释）：
+    // hut/campfire 不带 tech 字段 → 空表语义放行。
+    expect(s.tuning.buildings['store'].tech).toEqual(['storage:store']);
+    expect(s.tuning.buildings['hut'].tech).toBeUndefined();
+    expect(s.tuning.buildings['campfire'].tech).toBeUndefined();
+    // 未解锁 → 拒绝
+    expect(s.techUnlocked().has('storage:store')).toBe(false);
     expect(s.techSatisfied(s.tuning.buildings['store'].tech)).toBe(false);
+    expect(s.techSatisfied(s.tuning.buildings['hut'].tech)).toBe(true); // 无门控
     expect(s.techSatisfied(s.tuning.buildings['campfire'].tech)).toBe(true); // 无门控
-    // 强制解锁 → 门控放行
-    s.tuning.buildings['campfire']; // ensure
-    const unlockAll = (): void => {
-      for (const id of s.techOrder()) {
-        let g = 0;
-        while (!s.techUnlocked().has(id) && g++ < 20) s.grantTechFragment(id);
-      }
-    };
-    unlockAll();
-    expect(s.techUnlocked().has('shelter:hut')).toBe(true);
-    expect(s.techSatisfied(s.tuning.buildings['hut'].tech)).toBe(true);
+    // 强制解锁 → 放行
+    for (const id of s.techOrder()) {
+      let g = 0;
+      while (!s.techUnlocked().has(id) && g++ < 30) s.grantTechFragment(id);
+    }
+    expect(s.techUnlocked().has('storage:store')).toBe(true);
     expect(s.techSatisfied(s.tuning.buildings['store'].tech)).toBe(true);
+  });
+
+  it('门控：引用表外科技 id 时放行（数据半残不许锁死世界）', () => {
+    const s = techSim(21, 1e9, 1);
+    // 模拟 mod 热卸载：def 引用了一个不在 techs 表里的 id
+    expect(s.techSatisfied(['no-such-tech'])).toBe(true);
+    // 但表内未解锁的真实科技仍然拦住
+    expect(s.techSatisfied([s.techOrder()[0]])).toBe(false);
   });
 
   it('存读档：碎片数与已解锁集合一致（往返无损）', () => {
@@ -171,4 +179,3 @@ describe('R2-1 科技抽卡池', () => {
     expect(restored.scratch['tech-pool.acc']).toBeCloseTo(7, 6);
   });
 });
-

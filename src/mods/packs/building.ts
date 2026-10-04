@@ -37,9 +37,12 @@ export const buildingPack: ModPack = {
       passable: false,
       w: 2,
       h: 2,
-      // 科技门控（R2-1）：科技抽卡池解锁 shelter:hut 之后才盖得起。
-      // 门控是"消费端读表"，不是玩家能点的解锁按钮——解锁权只在抽卡池手里。
-      tech: ['shelter:hut'],
+      // 刻意**不加科技门控**（2026-08-21 平衡复采修正）：
+      // 门控同时压在棚屋与仓库上时，一局 900s 内两项都解锁不完 → 鼠群唯一的建筑出口
+      // 只剩篝火，木料全砸进篝火（实测 4 seed 全是"篝火×N"，棚屋/仓库一座不出），
+      // 世界退化成"多堆火"。棚屋是刚需（人口比例门 + 睡旁边回心情），门控它等于
+      // 拿掉一个刚需维度。门控留给"锦上添花"的建筑才不伤核心循环。
+      tech: undefined,
     });
     // 仓库：2×2，木料经济锚点
     m.registerBuilding({
@@ -172,8 +175,9 @@ function wantNewFire(p: PawnState, ctx: SimContext): boolean {
 /** 棚屋刚需：材料够 + 棚屋数 < 按人口比例的上限。
  *  4 只鼠 × 0.5 = 2 座就够——此前只查木料，900s 狂盖 28~43 座（用户反馈）。 */
 function wantHut(p: PawnState, ctx: SimContext): boolean {
-  // 科技门控前置（R2-1）：未解锁就不进候选池——门控写在**卡谓词**里（成本门同款），
-  // 这样"门控"与"材料不够"表现一致：都是这张卡抽不中，而不是抽中了才失败。
+  // 科技门控（R2-1）：无条件生效——wantHut 是唯一读取 hut.tech 的地方，
+  // 保留这一行是为了"门控规则只有一处实现"的纪律（techSatisfied 的"表外放行"
+  // 语义也要在这里被真实消费一次）。hut 本身不带 tech（见注册处注释）。
   if (!ctx.techSatisfied(ctx.tuning.buildings['hut']?.tech)) return false;
   if ((ctx.stockpile[K_STOCK_WOOD] ?? 0) < costOf(ctx, 'hut')) return false;
   let shelters = 0;
