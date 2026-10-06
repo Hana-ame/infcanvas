@@ -3,13 +3,13 @@
  *
  * 覆盖验收清单：
  *  1. 丰收：库存 food 低 + 浆果丛存在 → 触发后 food 增加；
- *  2. 寒潮：无火堆 → 触发后 env.temp 下降（需预设 scratch["env.temp"] 模拟 env 包）；
+ *  2. 寒潮：无火堆 → 触发后 env.tempMod 被写入（契约：events 写修饰量，env 合成最终值）；
  *  3. 瘟疫：6 只鼠 → 全体 hp 下降；
  *  4. 流浪者：food 充足 + 有棚屋 → 鼠数 +1；
  *  5. 丰收节：food > 80 → food 再 +15；
  *  6. 冷却去重：同一事件在冷却期内不重复触发（触发次数 ≤ 1）；
  *  7. 卸载 events 后世界照跑且无事件触发；
- *  8. 卸载 events 但挂 env：无 tempShift 发生（env.temp 不变）；
+ *  8. 卸载 events 但挂 env：无 tempShift 发生（env.temp 与 env.tempMod 都不变）；
  *  9. 存读档：冷却计时随档，读档续跑不立刻重触发；
  *  10. EventSeedDef 向后兼容：只有 { log } 的 seed 注册并触发不报错。
  *
@@ -121,19 +121,49 @@ describe('events 事件包 —— 局面触发', () => {
     expect(countEvents(s, EVT_TEXTS.harvest)).toBeGreaterThan(0);
   });
 
-  it('寒潮 coldsnap：无火堆 → env.temp 下降（预设 scratch 模拟 env 包）', () => {
+  it('寒潮 coldsnap：无火堆 → env.tempMod 被写入（跨包契约：events 写修饰量，env 合成最终值）', () => {
     const s = eventSim({
       seed: 7,
       pawnCount: 2,
       food: 35, // ≥30 避免 harvest
-      envTemp: 20, // 模拟 env 包挂载
+      envTemp: 20, // 模拟 env 包在场（events 用它做能力探测）
       coldsnapMinPawns: 999, // 防 plague 联动（虽然 pawns<6 已挡，但双保险）
     });
     expect(s.scratch['env.temp']).toBe(20);
     s.run(3);
-    // 寒潮 tempShift=-12 → env.temp 应降至 8
-    expect(s.scratch['env.temp']).toBeCloseTo(8, 0);
+    // ⚠ 契约断言（2026-10-07）：events **只写 env.tempMod**，不碰 env.temp。
+    // 直接断言 env.temp 降到 8 是旧行为——那会让 env 的昼夜循环每 tick 覆写掉
+    // coldsnap 的 -12，使寒潮变成静默 no-op。现在断言两件事：
+    // ① tempMod === -12（本包确实写了修饰量）；② env.temp 未被本包改动（契约边界）。
+    expect(s.scratch['env.tempMod']).toBeCloseTo(-12, 0);
+    expect(s.scratch['env.temp']).toBe(20); // 本包不改最终温度
     expect(countEvents(s, EVT_TEXTS.coldsnap)).toBeGreaterThan(0);
+  });
+
+  it('寒潮余波过期：到期后 env.tempMod 回退（durationSec 反向效果）', () => {
+    // ⚠ 测试夹具两个坑（都踩过）：
+    // ① coldsnap 的谓词是「无火堆 或 鼠数≥阈值」。若不中断触发条件，它会按
+    //    cooldownSec 反复触发、每次叠加 -12，而每次都在登记自己的到期时刻——
+    //    于是"最后一个寒潮还没过期"，tempMod 永远不会归零。必须在触发后补火堆掐断。
+    // ② 篝火会**烧柴**（building.ts fuelSec=12，断薪按 id 序熄灭）。若 stockpile.wood
+    //    为 0，补上的火堆约 15 tick 后自燃成灰，谓词又变真——所以必须给足木头。
+    //    第一次写这个测试时就是漏了 ②，现象是「加了火堆还在触发」，查了半天才发现。
+    const s = eventSim({
+      seed: 7,
+      pawnCount: 2,
+      withBuilding: true, // 需要 buildingPack 才能 addBuilding（也会带来 fuel 系统）
+      food: 35,
+      wood: 100000, // 足够烧完整个测试期，火堆不会自燃
+      envTemp: 20,
+      coldsnapMinPawns: 999, // 只靠"无火堆"这一条分支触发
+    });
+    s.run(3); // 触发 coldsnap
+    expect(s.scratch['env.tempMod']).toBeCloseTo(-12, 0);
+    // 掐断触发条件：有火堆 + 鼠数 2 < coldsnapMinPawns(999) ⇒ 谓词恒假
+    s.addBuilding('campfire', 0, 0);
+    // 最后一次触发 ≤ 第 3 tick，其到期时刻 ≤ 63 ⇒ 跑到 70 tick 后修饰量应归零
+    s.run(70);
+    expect(s.scratch['env.tempMod']).toBeCloseTo(0, 0);
   });
 
   it('瘟疫 plague：6 只鼠 → 全体 hp 下降', () => {
@@ -242,7 +272,7 @@ describe('卸载不破坏核心（原则④）', () => {
     }
   });
 
-  it('卸载 events 但挂 env：无 tempShift 发生（env.temp 不变）', () => {
+  it('卸载 events 但挂 env：无 tempShift 发生（env.temp 与 env.tempMod 都不变）', () => {
     // 只挂 buildingPack（无 events 包），预设 env.temp 模拟 env 包
     const reg = ModRegistry.mountPacks([buildingPack]);
     const s = new Sim({ seed: 1, registry: reg, pawnCount: 2 });
@@ -250,6 +280,8 @@ describe('卸载不破坏核心（原则④）', () => {
     // 无 events 系统 → 无谓词检查 → 无 tempShift
     expect(() => s.run(50)).not.toThrow();
     expect(s.scratch['env.temp']).toBe(20);
+    // 卸载纪律：events 未挂载时连 env.tempMod 都不应被凭空写入
+    expect(s.scratch['env.tempMod']).toBeUndefined();
   });
 
   it('卸载 events 后 eventSeeds 为空且世界照跑（无事件系统）', () => {

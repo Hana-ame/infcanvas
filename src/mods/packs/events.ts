@@ -18,8 +18,9 @@
  *  - `events.expire.<seedId>`：持续效果到期时刻（到点时做反向效果，简化实现）
  *
  * 卸载纪律（tempShift / hpDelta / spawnPawn 的能力探测）：
- *  - tempShift 读 ctx.scratch["env.temp"]——env 包未挂载时该键不存在，静默跳过
- *    （?? 判空），不报错。这是"事件效果依赖另一个包的能力"的标准处理方式。
+ *  - tempShift **探测** `ctx.scratch["env.temp"]`（env 是否在场），**写入** `env.tempMod`
+ *    （修饰量）——见下方 KEY_ENV_TEMP_MOD 的跨包契约注释。env 包未挂载时静默跳过，不报错。
+ *    这是"事件效果依赖另一个包的能力"的标准处理方式。
  *  - hpDelta 走 ctx.damagePawn（内核单点出口），只要 Sim 存在就成立。
  *  - spawnPawn 走 ctx.spawnPawn（内核单点出口），只要 Sim 存在就成立。
  */
@@ -32,7 +33,16 @@ import { K_STOCK_FOOD, K_TAG_SHELTER, K_TAG_FIRE } from '../contracts';
 const ACC_KEY = 'events.acc';
 const LAST_PREFIX = 'events.'; // events.<seedId>.last = 上次触发时刻
 const EXPIRE_PREFIX = 'events.expire.'; // events.expire.<seedId> = 持续效果到期时刻
-const KEY_ENV_TEMP = 'env.temp'; // env 包的环境温度键（跨包契约，单包自洽键不入 contracts）
+/** 跨包契约（env ↔ events，2026-10-07 事故后立）：
+ *  - `env.temp`   = **最终温度**，只有 env 包写（昼夜基准 + 修饰的合成值）。我们只读它做能力探测。
+ *  - `env.tempMod` = **事件修饰量**（additive），只有本包写。env 每 tick 合成 `temp = base + mod`。
+ *
+ * 为什么要两个键：如果事件直接写 `env.temp`，env 的昼夜循环每 tick 会把它**覆写掉**，
+ * coldsnap 的 -12 变成完全无效的静默 no-op——而且不报错。两个包写同一个键、后写的赢，
+ * 这类冲突没有编译器能抓住，只能靠契约约定「谁写哪个键」。见 env 包的 K_TEMP_MOD 注释。
+ */
+const KEY_ENV_TEMP = 'env.temp'; // 只读：env 是否在场的能力探测
+const KEY_ENV_TEMP_MOD = 'env.tempMod'; // 我们写：事件修饰量
 
 export const eventsPack: ModPack = {
   id: 'events',
@@ -222,19 +232,21 @@ function applyEffects(ctx: SimContext, seed: EventSeedDef): void {
     }
   }
 
-  // tempShift：环境温度偏移。**仅当 env 包在场时生效**（ctx.scratch["env.temp"] 存在）。
-  // env 包未挂载时该键不存在 → 静默跳过（?? 判空），不报错。这是"效果依赖另一个包
+  // tempShift：环境温度修饰。**仅当 env 包在场时生效**（ctx.scratch["env.temp"] 存在）。
+  // 写 `env.tempMod`（修饰量）而不是 `env.temp`（最终值）——见上方跨包契约注释：
+  // 直接写 env.temp 会被 env 的昼夜循环每 tick 覆写，coldsnap 变成静默 no-op。
+  // env 包未挂载时该键不存在 → 静默跳过（能力探测），不报错。这是"效果依赖另一个包
   // 的能力"的标准处理方式（卸载纪律：能依赖的能力不存在就不碰，不破坏核心）。
   if (e.tempShift !== undefined) {
     if (ctx.scratch[KEY_ENV_TEMP] !== undefined) {
-      ctx.scratch[KEY_ENV_TEMP] += e.tempShift;
+      ctx.scratch[KEY_ENV_TEMP_MOD] = (ctx.scratch[KEY_ENV_TEMP_MOD] ?? 0) + e.tempShift;
       // 持续效果：登记到期时刻，到点时做反向效果（简化实现）
       if (e.durationSec && e.durationSec > 0) {
         ctx.scratch[`${EXPIRE_PREFIX}${seed.id}`] = ctx.time + e.durationSec;
       }
     }
     // env.temp 不存在 → 整个 tempShift 分支静默跳过（连到期登记都不做，
-    // 否则到期时反向效果会凭空写入 env.temp——破坏"卸载即失效"）
+    // 否则到期时反向效果会凭空写入 env.tempMod——破坏"卸载即失效"）
   }
 }
 
@@ -260,10 +272,10 @@ function handleExpiry(ctx: SimContext, seeds: EventSeedDef[]): void {
       continue;
     }
     const e = seed.effects;
-    // 反向效果：只有 tempShift 有 durationSec，反向 = 温度回升
+    // 反向效果：只有 tempShift 有 durationSec，反向 = 修饰量归零方向回退
     if (e.tempShift !== undefined) {
       if (ctx.scratch[KEY_ENV_TEMP] !== undefined) {
-        ctx.scratch[KEY_ENV_TEMP] -= e.tempShift;
+        ctx.scratch[KEY_ENV_TEMP_MOD] = (ctx.scratch[KEY_ENV_TEMP_MOD] ?? 0) - e.tempShift;
         ctx.log(`🌡 ${seed.name} 的余波散去，温度回升`);
       }
     }
