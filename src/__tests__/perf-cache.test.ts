@@ -154,13 +154,19 @@ describe('性能线 · 记忆化缓存正确性', () => {
     //   就在半径内 → 断言的是"存进去的那座"而不是"旧建筑已消失"，语义错了。）
     const SENTINEL = 9999;
     const other = mkWorld();
-    const old = other.addBuilding('campfire', SENTINEL, SENTINEL)!;
+    other.addBuilding('campfire', SENTINEL, SENTINEL);
     other.importState(state);
     expect(other.nearestBuildingByTag('fire', s1.x, s1.y)?.id).toBe(b1.id);
     expect(other.nearestBuildingByTag('fire', s2.x, s2.y)?.id).toBe(b2.id);
     // 旧建筑已不在表里 → 倒排里也不该能被查到（幽灵建筑）
-    expect(other.buildings.has(old.id)).toBe(false);
+    // ⚠ 不能断言 buildings.has(哨兵.id)：mkWorld 的 nextBuildingId 从 1 起，
+    //   哨兵拿到的 id 恰好与存档里的 b1/b2 撞号，restore 后 buildings 里当然有它。
+    //   幽灵的判据是**坐标**：哨兵那格上不该还有任何火堆。
+    expect(other.buildings.size).toBe(2);
     expect(other.nearestBuildingByTag('fire', SENTINEL, SENTINEL, 1)).toBeUndefined();
+    for (const b of other.buildings.values()) {
+      expect(b.pos.x === SENTINEL && b.pos.y === SENTINEL).toBe(false);
+    }
   });
 
   it('③b importState 后索引里的对象就是 buildings 表里的那一个（身份一致）', () => {
