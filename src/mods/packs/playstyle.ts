@@ -16,6 +16,7 @@ import { raidPack } from './raid';
 import { bootstrapPack } from './bootstrap';
 import { techPoolPack } from './tech-pool';
 import { farmingPack } from './farming';
+import { cookingPack } from './cooking';
 
 export const DEFAULT_PLAYSTYLE_PACKS: ModPack[] = [
   needsPack, // 需求衰减 + 吃/睡 + 饥饿权重调制
@@ -26,4 +27,5 @@ export const DEFAULT_PLAYSTYLE_PACKS: ModPack[] = [
   bootstrapPack, // 开局篝火 + 出生（requires building，拓扑自动殿后）
   techPoolPack, // 科技抽卡池（碎片制）：按间隔发碎片，靠前科技先攒齐；门控 hut/store 建造
   farmingPack, // 农耕：开垦/播种/收割三张卡 + 地块冷却式生长（requires building）
+  cookingPack, // 烹饪（R3-4）：烹烤卡（走火边）+ 熟食这种更划算的食物
 ];
