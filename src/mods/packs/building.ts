@@ -120,7 +120,8 @@ export const buildingPack: ModPack = {
       const wood = ctx.stockpile[K_STOCK_WOOD] ?? 0;
       let mul = wood >= 20 ? 1.8 : wood >= 12 ? 1.3 : 1;
       // 心情低 → 更想盖棚屋（家的安全感是真实需求驱动，不是木料富余就乱盖）
-      if (card.id === 'build_hut' && p.needs.mood < 40) mul *= 2;
+      // 实测 mood min=65，阈值 40 永不触发（c548721 同款修法：调到 p10 附近）
+      if (card.id === 'build_hut' && p.needs.mood < 70) mul *= 2;
       return mul;
     });
 
