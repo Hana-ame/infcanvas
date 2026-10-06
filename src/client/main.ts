@@ -46,6 +46,9 @@ async function boot(): Promise<void> {
   const selected = new Set<number>();
   let paused = false;
   let speed = 3;
+  // R1-1 断连横幅（仅联机用；本地模式永远 hidden）
+  const banner = document.getElementById('hud-banner')!;
+  banner.hidden = true;
 
   let ctrl: Controller;
   if (remoteArg) {
@@ -55,8 +58,15 @@ async function boot(): Promise<void> {
       document.getElementById(id)!.style.display = 'none';
     }
     const remote = new RemoteSim();
+    // R1-1 断连横幅：断连/重连期间让玩家知道「不是卡了，是在重连」，
+    // 否则玩家会对着冻结的世界反复点击。所有权交给 main 的 render loop 控制显隐。
+    remote.onConnectionChange = (connected) => {
+      banner.hidden = connected;
+    };
     // 等首包（welcome）到达再起渲染，否则没有 tuning 无法建地形推导器
-    await remote.connect(remoteArg);
+    // 注意：首连失败不致命——onerror 已排好退避重连，这里吞掉错误让页面继续跑，
+    // 等服务器起来后自动接上（这正是 R1-1 要的行为）。
+    await remote.connect(remoteArg).catch(() => undefined);
     ctrl = {
       view: remote,
       tick() {}, // 时间由服务器推进
@@ -104,6 +114,12 @@ async function boot(): Promise<void> {
     onSelect(eid) {
       selected.clear();
       if (eid !== null) selected.add(eid);
+      renderer.selected = selected;
+    },
+    // R1-4 框选：整批替换选中集合（不是叠加——叠加会让「再框一次」无法缩小范围）
+    onSelectMany(eids) {
+      selected.clear();
+      for (const id of eids) selected.add(id);
       renderer.selected = selected;
     },
     onMove(x, y) {

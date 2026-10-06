@@ -27,6 +27,17 @@ export interface WorldView {
   zAt(x: number, y: number): number;
   /** 悬停属性卡：一格的完整可读信息（实现方拼装好文案，HUD 只管展示） */
   inspect(x: number, y: number): TileInspect;
+  /**
+   * **可选**的渲染层坐标（R1-3）。给不给都行：
+   *  - 联机（RemoteSim）实现它 → renderer 画插值后的平滑位置；
+   *  - 本地（LocalView）不实现 → renderer 回退用 p.pos（本地本来就是连续模拟，不需要插值）。
+   *
+   * 为什么单开一个口而不是让 pawns() 返回插值后的对象：pawns() 是**权威快照**，
+   * 点选命中、框选范围、HUD 选中面板全靠它。若连它一起插值，就会出现
+   * 「看到的鼠」和「被选中的鼠」对不上——批量指挥会指挥错对象。
+   * 插值只能是画出来的那一份，逻辑判定永远读权威值。
+   */
+  renderPos?(eid: number, nowMs: number): { x: number; y: number } | undefined;
 }
 
 export interface TileInspect {
