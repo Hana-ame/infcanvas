@@ -48,6 +48,28 @@ export interface TechTuningEntry {
   unlocks: string[]; // 该科技解锁的建筑 defId（信息登记，门控看 BuildingTuningEntry.tech）
 }
 
+/** 欲望表条目（ROADMAP R3-1）——每条欲望一行，语义见 Tuning.desires 的机制注释。 */
+export interface DesireTuningEntry {
+  label: string;
+  /** 积累源类型（实现谓词见 needs 包 desires 系统，类型是有限的枚举不是任意函数）：
+   *  still=连续静止（久留不动）/ alone=独处 / notworking=非生产卡执行中 */
+  source: 'still' | 'alone' | 'notworking';
+  /** 积累速率（点/秒）：源条件成立时欲望 += gainPerSec×dt */
+  gainPerSec: number;
+  /** 调制阈值：欲望 ≥ highAt 时，对 def.series 的卡乘 weightMul */
+  highAt: number;
+  /** 高欲望时的系列权重乘数（≥1；只抬不压——欲望是"想做什么"，不是"不敢做什么"） */
+  weightMul: number;
+  /** 被调制（且执行时消解）的卡系列（contracts 词汇表） */
+  series: string[];
+  /** 消解速率（点/秒）：执行 def.series 的卡时欲望 -= satisfyPerSec×dt */
+  satisfyPerSec: number;
+  /** source='still' 专用的连续静止门槛（秒）：静止超过它才开始积累（短暂停顿不算久留） */
+  stillGateSec?: number;
+  /** source='alone' 专用的独处判定半径（格）：半径内没有任何同伴即"独处" */
+  senseRadius?: number;
+}
+
 export interface EnemyTuningEntry {
   name: string;
   hp: number;
@@ -132,6 +154,41 @@ export interface Tuning {
      *    不制造超长跋涉；与 build.newFireRadius(24) 同量级，语义都是"营地的势力范围"。 */
     sleepMagnetRadius: number;
   };
+  /**
+   * desires —— 欲望层数据表（ROADMAP R3-1：欲望 = 缓慢积累的**第二类权重输入**）。
+   *
+   * 【与 needs 的分工，机制立论】
+   *  - needs 是**衰减型**：从 100 往下掉，掉到阈值以下才推"吃/睡"系列（匮乏导向）；
+   *  - desires 是**积累型**：从 0 慢慢长，长到阈值以上才推"行为系列"（渴望导向）。
+   *    二者方向相反、节奏相反，是**两条独立权重输入**：needs 回答"缺什么"，desires 回答
+   *    "憋久了想干嘛"。它们都只是把抽卡天平的权重抬高（原则①：一切皆抽卡，欲望是念力
+   *    不是指令；抽不到就继续憋着——与"抽不到 eat 就继续饿"同构）。
+   *
+   * 【为什么每条欲望有一个"积累源"（source），而不是统一按时间涨】
+   *  数据驱动不代表"所有欲望同一套逻辑"：积累源是"什么局面养这条欲望"的数据化描述。
+   *  本条表只声明源类型与参数，源判定的**实现**在 needs 包的 desires 系统里（源类型是
+   *  一组有限的谓词，不是任意函数——保持可测、可解释）。
+   *  - `still` 久留不动（闲逛欲）：连续静止超过 stillGateSec 才开始积累——实测
+   *    10 seed 的"静止"抽样占 79.7%，但其中绝大多数是 4~8s 的工作/睡眠站桩
+   *    （连续静止长度分布：≤6s 占 64.8%、≤14s 占 89.9%），用门槛把"短暂停顿"滤掉，
+   *    只有真正"久留不动"才养出想出去走走的闲逛欲。
+   *  - `alone` 独处（陪伴欲）：senseRadius 内没有任何同伴——实测独处抽样只占 7.0%，
+   *    是自然的稀缺源，"孤僻久了想找人说话"。
+   *  - `notworking` 摸鱼（劳动欲）：当前执行的卡不属于生产系列（采集/伐木/建造/农耕/
+   *    烹饪）——实测占 20.1%，是"玩了很久该干活了"的节奏源。
+   *
+   * 【消解（satisfy）语义】执行被调制系列（def.series）的卡时按 satisfyPerSec 回落。
+   *  满足行为 = 调制行为本身："闲逛了 → 闲逛欲消解"。
+   *
+   * 【为什么没有"被动衰减"】欲望是**积累型**状态，只有满足行为能消解它；给被动衰减
+   *  会让"憋着的欲望"自己消失，那等于这层机制不存在（对比 needs 有衰减是因为 needs
+   *  是"身体状态"，物理性地随时间流失）。不满足就继续憋着——这正是"抽不到就忍着"的
+   *  纪律在欲望层的翻版。
+   *
+   * 【随档】欲望值 + 累积源的 bookkeeping（连续静止秒数）全走 `ctx.scratch`（键
+   *  `needs.d.<id>.<eid>` / `needs.ds.<eid>`），存档纪律同 cooking/farming。
+   */
+  desires: Record<string, DesireTuningEntry>;
   build: {
     /** 同类建筑最小间距（格）：涌现式疏散，不做硬性数量上限 */
     minSpacing: number;
@@ -355,6 +412,49 @@ export const DEFAULT_TUNING: Tuning = {
     sleepRestWild: 3,
     sleepSanNearFire: 1,
     sleepMagnetRadius: 24,
+  },
+  // ---- 欲望表（R3-1）：出厂 3 条，数值依据见该表机制注释 + 2026-10-06 基线探针 ----
+  desires: {
+    // 闲逛欲：久留不动 → 想出去走走。实测静止抽样 79.7% 但多为工作/睡眠站桩
+    // （连续静止长度 ≤6s 占 64.8%、≤14s 占 89.9%），故 stillGateSec=6 只让
+    // "一段工作/睡觉/发呆的完整站桩"积累；gain 2.5 让一次睡眠(10s 站桩→4s 有效)
+    // 攒 ~10 点，4~5 段久留（≈ 10 分钟）到 highAt 35 → wander ×2.0。
+    // 消解：wander 一次 3s × satisfy 8 = -24，逛一圈基本散掉。
+    wander: {
+      label: '闲逛欲',
+      source: 'still',
+      gainPerSec: 2.5,
+      highAt: 35,
+      weightMul: 2.0,
+      series: ['wander'],
+      satisfyPerSec: 8.0,
+      stillGateSec: 6,
+    },
+    // 陪伴欲：独处 → 想找人说话。alone(approach 级半径内无伴) 实测只占 7.0%，
+    // 是稀缺源；gain 2.0 让 15s 独处攒 30 → social ×2.5。消解：chat 一拍 × 8 = -8。
+    company: {
+      label: '陪伴欲',
+      source: 'alone',
+      gainPerSec: 2.0,
+      highAt: 30,
+      weightMul: 2.5,
+      series: ['social'],
+      satisfyPerSec: 8.0,
+      // 与 social.approachRadius(26) 同锚点：独处 = "值得为之走过去的同伴"也看不见
+      senseRadius: 26,
+    },
+    // 劳动欲：摸鱼久了 → 想干活。notworking(非生产卡) 实测占 20.1%；
+    // gain 1.0 让 ~40s 摸鱼攒到 highAt 40 → gather/wood ×1.8。
+    // 消解：gather 8s×4=-32 / chop 6s×4=-24，干一票基本散掉。
+    work: {
+      label: '劳动欲',
+      source: 'notworking',
+      gainPerSec: 1.0,
+      highAt: 40,
+      weightMul: 1.8,
+      series: ['gather', 'wood'],
+      satisfyPerSec: 4.0,
+    },
   },
   build: {
     minSpacing: 5,
