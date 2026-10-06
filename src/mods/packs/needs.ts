@@ -58,7 +58,7 @@ export const needsPack: ModPack = {
       return 1;
     });
     m.registerHook('cardWeight', (p, card) => {
-      if (p.needs.san >= 20) return 1;
+      if (p.needs.san >= 40) return 1;
       // 崩溃边缘：不想打架、只想缩起来
       if (card.series === SER_FIGHT) return 0.5;
       if (card.series === SER_REST) return 1.5;
