@@ -1,3 +1,8 @@
+# ⚠️ 必须同时写两条：'node_modules/'（带斜杠）只匹配**目录**，
+# 而我们这个 node_modules 是个**符号链接**（多 agent 共享依赖时链过去），
+# 不带斜杠的 'node_modules' 才匹配它。踩过：只写带斜杠那条时，
+# `git add -A` 会把符号链接重新加回索引 —— 已跟踪文件不受 .gitignore 约束。
+node_modules
 node_modules/
 dist/
 *.log
