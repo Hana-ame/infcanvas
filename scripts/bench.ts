@@ -103,17 +103,10 @@ const asJson = parsed.json;
 //   ② 4 鼠不是这个游戏的目标场景（RimWorld-like 的读点是" colonies 越跑越大"）。
 // 所以基准要能拉到玩家真的会遇到的规模，否则优化的是"一个没人在玩的配置"。
 // --pawns 走 overrideTuning 改 bootstrap.pawnCount（数据驱动原则③：数值进表不改内核）。
-// --pawns / --repeat 走 overrideTuning 改 bootstrap.pawnCount（数据驱动原则③：数值进表不改内核）。
-const registry = ModRegistry.default();
-if (pawns > 0) {
-  registry.overrideTuning((t) => {
-    t.bootstrap.pawnCount = pawns;
-  });
-}
-
-// ---- 热身后再计时：JIT 未预热的前几十个 tick 含编译/内联缓存冷启动，
-//      把它们算进均值会让"改一行代码"看起来像 ±30% 的波动（假信号 = 假优化）。
-const WARMUP = Math.min(120, Math.floor(seconds / 4));
+//
+// ⚠ 刻意的结构：registry / WARMUP 的最终定义在 runOnce() **内部**，每轮新建。
+//   若把 registry 提到模块级复用，第 2 轮就带着第 1 轮注册过的系统状态，
+//   测的不是同一个东西。（本轮重构时这里一度留了份死代码，已删。）
 
 /** 一轮完整测量：建世界 → 自检 → 预热 → 计时 → 采样。
  *  必须**每轮重新建 Sim**：复用同一个 sim 会让第 2 轮的指纹带着第 1 轮的
@@ -187,10 +180,6 @@ function runOnce(): RunOnce {
       void orig; // 包裹已安装，无需还原（进程即将结束）
     }
   }
-  const sysBreakdown: Record<string, number> = {};
-  for (const [id, r] of perSystem) sysBreakdown[id] = round(r.ms);
-
-
   const sysBreakdown: Record<string, number> = {};
   for (const [id, r] of perSystem) sysBreakdown[id] = round(r.ms);
   return { wallMs, tickSamples, sysBreakdown, initialPawns, sim };
