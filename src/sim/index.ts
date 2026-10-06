@@ -7,7 +7,7 @@ export * from './tuning';
 export { mulberry32, hash2, type Rng } from './rng';
 export { World, type TileKind } from './world';
 export { findPath } from './pathfinding';
-export type { SimContext, CardWeightHook } from './context';
+export type { SimContext, CardWeightHook, DrawSurface } from './context';
 export { cardWeight, drawCard, effectiveMastery, touchMastery, type CardDef } from './cards';
 export {
   behaviorCtor,

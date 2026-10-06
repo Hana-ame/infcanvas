@@ -10,7 +10,7 @@
  *    这正是"需求也只引导、抽不到就忍着"的涌现哲学。
  *  - 熟练度 = 卡的演化：触发 +gain、久不用按流逝时间惰性衰减；卡 = 习惯的建模。
  */
-import type { SimContext } from './context';
+import type { DrawSurface, SimContext } from './context';
 import type { PawnState } from './types';
 
 export interface CardDef {
@@ -19,13 +19,20 @@ export interface CardDef {
   series: string; // 工作系列：需求钩子/特质调制的命中键（跨包词汇表见 mods/contracts.ts）
   weight: number; // 基础权重（≥0）
   condition?: (p: PawnState, ctx: SimContext) => boolean; // 不满足 = 本轮不可抽
+  // ⚠ condition/action 拿完整 SimContext，而引擎下层拿 DrawSurface——**有意的不对称**。
+  //   类型系统强制出了这条边界：condition/action 是包作者写的玩法内容，必须读写棋盘
+  //   （"附近有树才砍树"）；凡是**会调用 content** 的引擎函数（drawCard/cardWeight，
+  //   它们要回调 condition/weightHooks）因此只能拿 SimContext，分离不掉；
+  //   而不触碰 content 的引擎函数（effectiveMastery/touchMastery/commit）只认
+  //   DrawSurface 的 5 个成员，完全不知道棋盘存在。
+  //   卡就是棋盘与决策之间的桥——桥要宽，但别把桥的宽度传导给整条引擎。
   action: (p: PawnState, ctx: SimContext, dt: number) => void; // 执行期间每 tick 调用
   duration?: number; // 承诺秒数，缺省 tuning.pawn.defaultCardSec
 }
 
 /** 有效熟练度：存储值按"距上次触碰的流逝时间"折算衰减后的即时值。
  *  惰性衰减 = 读时才算，O(1) 且省掉全局遍历。 */
-export function effectiveMastery(p: PawnState, cardId: string, ctx: SimContext): number {
+export function effectiveMastery(p: PawnState, cardId: string, ctx: DrawSurface): number {
   const e = p.mastery[cardId];
   if (!e) return 0;
   const decayed = e.v - ctx.tuning.pawn.masteryDecayPerSec * Math.max(0, ctx.time - e.t);
@@ -33,7 +40,7 @@ export function effectiveMastery(p: PawnState, cardId: string, ctx: SimContext):
 }
 
 /** 触碰熟练度：先把流逝衰减折进来，再加触发增量并盖章（上限 100）。 */
-export function touchMastery(p: PawnState, cardId: string, ctx: SimContext): void {
+export function touchMastery(p: PawnState, cardId: string, ctx: DrawSurface): void {
   const cur = effectiveMastery(p, cardId, ctx);
   const next = Math.min(100, cur + ctx.tuning.pawn.masteryGain);
   p.mastery[cardId] = { v: next, t: ctx.time };

@@ -9,7 +9,7 @@
  * 出生引导恒表尾），同类内按注册顺序（玩法包拓扑挂载序决定）。无 before 锚点——
  * 旧项目教训：锚点语义含糊易漂移，类别×注册序已够表达且可测。
  */
-import type { SimContext } from './context';
+import type { DrawSurface, SimContext } from './context';
 import { drawCard, touchMastery } from './cards';
 import type { CardDef } from './cards';
 import type { PawnState } from './types';
@@ -109,7 +109,7 @@ function stepPawn(ctx: SimContext, p: PawnState, dt: number): void {
 
 /** 抽中承诺：写当前卡 + 到期时刻 + 统计 + 熟练度成长（卡=习惯：越用越顺手）。
  *  导出供 Sim.debugForceCard 复用（测试口子必须走同一条承诺路径，避免两套语义漂移） */
-export function commit(ctx: SimContext, p: PawnState, card: CardDef): void {
+export function commit(ctx: DrawSurface, p: PawnState, card: CardDef): void {
   p.cardId = card.id;
   p.busyUntil = ctx.time + (card.duration ?? ctx.tuning.pawn.defaultCardSec);
   p.uses[card.id] = (p.uses[card.id] ?? 0) + 1;

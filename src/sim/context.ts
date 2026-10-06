@@ -16,12 +16,32 @@ import type { CardDef } from './cards';
  *  needs 包用它表达"饿了吃权重大"，特质/熟练度由内核管线另算。 */
 export type CardWeightHook = (p: PawnState, card: { series: string; id: string }, ctx: SimContext) => number;
 
-export interface SimContext {  // ---- 时钟与随机 ----
+/**
+ * DrawSurface —— 抽卡引擎「不触碰玩法内容」那部分的**全部**依赖，只有 5 个成员。
+ *
+ * 为什么单独切出来（2026-10-07，用户观察「抽卡系统和棋盘系统可以分离处理」）：
+ * SimContext 有 50 个成员，而抽卡引擎真正只用到 5 个。类型系统把边界强制了出来：
+ *  - 不触碰 content 的引擎函数（cards.ts 的 effectiveMastery / touchMastery，
+ *    systems.ts 的 commit）只认这 5 个成员，**完全不知道棋盘存在**；
+ *  - 会回调 content 的函数（drawCard / cardWeight，它们要调 condition/weightHooks）
+ *    只能拿 SimContext——因为 condition/action 是包作者写的玩法内容，本来就要
+ *    读写棋盘。这条分离不掉，是**桥**，不是耦合。
+ * 价值：引擎可以被 5 成员假对象单测（而不是被迫伪造 50 个）；改棋盘存储结构不影响
+ * 引擎签名，反之亦然；依赖方向可读（棋盘 → 引擎单向）。
+ *
+ * ⚠ 别把这条缝当成「抽卡系统已彻底分离」。分离的是**引擎下半段**（权重算术、
+ * 熟练度、承诺记账）；上半段（候选筛选、加权轮盘）与棋盘之间隔着玩法内容，
+ * 那道桥是设计意图——「一切皆抽卡」正是要让卡去看棋盘。
+ */
+export interface DrawSurface {
   readonly time: number;
   rng(): number; // 唯一随机源（确定性）
-
-  // ---- 数据表（只读视图；overrideTuning 后的生效值）----
   readonly tuning: Tuning;
+  cards(): readonly CardDef[];
+  weightHooks(): readonly CardWeightHook[];
+}
+
+export interface SimContext extends DrawSurface {  // ---- 时钟与随机（见 DrawSurface）----
 
   // ---- 实体 ----
   pawns(): IterableIterator<PawnState>;
@@ -100,9 +120,8 @@ export interface SimContext {  // ---- 时钟与随机 ----
   adjacent(p: PawnState, x: number, y: number, r?: number): boolean;
 
   // ---- 决策引擎面（内核 behavior 消费；玩法包经此注册内容）----
-  cards(): readonly CardDef[];
+  // cards() / weightHooks() 已在 DrawSurface 中声明（抽卡引擎的窄依赖）。
   cardById(id: string): CardDef | undefined;
-  weightHooks(): readonly CardWeightHook[];
   finishCard(p: PawnState): void; // 卡提前完成（工作做完不等 duration）
   log(text: string): void; // 叙事 feed（历史层）
 
