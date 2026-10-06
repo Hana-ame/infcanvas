@@ -671,6 +671,8 @@ export interface Tuning {
       strangerFoodAbove: number;
       /** 丰收节：food > 此值 → 触发（奢侈才庆祝） */
       festivalFoodAbove: number;
+      /** 丰饶雨季：food > 此值 且 env.rain === 1 → 触发（stockMul 的首个消费者） */
+      fecundFoodAbove: number;
     };
   };
   tiles: Record<string, TileTuningEntry>;
@@ -1034,6 +1036,7 @@ export const DEFAULT_TUNING: Tuning = {
       plagueMinPawns: 6,      // 人多（≥6）才传得开
       strangerFoodAbove: 40,  // 富余（>40）才招得来流浪者
       festivalFoodAbove: 80,  // 奢侈（>80）才庆祝
+      fecundFoodAbove: 50,    // 粮食尚可（>50）+ 雨天 → 库存倍增（stockMul 首个消费者）
     },
   },
   tiles: {

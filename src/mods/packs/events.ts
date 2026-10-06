@@ -43,6 +43,7 @@ const EXPIRE_PREFIX = 'events.expire.'; // events.expire.<seedId> = 持续效果
  */
 const KEY_ENV_TEMP = 'env.temp'; // 只读：env 是否在场的能力探测
 const KEY_ENV_TEMP_MOD = 'env.tempMod'; // 我们写：事件修饰量
+const KEY_ENV_RAIN = 'env.rain'; // 只读：env 是否在场 + 是否下雨
 
 export const eventsPack: ModPack = {
   id: 'events',
@@ -151,6 +152,37 @@ export const eventsPack: ModPack = {
       effects: {
         log: '🎉 丰收节：大家分着吃',
         stock: { [K_STOCK_FOOD]: 15 },
+      },
+    });
+
+    // ---- 丰饶雨季 fecund-season：雨天 + 粮食尚可 → 库存倍增（stockMul 首个消费者）----
+    //
+    // stockMul 是 applyEffects 里已实现但长期无消费者的效果类型（与旧 tech-pool
+    // 无消费者同构：引擎支持但无种子使用 = 死代码）。本事件给它一个真实消费者：
+    // 雨天降雨加速作物生长，库存按倍数增长。
+    //
+    // 条件读 env.rain（env 包在场时有效）：与 tempShift 读 env.temp 同款能力探测——
+    // env 未挂载时 env.rain 不存在，条件为 false，静默跳过，不报错。
+    //
+    // 乘数 1.3 而非更大：0.3 = 30% 增长，对 food=100 的营地 = +30（≈ festival 的 +15
+    // 两倍），但对 food=50 的营地只有 +15。乘数语义 = 越富越受益（正反馈），
+    // 与 festival 的固定 +15（无差别）形成区分。cooldownSec=120 确保不会每 checkSec 刷。
+    //
+    // 为什么用 stockMul 而非 stock：stock 是加法（+N），stockMul 是乘法（×N）。
+    // 丰饶雨季的语义是"天气好的时候作物长得更快"——这是一个比例效应，不是固定增量。
+    // 用 stockMul 让"天气好"的收益随库存规模缩放，而不是每次都 +15 不管有多少粮。
+    seeds.push({
+      id: 'fecund-season',
+      name: '丰饶雨季',
+      when: (ctx) => {
+        const t = ctx.tuning.events.thresholds;
+        if ((ctx.stockpile[K_STOCK_FOOD] ?? 0) <= t.fecundFoodAbove) return false;
+        // env 包在场时 env.rain 存在（0 或 1）；未挂载时 undefined → false
+        return ctx.scratch[KEY_ENV_RAIN] === 1;
+      },
+      effects: {
+        log: '🌧️ 丰饶雨季：雨水让粮仓日渐充实',
+        stockMul: { [K_STOCK_FOOD]: 1.3 },
       },
     });
 
