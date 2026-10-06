@@ -107,8 +107,21 @@ describe('分区块同步（服务端集成）', () => {
       const c = await connect(h.port);
       // 在"远方"手工放一些建筑（模拟规模），再订阅出生点窄视口
       const world = h.sim.world;
-      for (let i = 0; i < 20; i++) world.addBuilding('campfire', 900 + i * 70, 900);
+      let placed = 0;
+      outer: for (let cy = 14; cy < 22; cy++) {
+        for (let cx = 14; cx < 22; cx++) {
+          for (let y = cy * 64 + 2; y < cy * 64 + 62; y += 6) {
+            for (let x = cx * 64 + 2; x < cx * 64 + 62; x += 6) {
+              if (world.addBuilding('campfire', x, y)) {
+                placed++;
+                if (placed >= 20) break outer;
+              }
+            }
+          }
+        }
+      }
       const total = world.buildings.size;
+      expect(placed).toBeGreaterThan(0); // 放不下会在这里立刻报，而不是报误导性的裁剪断言
       c.ws.send(JSON.stringify({ t: 'interest', d: { x: 0, y: 0, r: 0 } }));
       const d = await c.next<{ t: string; d: { buildings: unknown[] } }>('delta');
       expect(d.d.buildings.length).toBeLessThan(total); // 远处建筑未下发

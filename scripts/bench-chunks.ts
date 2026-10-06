@@ -28,12 +28,14 @@ function seedBuildings(sim: Sim, spread: number): number {
   let n = 0;
   for (let cy = 0; cy < spread; cy++) {
     for (let cx = 0; cx < spread; cx++) {
-      // 每块放 4 座（避开安全区，findSpot 保证可落）
+      // 每块放 4 座。**必须遍历找可落格而不是写死坐标**：addBuilding 遇地形
+      // 不可通行返回 null，写死坐标等于赌那格是草地——首轮 CI 就因为这个
+      // 报出"放不下"，而报错信息完全指不到真因（见 chunk-index.test.ts 同款注释）。
       let placed = 0;
-      for (let attempt = 0; attempt < 40 && placed < 4; attempt++) {
-        const x = cx * CHUNK_SIZE + 4 + attempt * 15;
-        const y = cy * CHUNK_SIZE + 4 + attempt * 15;
-        if (world.addBuilding('campfire', x, y)) placed++;
+      for (let y = cy * CHUNK_SIZE + 2; placed < 4 && y < cy * CHUNK_SIZE + 62; y += 3) {
+        for (let x = cx * CHUNK_SIZE + 2; placed < 4 && x < cx * CHUNK_SIZE + 62; x += 3) {
+          if (world.addBuilding('campfire', x, y)) placed++;
+        }
       }
       n += placed;
     }
@@ -115,6 +117,9 @@ function main(): void {
   for (const spread of [3, 9]) {
     const sim = new Sim({ seed: 20260821, registry });
     const buildings = seedBuildings(sim, spread);
+    // 放不下建筑 = 基准作废（裁剪率会显示成 0%，比报错更坏：假数据）。
+    // 教训来自 line/perf 那轮"首轮 CI 六组读数其实是同一组"的事故。
+    if (buildings === 0) throw new Error(`spread=${spread} 下没放上任何建筑，读数无意义`);
     // 跑一段让世界"活起来"（有鼠在动、有敌袭），否则 delta 全是静态
     sim.run(120, 1);
 
@@ -137,7 +142,6 @@ function main(): void {
     const fAvg = avg(fullBytes);
     const cAvg = avg(chunkedBytes);
     const reduction = fAvg > 0 ? (1 - cAvg / fAvg) * 100 : 0;
-    console.log(`--- world spread=${spread} (${spread}x${spread} chunks), buildings=${buildings} ---`);
     console.log(`bandwidth_delta_bytes.full_avg=${fAvg.toFixed(1)}`);
     console.log(`bandwidth_delta_bytes.chunked_avg=${cAvg.toFixed(1)}`);
     console.log(`bandwidth_delta_bytes.reduction_pct=${reduction.toFixed(1)}`);

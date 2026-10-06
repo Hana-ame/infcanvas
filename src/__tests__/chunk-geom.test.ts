@@ -137,11 +137,17 @@ describe('兴趣区 → 区块集合', () => {
     const xy = keys.map((k) => chunkKeyToXY(k));
     const cxCenter = Math.floor(200 / CHUNK_SIZE);
     const cyCenter = Math.floor(200 / CHUNK_SIZE);
-    const d0 = Math.hypot(xy[0]!.cx - cxCenter, xy[0]!.cy - cyCenter);
+    // 距离按 tile 算（块边长 64），同距并列允许 —— 故用整数距离平方比较，
+    // 避免 hypot 的浮点误差让"相等"变成"差 1e-5"而误判（首轮 CI 就踩了这个：
+    // 断言 65536 >= 65536.0000076 失败，纯粹是浮点，不是排序错）。
+    const dist2 = (cx: number, cy: number): number => {
+      const bx = cx * CHUNK_SIZE + CHUNK_SIZE / 2 - 200;
+      const by = cy * CHUNK_SIZE + CHUNK_SIZE / 2 - 200;
+      return Math.round(bx * bx + by * by);
+    };
+    const d0 = dist2(xy[0]!.cx, xy[0]!.cy);
     for (let i = 1; i < xy.length; i++) {
-      const d = Math.hypot(xy[i]!.cx - cxCenter, xy[i]!.cy - cyCenter);
-      // 允许并列相等，但不允许"后面的更近"
-      expect(d).toBeGreaterThanOrEqual(d0 - 1e-9);
+      expect(dist2(xy[i]!.cx, xy[i]!.cy)).toBeGreaterThanOrEqual(d0);
     }
   });
 

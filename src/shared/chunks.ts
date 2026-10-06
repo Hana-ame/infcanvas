@@ -60,30 +60,33 @@ export function chunkKey(cx: number, cy: number): number {
 /**
  * 区块键解码（**唯一**解码入口，2026-10-06 记：旧实现漏改 17 处内联 `k % width`）。
  *
- * ⚠️ 坑的成因（别再自己推一遍）：JS 的 `%` 是**截断余数**而非数学模，当 x 与 y 异号时
- * 余数会被整体偏移一个 CHUNK_KEY_SPAN。旧实现里 chunkKey 的偏置保证了 k ≥ 0，
- * 所以 `%` 在这里恰好安全——**但这个安全性是"偏置带来的副作用"，不是 `%` 本身的性质**，
- * 一旦有人把编码改成异或方案或去掉偏置，这个函数就会静默错位。
+ * ⚠️ 这里踩过坑，且**是本轮首轮 CI 真炸出来的**，值得把过程完整写下来：
  *
- * 所以这里仍然写成**显式的双向回拨**而不是"反正 k≥0 直接 %"：
- * 判据 |余数| > CHUNK_KEY_BIAS/2 即判定余数被偏移，回拨一格 SPAN 并修正另一个分量。
- * 这样即便将来编码变更，解码侧会立刻在 chunkRoundTrip 测试里炸掉，而不是在
- * "桥不修/篝火不迁"这种沉默现场炸掉。
+ * 第一版我照着归档旧实现 `serializeChunks` 的写法写了"防御性回拨"：
+ *     let cx = key % SPAN; let cy = floor(key / SPAN);
+ *     if (cx > SPAN/2) { cx -= SPAN; cy += 1 }   // ← 这一支是错的
+ * 初看是"防负余数偏移"，实测 chunkKey(1,1) 解出 {cx:-65535, cy:2}。
+ *
+ * **根因**：chunkKey 给**两个分量都加了 32768 偏置**，所以 key 恒 ≥ 0，
+ * 而 `key % 65536` 对非负 key 恒落在 [0, 65536) —— 也就是说
+ * `cx + 32768` 天然就在 [0, 65536) 里，**根本不存在需要回拨的负余数**。
+ * 我那个 `cx > SPAN/2` 分支不是防御，是**凭空制造的 bug**：它把合法的
+ * cx=1（余数 32769 > 32768）当成"被偏移的负余数"给拉回去了。
+ *
+ * **教训（比代码本身更重要）**：负坐标的坑不在"要不要回拨"，而在
+ * "你的编码是否自带偏置"。带偏置的加法编码里 `%` 恒安全，不需要任何修正；
+ * 不带偏置的编码里 `%` 才是截断余数陷阱。**照抄防御代码而不验证它是否
+ * 在自己的编码下成立，比不写防御更危险** —— 后者至少是可见的缺口，
+ * 前者制造的是"看起来很严谨但恒错"的代码，只有穷举测试能抓住。
+ * 所以 chunk-geom.test.ts 里对 7×7 邻域做**穷举**往返，而不是几个手挑样例。
  */
 export function chunkKeyToXY(key: number): { cx: number; cy: number } {
-  let cx = key % CHUNK_KEY_SPAN;
-  let cy = Math.floor(key / CHUNK_KEY_SPAN);
-  if (cx > CHUNK_KEY_SPAN / 2) {
-    cx -= CHUNK_KEY_SPAN; // 余数偏向正端：cx 本为负、cy 为正
-    cy += 1;
-  } else if (cx < -CHUNK_KEY_SPAN / 2) {
-    cx += CHUNK_KEY_SPAN; // 余数偏向负端：cx 本为正、cy 为负
-    cy -= 1;
-  }
-  // -0 归一（JS % 对 -SPAN 倍数返回 -0；JSON 里看不出差异，但 === 与 toEqual 会判不等）
-  if (cx === 0) cx = 0;
-  if (cy === 0) cy = 0;
-  return { cx: cx - CHUNK_KEY_BIAS, cy: cy - CHUNK_KEY_BIAS };
+  const cx = key % CHUNK_KEY_SPAN; // 非负 key → 余数恒在 [0, SPAN)，无需回拨（见上）
+  const cy = Math.floor(key / CHUNK_KEY_SPAN);
+  return {
+    cx: (cx === 0 ? 0 : cx) - CHUNK_KEY_BIAS, // -0 归一：JS % 对 -SPAN 倍数返回 -0，
+    cy: (cy === 0 ? 0 : cy) - CHUNK_KEY_BIAS, //      toEqual 会区分 +0/-0
+  };
 }
 
 /**

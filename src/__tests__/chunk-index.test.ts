@@ -12,9 +12,14 @@ import { DEFAULT_TUNING } from '../sim/tuning';
 import { chunkKey, tileChunkKey } from '../shared/chunks';
 
 /** 造一个干净 World：不出生、不走玩法，只测索引。
- *  tuning 用出厂值（地形/建筑定义齐全），spawn 放原点。 */
+ *  建筑定义必须注入——默认 tuning.buildings 是 {}（建筑是玩法包种子，
+ *  见 world.test.ts 同款注释）。漏注入会让 addBuilding 恒返回 false，
+ *  症状是 findSpot 抛"找不到空地"，而不是一条清晰的"缺定义"错误。
+ *  踩过：这正是本文件首轮 CI 的失败原因，故注释留在这里。 */
 function bareWorld(): World {
-  return new World(DEFAULT_TUNING, 4242, { x: 0, y: 0 });
+  const w = new World(structuredClone(DEFAULT_TUNING), 4242, { x: 0, y: 0 });
+  w.tuning.buildings['campfire'] = { name: '篝火', cost: {}, hp: 80, tags: ['fire'], passable: true };
+  return w;
 }
 
 /** 在世界某坐标找一块可落建筑的空地（addBuilding 要求全 footprint 可通行） */

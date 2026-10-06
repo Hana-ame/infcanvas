@@ -40,19 +40,34 @@ function welcomeOf(sim: Sim) {
   };
 }
 
+/**
+ * 在给定区块里找一格能落篝火的位置。
+ *
+ * 为什么需要它（首轮 CI 的失败）：addBuilding 会因**地形不可通行**返回 null，
+ * 而测试里写死坐标（如 130,70 / 600,600）等于赌那格恰好是草地——
+ * 换 seed 或改地形参数就静默变成"没放上"，断言再报一个误导性的数字
+ * （expected 1 to be 2）。这里改成"找到能放的格，且校验它确实在目标区块里"，
+ * 失败信息直接指向真正的原因。
+ */
+function placeInChunk(sim: Sim, cx: number, cy: number): { x: number; y: number } {
+  for (let y = cy * 64 + 2; y < cy * 64 + 62; y++) {
+    for (let x = cx * 64 + 2; x < cx * 64 + 62; x++) {
+      if (sim.world.addBuilding('campfire', x, y)) return { x, y };
+    }
+  }
+  throw new Error(`区块 (${cx},${cy}) 内找不到可落篝火的位置`);
+}
+
 describe('兼容层：旧消息（无 scope）行为不变', () => {
   it('不带 scope 的 full = v1 全量语义，远端区块数据全部保留', () => {
     const sim = simOf(7);
     const remote = new RemoteSim();
     remote.handleForTest(welcomeOf(sim));
     expect(remote.loadedChunkCount).toBe(-1); // -1 = 未启用裁剪
-    // 放几座建筑在远处，再来一份全量 full
-    const far = { x: 500, y: 500 };
-    sim.world.addBuilding('campfire', far.x, far.y);
+    // 在远块放一座建筑，再来一份全量 full
+    const far = placeInChunk(sim, 7, 7);
     const withFar = fullStateOf(sim);
-    withFar.buildings = sim.world.buildingsInChunks([
-      chunkKey(Math.floor(far.x / 64), Math.floor(far.y / 64)),
-    ]);
+    withFar.buildings = sim.world.buildingsInChunks([tileChunkKey(far.x, far.y).key]);
     remote.handleForTest({ t: 'full', d: withFar });
     expect(remote.buildings().length).toBeGreaterThan(0);
     expect(remote.loadedChunkCount).toBe(-1);
@@ -87,12 +102,9 @@ describe('区块化合入：scope 内替换、scope 外卸载', () => {
     remote.handleForTest(welcomeOf(sim));
 
     // 两块分别放一座建筑：A 块在本地，B 块在"远方"
-    const aPos = { x: 130, y: 70 }; // 块 (2,1)
-    const bPos = { x: 600, y: 600 }; // 块 (9,9)
-    sim.world.addBuilding('campfire', aPos.x, aPos.y);
-    sim.world.addBuilding('campfire', bPos.x, bPos.y);
+    const aPos = placeInChunk(sim, 2, 1);
+    const bPos = placeInChunk(sim, 9, 9);
     const aKey = tileChunkKey(aPos.x, aPos.y).key;
-    const bKey = tileChunkKey(bPos.x, bPos.y).key;
 
     // 第一帧：订阅两块
     const scopeA = [{ cx: 2, cy: 1 }, { cx: 9, cy: 9 }];
@@ -133,19 +145,17 @@ describe('区块化合入：scope 内替换、scope 外卸载', () => {
     expect(left.length).toBe(1);
     expect(tileChunkKey(left[0]!.pos.x, left[0]!.pos.y).key).toBe(aKey);
     expect(remote.loadedChunkCount).toBe(1);
-    void bKey;
   });
 
   it('卸载是按区块的：同块其他实体不受影响（不能整块清空）', () => {
     const sim = simOf(12);
     const remote = new RemoteSim();
     remote.handleForTest(welcomeOf(sim));
-    const p1 = { x: 130, y: 70 };
-    const p2 = { x: 135, y: 75 }; // 与 p1 同块
-    const p3 = { x: 600, y: 600 }; // 远块
-    sim.world.addBuilding('campfire', p1.x, p1.y);
-    sim.world.addBuilding('campfire', p2.x, p2.y);
-    sim.world.addBuilding('campfire', p3.x, p3.y);
+    const p1 = placeInChunk(sim, 2, 1);
+    const p2 = { x: p1.x + 3, y: p1.y + 3 }; // 与 p1 同块
+    if (!sim.world.addBuilding('campfire', p2.x, p2.y)) throw new Error('第二座篝火放不下（应与 p1 同块且间距够）');
+    const p3 = placeInChunk(sim, 9, 9);
+    void p3;
     const localScope = [{ cx: 2, cy: 1 }];
     const farScope = [{ cx: 9, cy: 9 }];
     remote.handleForTest({
@@ -184,8 +194,10 @@ describe('区块化合入：scope 内替换、scope 外卸载', () => {
     const sim = simOf(13);
     const remote = new RemoteSim();
     remote.handleForTest(welcomeOf(sim));
-    const near = sim.spawnHostile('cat', 130, 70);
-    const far = sim.spawnHostile('cat', 600, 600);
+    const nearPos = placeInChunk(sim, 2, 1);
+    const farPos = placeInChunk(sim, 9, 9);
+    const near = sim.spawnHostile('cat', nearPos.x, nearPos.y);
+    const far = sim.spawnHostile('cat', farPos.x, farPos.y);
     const localScope = [{ cx: 2, cy: 1 }];
     const bothScope = [...localScope, { cx: 9, cy: 9 }];
     remote.handleForTest({
