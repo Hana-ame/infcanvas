@@ -61,7 +61,7 @@ describe('R3-2 农耕包', () => {
   it('完整耕收闭环：开垦→播种→冷却→收割→入 food（单块田逐步走通）', () => {
     // 卡 action 只在 behavior.update 里执行（systems.ts），所以**不能**关 behavior——
     // 关了连播种都不会发生。正确姿势是：让 behavior 跑（保证 action 执行），
-    // 但等冷却期间把鼠挪到远超 senseRadius 的角落——它的 harvest_field condition
+    // 但等冷却期间把鼠挪到远超 magnetRadius 的角落——它的 harvest_field condition
     // 找不到田 → 抽不中 → 不会自己把田收了，我们断言的"田还熟着"那一瞬间才存在。
     const reg = ModRegistry.mountPacks([buildingPack, farmingPack]);
     const s = new Sim({ seed: 2, registry: reg, pawnCount: 1 });
@@ -83,9 +83,11 @@ describe('R3-2 农耕包', () => {
     const harvestCard = s.cardById('harvest_field')!;
     expect(harvestCard.condition!(p, s)).toBe(false);
 
-    // ③ 等冷却过：把鼠放逐到 senseRadius 之外再跑满 growSec —— 它够不着田，
-    //    所以不会自己收走；这一步只验"冷却到期"，不掺寻路
-    const far = s.tuning.farming.senseRadius + 20;
+    // ③ 等冷却过：把鼠放逐到 magnetRadius（候选池半径）之外再跑满 growSec —— 它够不着田，
+    //    所以不会自己收走；这一步只验"冷却到期"，不掺寻路。
+    //    （2026-10-06：半径字段拆分后，这里必须是 magnetRadius —— condition 判的是
+    //    「熟田在磁铁半径内看得见」，到位判定才用 workRadius。见 farming.ts 卡注册处注释。）
+    const far = s.tuning.farming.magnetRadius + 20;
     p.pos = { x: far, y: far };
     p.path = [];
     s.run(s.tuning.farming.growSec + 1);
@@ -230,4 +232,60 @@ describe('卸载不破坏核心（原则④）', () => {
     expect(s2.cards().some((c) => c.series === SER_FARM)).toBe(false);
     expect(s2.systems.some((x) => x.id === 'farming-growth')).toBe(false);
   });
+
+  /**
+   * 收割卡的**磁铁半径**真场景回归：熟田在 magnetRadius 内、鼠在圈外远处时，
+   * 必须能抽到收割卡并**走过去**收成。
+   *
+   * 【为什么已有用例挡不住这个缺陷】上面的「完整耕收闭环」用例把鼠放在田心
+   * （`p.pos = {x:0,y:0}`，田也在 `(0,0)`）—— **手工贴身摆位**。
+   * 而真实局里「到最近熟田的距离」**中位数 31.0 格**、≤12 格的只有 **18.2%**
+   * （熟田存在于 79.7% 的抽样里）⇒ 原实现让 condition（候选池）与到位判定
+   * 共用 12 格，导致**「世界里明明有熟田，鼠却永远抽不到收割卡」**：
+   * 900s 里收割卡只被抽中 48 次、失败率 85.5%。这与 social 闲聊卡是同一类缺陷
+   * （硬闸半径被当成贴身距离），也与本文件里"离线摆位"的测试写法直接相关。
+   *
+   * 【本条钉住的性质】两个半径必须是**两个数**，且磁铁半径 > 到位半径：
+   *   - 把鼠放在 workRadius 之外、magnetRadius 之内的距离 → condition 必须为真；
+   *   - 让它跑，库存必须涨（真的走过去收了），而不只是"卡被抽中"。
+   */
+  it('收割卡：熟田在磁铁半径内但鼠在远处时，condition 为真且鼠会走过去收成', () => {
+    const reg = ModRegistry.mountPacks([buildingPack, farmingPack]);
+    const s = new Sim({ seed: 5, registry: reg, pawnCount: 1 });
+    const p = [...s.pawns()][0];
+    const spot = s.addBuilding('field', 0, 0)!;
+    markRipe(s, spot.id); // 直接标记为已成熟（免掉 growSec 等待；编码 -1 ⇒ 成熟时刻 = 1s）
+
+    const mag = s.tuning.farming.magnetRadius;
+    const work = s.tuning.farming.workRadius;
+    // 前提：两个半径确实是两个数，且磁铁半径显著大于到位半径（否则本用例无意义）
+    expect(mag).toBeGreaterThan(work);
+    expect(mag).toBeGreaterThan(12);
+
+    // 放在 workRadius 之外、mag 之内的距离：旧实现（12 格）在这里必然抽不到卡。
+    // 取 16（= 旧 12 之上、现 magnet 30 之下），且显式断言这两个前提，
+    // 将来谁把两个半径又并成一个，这条会先失败并说清原因。
+    const standAt = Math.min(mag - 1, 16);
+    expect(standAt).toBeGreaterThan(12); // 旧硬闸够不着
+    expect(standAt).toBeGreaterThan(work); // 确实还没到位
+    p.pos = { x: standAt, y: 0 };
+    p.path = [];
+    s.step(1); // 走一拍让成熟时刻(1s)到达；同时 behavior 按真实抽卡流程执行
+
+    const card = s.cardById('harvest_field')!;
+    expect(card.condition!(p, s), '熟田在磁铁半径内，收割卡却抽不到（死代码）').toBe(true);
+
+    const food0 = s.stockpile[K_STOCK_FOOD] ?? 0;
+    s.debugForceCard(p.eid, 'harvest_field');
+    s.run(20); // 给足走到田边 + 收割
+    expect(s.stockpile[K_STOCK_FOOD] ?? 0, '鼠没有走到田边收成（磁铁拿到了却没走过去）').toBeGreaterThan(food0);
+  });
 });
+
+/** 把一块田直接标成"已成熟"（测试夹具：免掉 growSec 等待，不掺时间语义）。
+ *  scratch 编码 = 负值，成熟时刻 = -value；成熟判定是 `time >= 成熟时刻`。
+ *  最小的"已成熟"编码是 -1（成熟时刻 = 1s）——它在 t=0 还差一拍，
+ *  所以调用后需要先 `s.step(1)`（或 s.run(n)）再断言 condition。 */
+function markRipe(s: Sim, buildingId: string): void {
+  s.scratch[`farming.${buildingId}`] = -1;
+}

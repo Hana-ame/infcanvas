@@ -105,6 +105,25 @@ export const needsPack: ModPack = {
     });
 
     // ---- 卡：睡觉（火旁睡得又快又安稳——火的价值观由数值自然表达）----
+    //
+    // ---- 缺陷订正（2026-10-06）：睡觉卡从"硬编码 8 格找火"改成"磁铁" ----
+    //
+    // 【原缺陷·现象】实测（4 seed × 900s）：睡眠卡执行的 573 个 tick 里，
+    //   **只有 14.5%** 火在 8 格内、真正贴到火边（2.5 格）的只有 **12.7%**。
+    //   ⇒ 85.5% 的睡眠是"野外打盹"。
+    // 【原缺陷·根因】`nearestBuildingByTag('fire', ..., 8)` 把"8 格"同时当成了
+    //   **"值不值得走过去"** 与 **"贴到火边"** 两个语义。而实测鼠到最近火堆的
+    //   距离**中位数 12.1 格**（全局 ≤8 格只有 23.6%）——搜不到火时 else 分支
+    //   直接 `sleepRestWild` 并且**永不尝试去找火**，于是"火=安全感的锚点"
+    //   这条设计（sleepRestNearFire / sleepSanNearFire / 棚屋回心情）全部落空。
+    //   这是 chat / farming 同一个根因的第三个实例：**硬闸半径被当成贴身距离**。
+    // 【修法】拆成两个半径，同一张卡内完成"走过去 + 躺下"：
+    //   - 找火用 **sleepMagnetRadius（24 格）** = 值得为之走过去的距离；
+    //   - 走到 **火边半径（2.5 格）**内才结算火旁数值与棚屋心情；
+    //   - 路上照常以 sleepRestWild 缓慢恢复（不站在原地发呆，也不无理由不走）；
+    //   - 不可达就 finishCard 收工（否则"火看得见却永远到不了"⇒ 原地空转）。
+    // 【推翻路径】若实测导致鼠群过度向火堆扎堆（采集半径被压缩），
+    //   把 `needs.sleepMagnetRadius` 调小即可回退，不必改代码结构。
     m.registerCard({
       id: 'sleep',
       label: '睡觉',
@@ -114,18 +133,29 @@ export const needsPack: ModPack = {
       condition: (p) => p.needs.rest < 70,
       action(p, ctx, dt) {
         const n = ctx.tuning.needs;
-        const fire = ctx.nearestBuildingByTag('fire', p.pos.x, p.pos.y, 8);
-        if (fire && ctx.adjacent(p, fire.pos.x, fire.pos.y, 2.5)) {
-          p.needs.rest = clamp(p.needs.rest + n.sleepRestNearFire * dt);
-          p.needs.san = clamp(p.needs.san + n.sleepSanNearFire * dt);
-          // 棚屋旁边睡：额外回心情（家的安全感——shelter 标签终于有功能了）
-          const shelter = ctx.nearestBuildingByTag('shelter', p.pos.x, p.pos.y, 3);
-          if (shelter) p.needs.mood = clamp(p.needs.mood + 1 * dt);
-        } else {
-          // 回火边睡；火被水/岩隔断就野外打盹（不站桩）
-          if (fire && p.path.length === 0) ctx.setPath(p, fire.pos.x, fire.pos.y);
+        // 磁铁半径内最近的火堆（= "愿意为之走过去"）；找不到就真的只能野外睡
+        const fire = ctx.nearestBuildingByTag('fire', p.pos.x, p.pos.y, n.sleepMagnetRadius);
+        if (!fire) {
+          // 营地里一处火都没有（或火都在磁铁圈外）：野外打盹，不站桩
           p.needs.rest = clamp(p.needs.rest + n.sleepRestWild * dt);
+          if (p.needs.rest >= 98) ctx.finishCard(p);
+          return;
         }
+        if (!ctx.adjacent(p, fire.pos.x, fire.pos.y, FIRE_SIDE_R)) {
+          // 还不够近——**走过去**。路上也恢复一点体力（睡得慢，但不在原地罚站）
+          if (p.path.length === 0 && !ctx.setPath(p, fire.pos.x, fire.pos.y)) {
+            ctx.finishCard(p); // 火被水/岩隔断：不可达就收工，防恒真空转
+          }
+          p.needs.rest = clamp(p.needs.rest + n.sleepRestWild * dt);
+          if (p.needs.rest >= 98) ctx.finishCard(p);
+          return;
+        }
+        p.path = []; // 躺下停走
+        p.needs.rest = clamp(p.needs.rest + n.sleepRestNearFire * dt);
+        p.needs.san = clamp(p.needs.san + n.sleepSanNearFire * dt);
+        // 棚屋旁边睡：额外回心情（家的安全感——shelter 标签终于有功能了）
+        const shelter = ctx.nearestBuildingByTag('shelter', p.pos.x, p.pos.y, 3);
+        if (shelter) p.needs.mood = clamp(p.needs.mood + 1 * dt);
         if (p.needs.rest >= 98) ctx.finishCard(p); // 睡饱即醒
       },
     });
@@ -135,3 +165,10 @@ export const needsPack: ModPack = {
 export function clamp(v: number): number {
   return Math.max(0, Math.min(100, v));
 }
+
+/** 火边半径（格）：贴到火这么近才结算"火旁睡"的高档数值。
+ *  为什么不进 tuning：它是**"躺下"的伸手范围**，与"值不值得走过去"（磁铁半径，
+ *  进 tuning 的 needs.sleepMagnetRadius）是两种语义，量级差 10 倍；
+ *  留成本文件常量是刻意的——它不属于"可被 mod 调平衡的玩法数值"，
+ *  语义等同 gathering 里的 AVOID_SEC（实现参数，非玩法数值）。 */
+const FIRE_SIDE_R = 2.5;
