@@ -81,13 +81,14 @@ describe('R3-2 农耕包', () => {
     const harvestCard = s.cardById('harvest_field')!;
     expect(harvestCard.condition!(p, s)).toBe(false);
 
-    // ③ 等冷却过：跑够 growSec，成熟
+    // ③ 等冷却过：跑够 growSec 再把鼠挪回田边（run 期间它会 wander 走远，
+    //     而"找田"有 senseRadius 上限——这一步要验的是**冷却到期**，不是寻路）
     s.run(s.tuning.farming.growSec + 1);
-    expect(harvestCard.condition!(p, s)).toBe(true); // 到点即可收
-
-    // ④ 收割：把鼠放回田边（120s 里它 wander 走远了，收割要"站在田旁"才结算）
     p.pos = { x: 0, y: 0 };
     p.path = [];
+    expect(harvestCard.condition!(p, s)).toBe(true); // 到点即可收
+
+    // ④ 收割：入 food + 田回空地（可再种）
     const food0 = s.stockpile[K_STOCK_FOOD] ?? 0;
     s.debugForceCard(p.eid, 'harvest_field');
     s.step(1);
@@ -96,13 +97,15 @@ describe('R3-2 农耕包', () => {
   });
 
   it('生长是地块冷却：不需要人在场，世界时钟自己把田催熟', () => {
-    const s = new Sim({ seed: 3, registry: ModRegistry.mountPacks(WITH_FARMING), pawnCount: 0 });
+    // 极简装配：只挂 building + farming，且 0 鼠——本例只回答"世界时钟会不会催熟田"，
+    // 不掺任何小人的行为（掺进来就分不清是时钟催熟还是鼠去收的）。
+    const s = new Sim({ seed: 3, registry: ModRegistry.mountPacks([buildingPack, farmingPack]), pawnCount: 0 });
     const b = s.addBuilding('field', 0, 0)!;
     // 负值编码：-v = 成熟时刻。取 now+1 = 下一秒就熟（不真等满 growSec，本例只验"时钟会催熟"）
     s.scratch[`farming.${b.id}`] = -(s.time + 1);
-    const p0 = [...s.pawns()].length; // 无鼠
-    s.run(3); // 没有任何小人参与
-    expect([...s.pawns()].length).toBe(p0);
+    expect([...s.pawns()].length).toBe(0); // 无鼠
+    s.run(3);
+    expect([...s.pawns()].length).toBe(0);
     // 成熟播报事件发生了（farming-growth 系统报"田里的庄稼熟了"）
     expect(s.events.some((e) => e.text.includes('庄稼熟了'))).toBe(true);
   });
@@ -171,9 +174,9 @@ describe('卸载不破坏核心（原则④）', () => {
   });
 
   it('卸载 farming：长跑零产出——田在、状态在，但没人读（不产出也不报错）', () => {
+    // 极简装配 + 0 鼠：把"世界时钟催熟"与"小人去收割"彻底分开。
     // 造好田并种上（负值编码：成熟时刻 = now+growSec），跑一拍让成熟播报系统走过一次。
-    const reg = ModRegistry.mountPacks([needsPack, buildingPack, farmingPack]);
-    const s = new Sim({ seed: 6, registry: reg, pawnCount: 0 });
+    const s = new Sim({ seed: 6, registry: ModRegistry.mountPacks([buildingPack, farmingPack]), pawnCount: 0 });
     const b = s.addBuilding('field', 0, 0)!;
     const key = `farming.${b.id}`;
     s.scratch[key] = -(s.time + s.tuning.farming.growSec); // 立刻就是熟的
@@ -183,7 +186,7 @@ describe('卸载不破坏核心（原则④）', () => {
 
     // 卸载组：同一份档换不含 farming 的装配 → 长跑
     const saved = JSON.parse(JSON.stringify(snapshotOf(s)));
-    const s2 = loadSim(saved, ModRegistry.mountPacks([needsPack, buildingPack])); // 无 farming
+    const s2 = loadSim(saved, ModRegistry.mountPacks([buildingPack])); // 无 farming
     const food0 = s2.stockpile[K_STOCK_FOOD] ?? 0;
     const events0 = s2.events.length;
     s2.run(400); // 远超 growSec

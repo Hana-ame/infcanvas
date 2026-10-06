@@ -300,7 +300,9 @@ export class Sim implements SimContext {
     // 直连 → 失败则借火堆锚点分段中转（远距离/隔地形时是唯一可行路径）
     const anchors: Pos[] = [];
     for (const b of this.world.buildings.values()) {
-      if (this.tuning.buildings[b.defId].tags.includes('fire')) anchors.push({ x: b.pos.x, y: b.pos.y });
+      // 表外建筑（所属玩法包已卸载）不参与锚点计算：跳过而非崩（卸载不破坏核心）
+      const bd = this.tuning.buildings[b.defId];
+      if (bd && bd.tags.includes('fire')) anchors.push({ x: b.pos.x, y: b.pos.y });
     }
     let path = findPath(stepOk, goalOk, p.pos.x, p.pos.y, tx, ty, maxIter);
     if (path.length === 0 && !(Math.round(p.pos.x) === tx && Math.round(p.pos.y) === ty)) {
