@@ -77,26 +77,27 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
-      - name: perf sweep (出厂 4 鼠)
+      - name: perf sweep (出厂 4 鼠 · 3 轮取中位)
         run: |
           set -euo pipefail
           for seed in 42 7 2026; do
             echo "-------- seed=$seed --------"
-            npx tsx scripts/bench.ts 900 "$seed"
+            npx tsx scripts/bench.ts 900 "$seed" --repeat=3
           done
-      - name: perf sweep (24 鼠 · 玩家真实规模)
+      - name: perf sweep (24 鼠 · 玩家真实规模 · 3 轮取中位)
         run: |
           set -euo pipefail
           for seed in 42 7 2026; do
             echo "-------- seed=$seed pawns=24 --------"
-            npx tsx scripts/bench.ts 900 "$seed" --pawns=24
+            npx tsx scripts/bench.ts 900 "$seed" --pawns=24 --repeat=3
           done
           {
-            echo '## 📊 性能基准（900 tick × 3 seed × 2 规模）'
+            echo '## 📊 性能基准（900 tick × 3 seed × 2 规模 × 3 轮中位）'
             echo
             echo '对照规则：同一 seed + 同一规模的 `BENCH_JSON` 逐字段比。'
-            echo '- **性能字段**（totalMs / avgMsPerTick / p95TickMs / maxTickMs / rssMb）：噪声约 ±15%，看趋势不看小数。'
-            echo '- **玩法指纹字段**（alivePawns / events / usesTotal / stockFood / stockWood / buildings / techsUnlocked）：**必须逐值相同** —— 不同即「优化改成了算出什么变了」，那是回归不是优化。'
+            echo '- **先看噪声再看收益**：`noise.allTotalsMs` 是同一份代码在**同一台 runner** 上跑 3 轮的总耗时散布。实测该散布可达 ±40%，所以两次不同运行的差值不可直接相减。'
+            echo '- **性能字段**（totalMs / avgMsPerTick / p95TickMs / maxTickMs / rssMb）：只有**大于 allTotalsMs 的极差**才算信号；本 job 只报告不阻断（`continue-on-error`）。'
+            echo '- **玩法指纹字段**（alivePawns / events / usesTotal / stockFood / stockWood / buildings / techsUnlocked）：**必须逐值相同** —— 不同即「优化改成了算出什么变了」，那是回归不是优化。这条是硬红线，跨轮也必须一致（脚本已自检，不一致直接抛错）。'
             echo '- **逐系统耗时**（sysMs）：热点定位用，改哪一处先看这张表。'
           } >> "$GITHUB_STEP_SUMMARY"
 
