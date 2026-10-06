@@ -113,6 +113,24 @@ export interface Tuning {
     sleepRestNearFire: number; // 火旁每秒回睡眠
     sleepRestWild: number;     // 野外打盹每秒回睡眠（慢）
     sleepSanNearFire: number;  // 火旁每秒回理智（火=安全感）
+    /** 睡觉卡的磁铁半径（格）：火堆在此半径内**值得为之走过去**再睡。
+     *
+     *  【为什么要有它，缺了它是什么样】2026-10-06 实测（4 seed × 900s，13461 抽样）：
+     *  鼠到最近火堆的距离中位数 **12.1 格**，而 needs.sleep 的 action 原来用
+     *  **硬编码 8 格**找火，且**找不到就直接睡野外、永不去找**。读数：
+     *    · 全局：≤8 格的抽样只有 **23.6%**（≤16 格 = 73.4%，≤24 格 = 93.7%）
+     *    · 睡眠卡执行的 573 个 tick 里，火在 8 格内只有 **14.5%**（14.1 格中位），
+     *      真正贴到火边（2.5 格）的只有 **12.7%**。
+     *  ⇒ **85.5% 的睡眠是"野外打盹"**：sleepRestNearFire(6) / sleepSanNearFire(1)
+     *    这两个数值、以及"棚屋旁回心情"那一整条分支，事实上常年享受不到——
+     *    不是设计上的"偶尔野外睡"，是**默认状态**。
+     *  【与 chat/farming 是同一类缺陷】硬闸/查找半径被当成了"贴身距离"，
+     *    但世界里目标的实际距离比贴身距离大一个数量级。修法同样是磁铁范式：
+     *    半径放宽到"值得走过去"，走到 2.5 格内才结算火旁数值。
+     *  【为什么取 24】≤24 格覆盖 93.7% 的抽样 = 几乎总能找到一个"愿意走过去"的火，
+     *    而 24 格 ≈ walking 的常规一卡行程（speed 4.5 格/s，约 5s），
+     *    不制造超长跋涉；与 build.newFireRadius(24) 同量级，语义都是"营地的势力范围"。 */
+    sleepMagnetRadius: number;
   };
   build: {
     /** 同类建筑最小间距（格）：涌现式疏散，不做硬性数量上限 */
@@ -146,8 +164,26 @@ export interface Tuning {
     growSec: number;
     /** 单块田收获食物份数（每次收一整茬，不是每 tick 一份） */
     yieldFood: number;
-    /** 找得到可耕格的搜索半径（格）：找田时环扫的上限 */
-    senseRadius: number;
+    /** 到位半径（格）：播种/收割的"已经站在田边"判定（**不是**候选池半径）。
+     *  语义 = 站到田里/田边就算翻土/拔谷的伸手范围。 */
+    workRadius: number;
+    /** 找田的候选池半径（格）：田在此半径内**看得见**，播种/收割卡才可能被抽上。
+     *
+     *  【为什么必须与 workRadius 拆开，缺了它是什么样】2026-10-06 实测
+     *  （4 seed × 900s，13461 抽样）：**熟田存在**于 79.7% 的抽样里，但
+     *  「到最近熟田的距离」中位数 **31.0 格**、≤12 格的只有 **18.2%**。
+     *  原实现让 condition（候选池）与到位判定**共用一个 senseRadius=12**
+     *  —— 于是「世界里明明有熟田，鼠却永远抽不到收割卡」。这与 social 闲聊卡
+     *  是同一个缺陷的两种形态：**硬闸半径 = 贴身距离**，而目标实际距离比
+     *  贴身距离大一个数量级 ⇒ 卡沦为死代码（收割卡 900s 只被抽中 48 次）。
+     *  【走路的那一半本来就写对了】`sow`/`harvest` 里早就有「不在田旁 →
+     *  ctx.setPath 走到田心 → return 等 moveStep 推进」（与 gathering.workFeature
+     *  同一模式）。缺的只是「值得为之走过去」的半径——condition 按成 12 格把路堵死。
+     *  【为什么取 30 而不是 p90 的 62.3】开到 p90 会让鼠为 3 份口粮横穿 60 格，
+     *  并与 gathering 的 `build.maxForageDist = 30`（采集射程锚）打架。
+     *  30 = 与 maxForageDist 同锚点：≤30 的熟田覆盖 **48.6%** 的抽样，
+     *  把「有熟田却抽不到卡」从 81.8% 压到 51.4%，且不引入超长跋涉。 */
+    magnetRadius: number;
     /** 饥饿低于此值时 farm 系列权重放大倍数（涌现点：没播种就饿肚子，饿才想去种地） */
     hungryBelow: number;
     hungryWeightMul: number;
@@ -254,6 +290,7 @@ export const DEFAULT_TUNING: Tuning = {
     sleepRestNearFire: 6,
     sleepRestWild: 3,
     sleepSanNearFire: 1,
+    sleepMagnetRadius: 24,
   },
   build: {
     minSpacing: 5,
@@ -276,7 +313,10 @@ export const DEFAULT_TUNING: Tuning = {
     fieldRatio: 2,     // 2 只鼠 1 块田：产出当口粮而非主粮，比例高了会淹没采集线
     growSec: 120,      // 一茬 2 分钟：比一轮采集周期略长，逼出"种了就要等"的规划感
     yieldFood: 3,      // 一茬 3 份 ≈ 一丛浆果全采（3~5）：不碾压野果线
-    senseRadius: 12,   // 找田感知半径：与营地散布半径同量级
+    workRadius: 1.5,   // 到位半径：站进/站到田边即伸手可及（原 senseRadius=12 被降级到这里，
+                       // 因为那 12 格从来不是"伸手范围"，而是错当成候选池半径的贴身距离）
+    magnetRadius: 30,  // 候选池（磁铁）半径 30：实测到最近熟田中位 31.0 格、≤30 覆盖 48.6%，
+                       // 与 build.maxForageDist=30 同锚点（活动范围不因种地而扩张）
     hungryBelow: 45,   // 饥饿线（与 needs 包的 f<55 档重叠但更低——种植更"重决策"）
     hungryWeightMul: 2.2,
   },

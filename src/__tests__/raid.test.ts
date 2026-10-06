@@ -96,4 +96,49 @@ describe('敌袭包', () => {
     expect(died).toBe(true);
     expect(s.events.some((e) => e.text.includes('💀') && e.text.includes('野猫袭击'))).toBe(true);
   });
+
+  /**
+   * 战/逃卡的「真场景」回归：猫**靠自己追过来**进感知圈时，两张卡必须进候选池。
+   *
+   * 【为什么要补这条，缺了它会怎样】本文件上面两条战/逃测试都用了
+   * `spawnHostile(..., ±1 / ±5 格)` —— **手工把猫摆在贴身距离**。
+   * 这正是「通过测试但功能不存在」的成因：chat 卡当年 condition 用 chatRadius=2.5
+   * 找同伴，测试里两只鼠被手动摆到距离 1，于是条件恰好成立、测试一直绿，
+   * 而真实局里同类概率只有 1.1%，社交事实上是死代码（失败率 96.3%）。
+   * 战/逃卡的 `nearestHostile` 用 senseRadius=18，**当前实现是正确的**
+   * （2026-10-06 实测：猫在感知圈的 606 个抽样里战斗卡覆盖 26.9%），
+   * 但"正确"是**测不出来的**——手工摆位的测试对半径改动完全免疫。
+   * 本条改为**不摆位**：让猫按自己的动物智能追进感知圈，再断言 condition 转真。
+   *
+   * 【断言的机制而非数值】猫刷出在 spawnDistMin~spawnDistMax(16~24) 格外，
+   * 比感知圈 18 更远或相当——所以 condition 转真**只能**因为猫自己走近了，
+   * 而不是因为测试替它走近。这正是本条要钉住的那条性质。
+   */
+  it('战/逃卡：猫靠自己的追猎走进感知圈时，condition 必须转真（不手工摆位）', () => {
+    const s = new Sim({ seed: 6, registry: ModRegistry.mountPacks([raidPack]), pawnCount: 2 });
+    const fight = s.cardById('fight')!;
+    const flee = s.cardById('flee')!;
+    const before = [...s.pawns()];
+    // 开局还没有猫：两张卡都不该成立（证明后面转真是"猫来了"造成的，不是恒真）
+    for (const p of before) {
+      expect(fight.condition!(p, s)).toBe(false);
+      expect(flee.condition!(p, s)).toBe(false);
+    }
+    // 不 spawnHostile —— 等叙事压力自己刷猫（spawnDist 16~24 格，> 感知半径 18 的多数情形）
+    let becameTrue = false;
+    for (let i = 0; i < 900 && !becameTrue; i++) {
+      s.step(1);
+      becameTrue = [...s.pawns()].some((p) => fight.condition!(p, s) && flee.condition!(p, s));
+    }
+    expect(becameTrue, '猫自始至终没走进任何鼠的 18 格感知圈，战/逃卡在真场景下无法进候选池').toBe(true);
+    // 再跑一段让抽卡真的有轮次（上面循环在 condition 首次转真时就退出了，
+    // 那一刻鼠手里多半还握着上一张工作卡 —— 工作卡 duration 6~8s，反应链不是瞬间的）
+    s.run(30);
+    // 且真的打起来了（战或逃至少落进过抽签）
+    expect(
+      [...s.pawns()].some((p) => (p.uses['fight'] ?? 0) + (p.uses['flee'] ?? 0) > 0) ||
+        s.events.some((e) => e.text.includes('野猫袭击')),
+      '猫在感知圈内却没有鼠抽到战/逃卡',
+    ).toBe(true);
+  });
 });

@@ -61,6 +61,10 @@ function markReaped(ctx: SimContext, b: BuildingState): void {
 /**
  * 找一块处于目标阶段的田，取最近的一块：stage 'empty' 待播种 / 'ripe' 待收割。
  * 线性扫建筑表——与 world.nearestBuildingByTag 同量级，本阶段几十座可接受。
+ *
+ * maxR = **磁铁半径**（"看得见、值得为之走过去"的距离，进候选池用）；
+ * 到位判定在 sow/harvest 里另用 workRadius（"伸手可及"的距离）。
+ * 两者语义不同，**不可复用同一个数**——那正是本轮修掉的缺陷（见调用处注释）。
  */
 function findFieldInStage(
   ctx: SimContext,
@@ -143,27 +147,31 @@ export const farmingPack: ModPack = {
       },
     });
 
-    // ---- 卡：播种（走到空田旁 → 翻土 → 标记成熟时刻 + 收工）----
+    // ---- 卡：播种（看见空田就抽上 → 走到田心 → 翻土 → 标记成熟时刻 + 收工）----
+    // 【缺陷订正 2026-10-06】原 condition 用 `farming.senseRadius`（=12）与到位判定
+    //   同一个半径。实测熟田/空田的中位距离 31.0 / 19.1 格，12 格只覆盖 18.2% / 33.3%
+    //   ⇒ 「田就在那儿但卡永远抽不到」。现在 condition 用磁铁半径（看得见），
+    //   到位判定用 workRadius（伸手可及），走的那段由 setPath + moveStep 推进。
     m.registerCard({
       id: 'sow_field',
       label: '播种',
       series: SER_FARM,
       weight: 6,
       duration: 5,
-      condition: (p, ctx) => findFieldInStage(ctx, p, 'empty', ctx.tuning.farming.senseRadius) !== undefined,
+      condition: (p, ctx) => findFieldInStage(ctx, p, 'empty', ctx.tuning.farming.magnetRadius) !== undefined,
       action(p, ctx) {
         sow(p, ctx);
       },
     });
 
-    // ---- 卡：收割（走到熟田旁 → 拔 → 收成入 food → 田回空地）----
+    // ---- 卡：收割（看见熟田就抽上 → 走到田心 → 拔 → 收成入 food → 田回空地）----
     m.registerCard({
       id: 'harvest_field',
       label: '收割',
       series: SER_FARM,
       weight: 6,
       duration: 3,
-      condition: (p, ctx) => findFieldInStage(ctx, p, 'ripe', ctx.tuning.farming.senseRadius) !== undefined,
+      condition: (p, ctx) => findFieldInStage(ctx, p, 'ripe', ctx.tuning.farming.magnetRadius) !== undefined,
       action(p, ctx) {
         harvest(p, ctx);
       },
@@ -218,16 +226,22 @@ function tillHere(p: PawnState, ctx: SimContext): void {
 
 /** 播种动作：不在田旁 → 走到田心；在旁 → 标记成熟 → 收工。
  *  一次性工序（不是 gather 那种每 tick 收一份的持续劳作）：
- *  翻土是一个"开始即完成"的事件，中途被抽新卡打断就重来，符合直觉。 */
+ *  翻土是一个"开始即完成"的事件，中途被抽新卡打断就重来，符合直觉。
+ *
+ *  【磁铁范式】磁铁半径可能远大于到位半径，所以「还没走到」是**常态**而不是异常：
+ *  没到就 setPath 然后 return 等 moveStep；**不可达**（水/岩隔断）就 finishCard 收工，
+ *  否则 condition 因磁铁半径远大于真实可达距离而恒真 ⇒ 原地空转到 duration 结束。 */
 function sow(p: PawnState, ctx: SimContext): void {
-  const field = findFieldInStage(ctx, p, 'empty', ctx.tuning.farming.senseRadius);
+  const field = findFieldInStage(ctx, p, 'empty', ctx.tuning.farming.magnetRadius);
   if (!field) {
     ctx.finishCard(p);
     return;
   }
-  if (Math.hypot(p.pos.x - field.pos.x, p.pos.y - field.pos.y) > 1.5) {
-    if (p.path.length === 0) ctx.setPath(p, field.pos.x, field.pos.y); // 路上，引擎 moveStep 推进
-    return;
+  if (Math.hypot(p.pos.x - field.pos.x, p.pos.y - field.pos.y) > ctx.tuning.farming.workRadius) {
+    if (p.path.length === 0 && !ctx.setPath(p, field.pos.x, field.pos.y)) {
+      ctx.finishCard(p); // 不可达：收工重抽（防恒真空转）
+    }
+    return; // 路上，引擎 moveStep 推进
   }
   p.path = [];
   markSown(ctx, field);
@@ -235,15 +249,18 @@ function sow(p: PawnState, ctx: SimContext): void {
   ctx.finishCard(p);
 }
 
-/** 收割动作：不在田旁 → 走到田心；在旁 → 收成入 food、田回空地（可再种）。 */
+/** 收割动作：不在田旁 → 走到田心；在旁 → 收成入 food、田回空地（可再种）。
+ *  与 sow 同一条磁铁范式（不可达即收工，防恒真空转）。 */
 function harvest(p: PawnState, ctx: SimContext): void {
-  const field = findFieldInStage(ctx, p, 'ripe', ctx.tuning.farming.senseRadius);
+  const field = findFieldInStage(ctx, p, 'ripe', ctx.tuning.farming.magnetRadius);
   if (!field) {
     ctx.finishCard(p);
     return;
   }
-  if (Math.hypot(p.pos.x - field.pos.x, p.pos.y - field.pos.y) > 1.5) {
-    if (p.path.length === 0) ctx.setPath(p, field.pos.x, field.pos.y);
+  if (Math.hypot(p.pos.x - field.pos.x, p.pos.y - field.pos.y) > ctx.tuning.farming.workRadius) {
+    if (p.path.length === 0 && !ctx.setPath(p, field.pos.x, field.pos.y)) {
+      ctx.finishCard(p); // 不可达：收工重抽（防恒真空转）
+    }
     return;
   }
   p.path = [];
