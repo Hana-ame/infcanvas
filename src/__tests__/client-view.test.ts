@@ -151,15 +151,24 @@ describe('HUD 汇总面 colony()（R3-HUD）', () => {
 
   it('建筑按种类归并计数，含名称与燃料参数；同种建筑合并成一行', () => {
     const { view, sim } = makeView();
-    // 直接往世界塞两座篝火 + 一座棚屋，构造确定性的"篝火 ×2 / 棚屋 ×1"。
-    // 注意：addBuilding 会做间距/占位判定，可能返回 null（拒绝落子）——
-    // 所以断言前先确认确实建起来了，失败就让测试显式报错而不是算成"归并错"。
-    const built = [
-      sim.world.addBuilding('campfire', 30, 30),
-      sim.world.addBuilding('campfire', 34, 34),
-      sim.world.addBuilding('hut', 40, 40),
-    ];
-    for (const b of built) expect(b).not.toBeNull();
+    // 放置点不能写死坐标：world.addBuilding 会做地形（可通行）/占位/同类间距判定，
+    // 水面或树冠上会返回 null。改用**确定性扫描**找可建格（与 building 包的 findSpot 同法），
+    // 顺带保证"建不起来时测试响亮失败"而不是算成"归并错"。
+    const place = (defId: string, from: number): void => {
+      let done = false;
+      for (let r = 0; r < 60 && !done; r++) {
+        for (let dy = -r; dy <= r && !done; dy++) {
+          for (let dx = -r; dx <= r && !done; dx++) {
+            if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+            if (sim.world.addBuilding(defId, from + dx, from + dy)) done = true;
+          }
+        }
+      }
+      expect(done, `放不下建筑：${defId}`).toBe(true);
+    };
+    place('campfire', 30);
+    place('campfire', 60);
+    place('hut', 100);
     const c = view.colony();
 
     const campfire = c.buildingKinds.find((k) => k.defId === 'campfire');
@@ -249,8 +258,21 @@ describe('HUD 详情面 inspectPawn / inspectBuilding / inspectHostile（R3-HUD�
 
   it('建筑档案：尺寸/耐久/造价/燃料节奏/同类总数；id 不存在返回 null', () => {
     const { view, sim } = makeView();
-    expect(sim.world.addBuilding('hut', 12, 12)).not.toBeNull();
-    expect(sim.world.addBuilding('hut', 20, 20)).not.toBeNull();
+    // 同上：坐标要扫出来，写死会撞水面/树冠
+    const place = (defId: string, from: number): void => {
+      let done = false;
+      for (let r = 0; r < 60 && !done; r++) {
+        for (let dy = -r; dy <= r && !done; dy++) {
+          for (let dx = -r; dx <= r && !done; dx++) {
+            if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+            if (sim.world.addBuilding(defId, from + dx, from + dy)) done = true;
+          }
+        }
+      }
+      expect(done, `放不下建筑：${defId}`).toBe(true);
+    };
+    place('hut', 12);
+    place('hut', 50);
     const hut = [...sim.world.buildings.values()].find((b) => b.defId === 'hut')!;
 
     const d = view.inspectBuilding(hut.id)!;

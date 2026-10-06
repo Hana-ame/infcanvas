@@ -101,18 +101,16 @@ export class PanelHost {
     for (const def of this.panels) {
       const out = def.render(view);
       const wrap = this.ensureNode(def);
-      const key = out.key;
-      const changed = this.lastKeys.get(def.id) !== key;
+      const body = this.bodies.get(def.id)!;
+      const changed = this.lastKeys.get(def.id) !== out.key;
       if (changed) {
-        this.lastKeys.set(def.id, key);
-        const body = this.bodies.get(def.id)!;
+        this.lastKeys.set(def.id, out.key);
         body.innerHTML = out.html;
         this.lastWrites++;
       }
-      // 显隐也要差分：empty 状态翻转也要写 DOM，但只在翻转时（下面的 visibleKey 复用同一机制）。
+      // 显隐也要差分：empty 状态翻转也要写 DOM，但只在翻转时（复用同一 key 比对思路）。
       const visKey = out.empty ? 'e' : 'n';
-      const prevVis = body.dataset.v;
-      if (prevVis !== visKey) {
+      if (body.dataset.v !== visKey) {
         body.dataset.v = visKey;
         wrap.style.display = out.empty ? 'none' : '';
         if (changed) this.lastWrites++; // 内容与显隐同一帧变的，只算一次写

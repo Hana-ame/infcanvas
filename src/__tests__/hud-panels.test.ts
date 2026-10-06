@@ -106,9 +106,12 @@ function fakeView(over: Partial<{ pawnCount: number; time: number }> = {}): Worl
   };
 }
 
-/** 可变面板：测试用来驱动 key 变化 */
-function mutablePanel(id: string, slot: PanelDef['slot'] = 'vitals'): PanelDef & { cur: { key: string; html: string } } {
-  const p = {
+/** 可变面板：测试用来驱动 key/显隐 变化 */
+interface MutablePanel extends PanelDef {
+  cur: { key: string; html: string; empty?: boolean };
+}
+function mutablePanel(id: string, slot: PanelDef['slot'] = 'vitals'): MutablePanel {
+  const p: MutablePanel = {
     id,
     slot,
     cur: { key: 'k0', html: '<b>a</b>' },
@@ -263,8 +266,9 @@ describe('HUD 文案工具', () => {
 
   it('keyOf 产生稳定 key，数组长度变化体现在 key 里', () => {
     expect(keyOf(1, 'a')).toBe('1|a');
-    expect(keyOf([1, 2].join(','))).toBe('1,2');
-    expect(keyOf([])).toBe('');
-    expect(keyOf([1, 2].join(','))).not.toBe(keyOf([1, 2, 3].join(',')));
+    // keyOf 是**变参**（逐个标量传入），不是收数组——面板里就是这么用的
+    expect(keyOf('1,2')).toBe('1,2');
+    expect(keyOf()).toBe(''); // 空参 = 空 key
+    expect(keyOf('1,2')).not.toBe(keyOf('1,2,3'));
   });
 });
