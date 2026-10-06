@@ -163,8 +163,11 @@ export class World {
     if (this.treeBlockAt(Math.round(x), Math.round(y))) return false;
     const b = this.occupied.get(`${Math.round(x)},${Math.round(y)}`);
     if (b === undefined) return true;
+    // def 查表可能落空（读档带入的建筑 defId 所属玩法包已被卸载）——按"表外建筑不阻挡
+    // 通行"处理，与 nearestBuildingByTag 的表外跳过同一条纪律（卸载不破坏核心）。
     const def = this.buildings.get(b);
-    return def ? this.tuning.buildings[def.defId].passable : true;
+    const defTune = def ? this.tuning.buildings[def.defId] : undefined;
+    return defTune ? defTune.passable : true;
   }
 
   /** 一步移动判定：目标可立足 且 高差 |Δz| ≤ climb。
@@ -431,7 +434,10 @@ export class World {
     let best: BuildingState | undefined;
     let bestD = maxR;
     for (const b of this.buildings.values()) {
-      if (!this.tuning.buildings[b.defId].tags.includes(tag)) continue;
+      // 表外建筑（读档自带的 defId、但挂载清单里已无此定义 = 该玩法包被卸载）
+      // 必须跳过而不是崩：卸载不破坏核心，见 World.importState 的同类守卫。
+      const def = this.tuning.buildings[b.defId];
+      if (!def || !def.tags.includes(tag)) continue;
       const d = Math.hypot(b.pos.x - x, b.pos.y - y);
       if (d <= bestD) {
         best = b;

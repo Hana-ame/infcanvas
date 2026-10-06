@@ -130,6 +130,28 @@ export interface Tuning {
   gathering: {
     senseRadius: number; // 采集感知半径（比出生安全区略大，逼鼠群走出去）
   };
+  /**
+   * farming —— 农耕包数值（ROADMAP R3-2）。出厂值是**保守基线**：
+   * 农耕的定位是"采不到野果时的第二口粮"，不是替代采集——
+   * 一茬 yieldFood(3) ≈ 一丛浆果全采(3~5)，刻意不让它碾压野果线。
+   */
+  farming: {
+    /** 农田建造搜索半径（格）：必须大于 build.minSpacing，否则内核同类间距判定
+     *  会让第二块田永远放不下（田=1×1 密植物，包内靠 addBuilding 逐候选试位绕开） */
+    searchRadius: number;
+    /** 农田/人口比例：每 N 只鼠保有 1 块田（田太多=产量过剩野果线崩塌，太少=总饿死） */
+    fieldRatio: number;
+    /** 生长冷却（秒）：播种 → 到期可收。**世界自转，不需要人在场**——
+     *  这是"作物生长=地块冷却的变体"的落点：与 world.harvestCd 同构，但走包私有表 */
+    growSec: number;
+    /** 单块田收获食物份数（每次收一整茬，不是每 tick 一份） */
+    yieldFood: number;
+    /** 找得到可耕格的搜索半径（格）：找田时环扫的上限 */
+    senseRadius: number;
+    /** 饥饿低于此值时 farm 系列权重放大倍数（涌现点：没播种就饿肚子，饿才想去种地） */
+    hungryBelow: number;
+    hungryWeightMul: number;
+  };
   social: {
     chatRadius: number;
     chatMoodGain: number;
@@ -240,6 +262,17 @@ export const DEFAULT_TUNING: Tuning = {
      *  防止鼠群无限扩散——火堆是活动范围的锚点，新火堆=扩展边疆 */
   },
   gathering: { senseRadius: 10 },
+  farming: {
+    // 搜索半径必须 > build.minSpacing(5)：内核 addBuilding 对同类建筑套全局间距，
+    // 田又是 1×1 密植物，半径不够大就永远只开得出第一块田（第二块必被间距拒）。
+    searchRadius: 8,   // 农田在营地旁就地找格（太小推不开，太大会圈水）
+    fieldRatio: 2,     // 2 只鼠 1 块田：产出当口粮而非主粮，比例高了会淹没采集线
+    growSec: 120,      // 一茬 2 分钟：比一轮采集周期略长，逼出"种了就要等"的规划感
+    yieldFood: 3,      // 一茬 3 份 ≈ 一丛浆果全采（3~5）：不碾压野果线
+    senseRadius: 12,   // 找田感知半径：与营地散布半径同量级
+    hungryBelow: 45,   // 饥饿线（与 needs 包的 f<55 档重叠但更低——种植更"重决策"）
+    hungryWeightMul: 2.2,
+  },
   social: {
     chatRadius: 2.5,
     chatMoodGain: 8,

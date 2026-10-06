@@ -1,4 +1,6 @@
+# `node_modules/` 只匹配目录；指向别处的软链会被误 add，故补一条无斜杠的裸名
 node_modules/
+node_modules
 dist/
 *.log
 .DS_Store
