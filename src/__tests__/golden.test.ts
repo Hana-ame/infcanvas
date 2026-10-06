@@ -150,3 +150,70 @@ describe('golden-hash 门禁（确定性基线）', () => {
     expect(fingerprint(cur)).toBe(fingerprint(straight));
   });
 });
+/**
+ * 步长不变性：**本项目保证的确定性到哪一步为止**（2026-10-06 实测厘清）。
+ *
+ * ## 背景：为什么要专门问这个问题
+ *
+ * golden 门禁证明的是「**同 seed + 同 tick 数** → 同指纹」。但玩家/服务器调用
+ * `step(dt)` 时 dt 是可以变的（本项目 `run(seconds, dt = 1)` 直接暴露 dt 参数，
+ * 客户端也有 1×/3×/8× 三档速度）。于是有个从没被问过的问题：
+ * **同 seed、同样推进 600 秒，step(1) 与 step(25) 会不会得到同一个世界？**
+ *
+ * ## 实测结论：不会，而且**这不是 bug，是浮点运动积分的固有性质**
+ *
+ * 三 seed 实测（step(1)×600 vs step(25)×24）：
+ *   seed 42  fp_990e2b99 vs fp_488e1881  ❌
+ *   seed 7   fp_596a569c vs fp_c0dd9a6d  ❌
+ *   seed 99  fp_1b924432 vs fp_e16fa2fa  ❌
+ *
+ * 根因在 `sim.moveStep`（`src/sim/sim.ts:358-374`）：移动用 `speed * dt` 作为
+ * 路程预算，按浮点把鼠推向路径节点。dt=1 时鼠**恰好落在每个节点上**；
+ * dt=25 时一步跨过多个节点、且斜向切角，落点变成非整数坐标。
+ * 而世界是**基于坐标哈希**的（`featureKind`/`fullAmount` 都按 `Math.round` 取整位
+ * 推导），落点一变 ⇒ 脚下是哪一格变了 ⇒ 采收/建造的位置全变 ⇒ 整局分叉。
+ * 这是「浮点运动 + 哈希世界」的必然结果，不是某处写错。
+ *
+ * ## 所以本测试断言的是**真实的契约**，不是假装 dt 无关
+ *
+ * 契约两条：
+ *  1. **固定步长下确定性成立**（golden 门禁已覆盖，这里再钉一次防回归）；
+ *  2. **固定步长下结果与「跑法」无关** —— step(1)×600 与
+ *     step(1)×600 分成 6 段 run(100, 1) 跑，必须逐位相同。
+ *     这才是实际会被用到的性质（分帧跑 ≠ 改变步长）。
+ *
+ * 3. **变步长不保证相同**，且这是**有意不修**的：把它变成保证要么固定内部步长
+ *     （改变服务器/客户端的现有行为，属于玩法改动），要么把移动改成整数格推进
+ *     （改变寻路与移动手感，属于玩法改动）。两者都要单独立项 + 重采平衡，
+ *     不该由一条"补测试"的提交顺手决定。
+ */
+describe('步长不变性（确定性保证的边界）', () => {
+  it('固定步长下：分帧 run(100,1)×6 ≡ 一次跑 600 tick（逐位相同）', () => {
+    const a = new Sim({ seed: 42, registry: ModRegistry.default() });
+    a.run(600, 1);
+    const b = new Sim({ seed: 42, registry: ModRegistry.default() });
+    for (let i = 0; i < 6; i++) b.run(100, 1); // 同样的 step(1)，只是分成 6 次调用
+    expect(fingerprint(b)).toBe(fingerprint(a));
+  });
+
+  it('固定步长下：中途存档再续跑 ≡ 一次跑完（已在 golden 覆盖，此处钉住不变式）', () => {
+    const a = new Sim({ seed: 7, registry: ModRegistry.default() });
+    a.run(400, 1);
+    const b = new Sim({ seed: 7, registry: ModRegistry.default() });
+    b.run(200, 1);
+    // 走公开存档面（snapshotOf/loadSim），不伸进 Sim 的私有字段
+    const resumed = loadSim(JSON.parse(JSON.stringify(snapshotOf(b))), ModRegistry.default());
+    resumed.run(200, 1);
+    expect(fingerprint(resumed)).toBe(fingerprint(a));
+  });
+
+  it('变步长会分叉 —— 记录当前真实行为，防止有人误以为它已修（若这条转绿，说明有人改了积分方式，应同步改文档）', () => {
+    const a = new Sim({ seed: 42, registry: ModRegistry.default() });
+    a.run(600, 1);
+    const b = new Sim({ seed: 42, registry: ModRegistry.default() });
+    b.run(600, 25); // 同样 600 秒，但步长 25
+    // 断言"不同"而不是"相同"：这是一条**记录现状**的测试。
+    // 若将来决定支持变步长，这条会转绿，届时应把它改成相等断言并更新本文件头。
+    expect(fingerprint(b)).not.toBe(fingerprint(a));
+  });
+});
