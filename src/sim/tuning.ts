@@ -410,6 +410,63 @@ export interface Tuning {
     multiEnemyThreshold: number;
   };
   /**
+   * env —— 环境包数值（SEED「寒冬 / 野外」：昼夜 / 温度 / 天气 + 冻伤中暑）。
+   *
+   * 【机制定位】环境是"世界自己转"的压力源，**不是行为规则**：
+   *   - 它只产出两个世界事实（温度、是否下雨），
+   *   - 鼠怎么应对（躲火旁 / 不出工）全部由 env 包的 cardWeight 钩子倾斜抽卡池来涌现
+   *     （原则①：本包不做任何新卡，不做行为树/任务队列/强制指令）。
+   *   - 极端温度下无庇护的掉血是世界事实（ctx.damagePawn），死亡原因字符串稳定
+   *     （'冻伤' / '中暑' 进日志与指纹），不是"环境在指挥鼠做什么"。
+   *
+   * 【出厂气候 = 温和带】baseTemp=18 与 nightOffset=-8 的正弦曲线把温度锁在
+   *   [baseTemp + nightOffset, baseTemp] = [10, 18] 区间，而 coldThreshold=2 /
+   *   hotThreshold=34 都落在区间之外 ⇒ **默认局里冻伤与中暑都不会发生**，
+   *   雨（rainWorkMul 压低户外工作权重）是唯一常驻生效的天气压力。
+   *   寒潮/酷暑要靠 tuning override 才出现（如 harsh-winter 把 nightOffset 拉到 -20）
+   *   ——这正是数据驱动的用法：换数值不换代码。
+   *   （方向性验证走 env.test.ts 的"临时把 coldThreshold 调高"，见该文件注释。）
+   */
+  env: {
+    /** 昼夜周期秒数：env.dayPhase 每 tick 推进 dt/dayLengthSec，满 1 回到 0 */
+    dayLengthSec: number;
+    /** 正午基准温度（正弦曲线最高点，也是温度区间的上界） */
+    baseTemp: number;
+    /** 深夜偏移（负 = 更冷）：温度 = baseTemp + nightOffset × 夜晚深度(0..1)。
+     *  与 dayLengthSec 共同决定曲线的振幅与频率；出厂 -8 使区间下界为 baseTemp-8。 */
+    nightOffset: number;
+    /** 冻伤阈值：温度**低于**此值且不在庇护半径内 → 冻伤掉血 */
+    coldThreshold: number;
+    /** 中暑阈值：温度**高于**此值且不在庇护半径内 → 中暑掉血 */
+    hotThreshold: number;
+    /** 庇护半径（格）：火堆或棚屋在此范围内即视为有庇护（火=热源，棚屋=遮蔽） */
+    warmRadius: number;
+    /** 天气掷骰周期（秒）：每隔这么久掷一次雨（rainChance） */
+    weatherCycleSec: number;
+    /** 每个周期的下雨概率（0..1） */
+    rainChance: number;
+    /** 雨中食物衰减速率乘数。
+     *  ⚠ 接入口：本包只把这个值写进 ctx.scratch['env.foodDecayMul']（下雨 1.4 / 晴天 1），
+     *  **不直接改 needs 的衰减**（needs 包自己衰减，本包不交叉修改其系统）。
+     *  needs 包若要消费，在自己的需求衰减处读这个键即可；needs 不挂时该键只是
+     *  无人读的残留数据，不报错。 */
+    rainFoodDecayMul: number;
+    /** 雨中户外工作卡（SER_GATHER / SER_WOOD）权重乘数（<1 = 下雨不划算出工） */
+    rainWorkMul: number;
+    /** 冻伤每秒掉血（无庇护且温度 < coldThreshold 时） */
+    freezeDmgPerSec: number;
+    /** 中暑每秒掉血（无庇护且温度 > hotThreshold 时） */
+    heatDmgPerSec: number;
+    /** 寒冷预警带宽：temp < coldThreshold + coldRestBand 时 SER_REST 权重抬高。
+     *  这是"有点冷了想躲火旁"的**提前量**——不是等到真冻伤了才想躲，
+     *  而是温度逼近阈值就开始往火旁挪（涌现点）。 */
+    coldRestBand: number;
+    /** 寒冷时 SER_REST 权重乘数（想躲进火旁） */
+    coldRestMul: number;
+    /** 酷暑时 SER_REST 权重乘数（想找个阴凉歇着） */
+    hotRestMul: number;
+  };
+  /**
    * techs —— 科技抽卡池数据表（R2-1，2026-08-21 追加：ROADMAP「科技 = 独立抽卡池，碎片制」）。
    *
    * 为什么进表而不是硬编码（原则③）：科技条目既是抽卡池的**候选集合**，又是建筑门控的
@@ -682,6 +739,28 @@ export const DEFAULT_TUNING: Tuning = {
     rallyMinEnemies: 2,       // 集结卡的最低敌人数（少于 2 只不值得聚拢）
     defendMulMultiEnemy: 1.6, // 多敌人时 SER_DEFEND 权重抬高倍数
     multiEnemyThreshold: 3,   // 触发多敌人抬权的敌人数（≥3 = 团战分界线）
+  },
+  env: {
+    // ---- 昼夜与温度 ----
+    dayLengthSec: 120,  // 2 分钟一个昼夜：一场 900s 局里有 7~8 个日夜，节奏看得见
+    baseTemp: 18,       // 正午基准（曲线最高点）
+    nightOffset: -8,    // 深夜偏移 ⇒ 区间下界 = 18-8 = 10（深夜最冷 10 度）
+    // ---- 生存压力阈值：出厂都落在 [10,18] 区间之外（温和带，见区块头注释）----
+    coldThreshold: 2,   // 冻伤线：低于 2 度掉血（默认局够不到，需 override 才触发）
+    hotThreshold: 34,   // 中暑线：高于 34 度掉血
+    warmRadius: 4,      // 庇护半径：火堆/棚屋 4 格内即算有庇护
+    // ---- 天气 ----
+    weatherCycleSec: 90, // 每 90 秒掷一次雨
+    rainChance: 0.35,    // 每周期下雨概率 ≈ 三分之一的时间在下雨
+    rainFoodDecayMul: 1.4, // 雨中食物衰加速 40%（写 scratch['env.foodDecayMul']，needs 读）
+    rainWorkMul: 0.6,    // 雨中 SER_GATHER/SER_WOOD 权重 ×0.6：户外工作不划算
+    // ---- 环境伤害 ----
+    freezeDmgPerSec: 1.2, // 冻伤 ≈ 1.2 血/秒（pawn.hp=100 ⇒ 野外约 83 秒冻死，够躲）
+    heatDmgPerSec: 1.2,   // 中暑同量级
+    // ---- 权重钩子的提前量与倍数（可 A/B 的玩法数值，不进包内硬编码）----
+    coldRestBand: 4,   // temp < 2+4=6 就开始想躲火旁（提前量）
+    coldRestMul: 1.5,  // 寒冷时 SER_REST 权重 ×1.5
+    hotRestMul: 1.4,   // 酷暑时 SER_REST 权重 ×1.4
   },
   // 科技表**出厂为空**：科技是玩法包种子（同 buildings/enemies 的纪律——内核零玩法内容）。
   // tech-pool 包挂载时 registerTech 注入条目。
