@@ -130,7 +130,7 @@ jobs:
       - name: paired A/B vs origin/main
         run: |
           set -euo pipefail
-          scripts/ab-bench.sh origin/main 5 900 2>&1 | tee ab-out.txt
+          scripts/ab-bench.sh origin/main 7 900 2>&1 | tee ab-out.txt
           {
             echo '## 🔬 配对 A/B（vs origin/main，同 runner 交替采样）'
             echo
