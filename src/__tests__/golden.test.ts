@@ -297,7 +297,7 @@ const SCENARIOS = [
   
   */
 const GOLDEN: Record<string, string> = {
-  '42@900': 'fp_9b479e92',
+  '42@900': 'fp_6440c648',
   '7@900': 'fp_69939537',
   '2026@900': 'fp_32ceeef4',
 };

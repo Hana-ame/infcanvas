@@ -42,14 +42,14 @@ export const needsPack: ModPack = {
     // ---- 权重钩子：需求只是权重输入（原则①：禁止 if-else 行为树）----
     m.registerHook('cardWeight', (p, card) => {
       const f = p.needs.food;
-      if (card.series === SER_EAT) return f < 30 ? 4 : f < 55 ? 1.8 : 1;
-      if (card.series === SER_GATHER) return f < 30 ? 2.5 : f < 55 ? 1.4 : 1;
+      if (card.series === SER_EAT) return f < 45 ? 4 : f < 55 ? 1.8 : 1;
+      if (card.series === SER_GATHER) return f < 45 ? 2.5 : f < 55 ? 1.4 : 1;
       return 1;
     });
     m.registerHook('cardWeight', (p, card) => {
       const r = p.needs.rest;
       if (card.series !== SER_REST) return 1;
-      return r < 25 ? 5 : r < 50 ? 2 : 1;
+      return r < 35 ? 5 : r < 50 ? 2 : 1;
     });
     m.registerHook('cardWeight', (p, card) => {
       if (p.needs.mood >= 70) return 1;

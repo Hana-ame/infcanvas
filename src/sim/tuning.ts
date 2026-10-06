@@ -753,7 +753,7 @@ export const DEFAULT_TUNING: Tuning = {
                        // 因为那 12 格从来不是"伸手范围"，而是错当成候选池半径的贴身距离）
     magnetRadius: 30,  // 候选池（磁铁）半径 30：实测到最近熟田中位 31.0 格、≤30 覆盖 48.6%，
                        // 与 build.maxForageDist=30 同锚点（活动范围不因种地而扩张）
-    hungryBelow: 45,   // 饥饿线（与 needs 包的 f<55 档重叠但更低——种植更"重决策"）
+    hungryBelow: 55,   // 饥饿线（与 needs 包的 f<55 档对齐——种植更"重决策"）
     hungryWeightMul: 2.2,
   },
   cooking: {
