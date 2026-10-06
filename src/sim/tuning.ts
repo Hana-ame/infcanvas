@@ -301,6 +301,53 @@ export interface Tuning {
     threatWorkMul: number;
   };
   /**
+   * combat —— 战术包数值（防御的行为层：据守/集火/迂回/集结）。
+   *
+   * 与 raid 的分工：raid 负责"有没有敌人 + 战或逃"（追击 / 撤退两卡），
+   * combat 负责"怎么打、从哪打、和谁一起打"（据守 / 集火 / 迂回 / 集结四卡）。
+   * 两套卡同台抽签 —— 一切皆抽卡（红线①），不是冗余。
+   *
+   * 单位约定：时间 = 秒、距离 = 格、伤害系数 = 倍率。全部走 ctx.tuning.combat
+   * 读取（原则③：数值全进表），卡权重写死在 combat.ts 包内（registerCard 时拿不到 ctx）。
+   */
+  combat: {
+    /** 近战攻击半径（格）：敌人在此半径内才结算伤害。
+     *  与 raid.attackRange(1.25) 的区别：combat 的战术卡更"从容"——站定就出手，
+     *  不需要贴身到 raid 的 1.25；1.75 让"侧翼点"和"据点旁"都能打到。 */
+    attackRange: number;
+    /** SER_DEFEND 卡的磁铁半径（格）：condition 里"看得见、值得走过去"的大半径。
+     *  取 24 = 与 needs.sleepMagnetRadius / cooking.magnetRadius 同锚点——
+     *  都是"营地的势力范围"（≈ speed 4.5 的 5 秒路程）。 */
+    defendMagnetRadius: number;
+    /** 据守卡的到位半径（格）：站到据点旁这个距离内就算"站定"。
+     *  与 defendMagnetRadius 是**两个量**：前者是"伸手够得着"，后者是"值得走过去"。
+     *  这正是本项目已踩坑 4 次的根因（chat/sow/harvest/sleep），所以明确拆开。 */
+    holdRadius: number;
+    /** 集火卡的伤害倍率：多鼠围攻同一敌人时的加成。
+     *  1.4 = 让"集火"真的比"单打"划算（否则鼠不会主动抽集火卡）。
+     *  但不至于让集火碾压：1.4 < 1.5（flankMul），保持"迂回"是更激进的选择。 */
+    focusMul: number;
+    /** 迂回卡的伤害倍率：从侧翼进入的加成。
+     *  1.5 = 最激进也最高收益，鼓励"从哪个方向进入"的战术思考。 */
+    flankMul: number;
+    /** 迂回卡的侧翼偏移（格）：侧翼点 = 据点 + 垂直于(据点→敌人)方向的偏移。
+     *  3.5 = 与 defendMagnetRadius 24 的量级相当（1/7），
+     *  足够让"侧翼点 ≠ 正前方"（战术空间可见），又不至于让鼠绕太远。 */
+    flankOffset: number;
+    /** 集结卡的感知半径（格）：在此半径内收集团敌计算质心。
+     *  取 24 = 与 defendMagnetRadius 同锚点；留成独立字段以便将来分开调。 */
+    rallySenseRadius: number;
+    /** 集结卡的最低敌人数：≥ 此数才成立（少于这个数不值得聚拢）。 */
+    rallyMinEnemies: number;
+    /** 多敌人时的 SER_DEFEND 权重抬高倍数（≥ multiEnemyThreshold 触发）。
+     *  1.6 = 让"多敌人 → 更想抽战术卡"成为涌现结果，不是硬规则。 */
+    defendMulMultiEnemy: number;
+    /** 触发 defendMulMultiEnemy 的敌人数量阈值。
+     *  3 = "小规模遭遇"→"团战"的分界线：1~2 只敌人用 fight/flee 即可，
+     *  3 只以上才值得抽据守/集火/迂回/集结。 */
+    multiEnemyThreshold: number;
+  };
+  /**
    * techs —— 科技抽卡池数据表（R2-1，2026-08-21 追加：ROADMAP「科技 = 独立抽卡池，碎片制」）。
    *
    * 为什么进表而不是硬编码（原则③）：科技条目既是抽卡池的**候选集合**，又是建筑门控的
@@ -504,6 +551,18 @@ export const DEFAULT_TUNING: Tuning = {
      * 保留"慌到没反应过来继续干活"的少数情况，战或逃的随机性不被抹平。
      */
     threatWorkMul: 0.35,
+  },
+  combat: {
+    attackRange: 1.75,        // 战术卡的近战半径（比 raid.attackRange 1.25 更从容：站定就出手）
+    defendMagnetRadius: 24,   // SER_DEFEND 卡的磁铁半径（与 sleep/cooking 同锚点：营地势力范围）
+    holdRadius: 2.0,          // 据守卡的到位半径（"站在据点旁"的贴合距离，与磁铁半径是两个量）
+    focusMul: 1.4,            // 集火伤害倍率（多鼠围攻的加成，1.4 < flankMul 保持迂回更激进）
+    flankMul: 1.5,            // 迂回伤害倍率（最激进也最高收益：从哪个方向进入）
+    flankOffset: 3.5,         // 迂回的侧翼偏移（= defendMagnetRadius/7，足够让侧翼点 ≠ 正前方）
+    rallySenseRadius: 24,     // 集结卡的感知半径（与 defendMagnetRadius 同锚点）
+    rallyMinEnemies: 2,       // 集结卡的最低敌人数（少于 2 只不值得聚拢）
+    defendMulMultiEnemy: 1.6, // 多敌人时 SER_DEFEND 权重抬高倍数
+    multiEnemyThreshold: 3,   // 触发多敌人抬权的敌人数（≥3 = 团战分界线）
   },
   // 科技表**出厂为空**：科技是玩法包种子（同 buildings/enemies 的纪律——内核零玩法内容）。
   // tech-pool 包挂载时 registerTech 注入条目。
