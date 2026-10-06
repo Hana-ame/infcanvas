@@ -59,12 +59,11 @@ describe('R3-2 农耕包', () => {
   });
 
   it('完整耕收闭环：开垦→播种→冷却→收割→入 food（单块田逐步走通）', () => {
-    // 极简装配 + 关掉 behavior：等冷却要跨 120s，若让 behavior 跑，鼠在田熟那一刻就
-    // 自己抽到 harvest_field 收走了（ai 类别排在 world 之前）→ 我们要断言的"田还熟着"
-    // 那一瞬间根本不存在。关掉 behavior = 只测系统与卡的语义，不掺小人的自发行为。
-    // （debugForceCard 走的是 Sim.commit 直调，不经 behavior，所以钉卡仍然可用。）
+    // 卡 action 只在 behavior.update 里执行（systems.ts），所以**不能**关 behavior——
+    // 关了连播种都不会发生。正确姿势是：让 behavior 跑（保证 action 执行），
+    // 但等冷却期间把鼠挪到远超 senseRadius 的角落——它的 harvest_field condition
+    // 找不到田 → 抽不中 → 不会自己把田收了，我们断言的"田还熟着"那一瞬间才存在。
     const reg = ModRegistry.mountPacks([buildingPack, farmingPack]);
-    reg.disableSystem('behavior');
     const s = new Sim({ seed: 2, registry: reg, pawnCount: 1 });
     const p = [...s.pawns()][0];
     // 造一块田（不用 build_field 卡，直接 addBuilding 架设测试夹具——闭环本身在后面验）
@@ -78,14 +77,20 @@ describe('R3-2 农耕包', () => {
     // 作物状态写进 scratch（键 farming.<建筑id>），未成熟前不可收
     const stateKey = `farming.${spot!.id}`;
     expect(s.scratch[stateKey]).toBeDefined();
-    expect(s.scratch[stateKey]).toBeLessThan(0); // 负值编码 = 已播种 + 成熟时刻
+    expect(s.scratch[stateKey]).toBeLessThan(0); // 负值编码：-value = 成熟时刻
 
     // ② 收割卡此刻**不可抽**（没成熟）：条件谓词挡住了（condition 是抽卡谓词，非行为规则）
     const harvestCard = s.cardById('harvest_field')!;
     expect(harvestCard.condition!(p, s)).toBe(false);
 
-    // ③ 等冷却过：跑够 growSec（behavior 已关，鼠不会自己收，田一定还熟着、也走不动）
+    // ③ 等冷却过：把鼠放逐到 senseRadius 之外再跑满 growSec —— 它够不着田，
+    //    所以不会自己收走；这一步只验"冷却到期"，不掺寻路
+    const far = s.tuning.farming.senseRadius + 20;
+    p.pos = { x: far, y: far };
+    p.path = [];
     s.run(s.tuning.farming.growSec + 1);
+    p.pos = { x: 0, y: 0 }; // 收工前回到田边
+    p.path = [];
     expect(harvestCard.condition!(p, s)).toBe(true); // 到点即可收
 
     // ④ 收割：入 food + 田回空地（可再种）
