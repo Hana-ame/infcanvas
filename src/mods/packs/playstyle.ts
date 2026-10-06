@@ -20,6 +20,7 @@ import { cookingPack } from './cooking';
 import { eventsPack } from './events';
 import { combatPack } from './combat';
 import { huntingPack } from './hunting';
+import { medicinePack } from './medicine';
 
 export const DEFAULT_PLAYSTYLE_PACKS: ModPack[] = [
   needsPack, // 需求衰减 + 吃/睡 + 饥饿权重调制
@@ -34,4 +35,5 @@ export const DEFAULT_PLAYSTYLE_PACKS: ModPack[] = [
   eventsPack, // 事件（局面触发）：丰收/寒潮/瘟疫/流浪者/丰收节，谓词+效果表，无脚本线
   combatPack, // 战术：据守/集火/迂回/集结（防御的行为层 = 大兵团战术空间入口）
   huntingPack, // 狩猎（R3-3）：被动动物/肉/草药材料链
+  medicinePack, // 医疗（R3 瘟疫/饥荒）：病榻建筑 + 照料卡（耗草药）+ 自然恢复（requires building）
 ];
