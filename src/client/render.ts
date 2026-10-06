@@ -454,7 +454,13 @@ export class Renderer {
       if (!g) {
         const def = this.view.buildingDef(b.defId);
         const icon = new Text({
-          text: def?.tags.includes('fire') ? '🔥' : def?.tags.includes('storage') ? '📦' : '🏚',
+          text: def?.tags.includes('fire')
+            ? '🔥'
+            : def?.tags.includes('storage')
+              ? '📦'
+              : def?.tags.includes('field')
+                ? '🌾' // 农田：与棚屋 🏚 区分，否则全部落到兜底图标（表现层契约，见 PLAYING 图例）
+                : '🏚',
           style: { fontSize: 22 },
         });
         icon.anchor.set(0.5, 0.62);

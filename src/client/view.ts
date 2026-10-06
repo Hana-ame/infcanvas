@@ -85,6 +85,9 @@ export const CARD_LABEL: Record<string, string> = {
   flee: '🏃撤退',
   build_campfire: '🔥搭篝火',
   build_hut: '🏠盖棚屋',
+  build_field: '🪏开垦农田',
+  sow_field: '🌱播种',
+  harvest_field: '🌾收割',
   _stun: '…愣住',
 };
 

@@ -16,6 +16,9 @@ export const K_STOCK_WOOD = 'wood';
 export const K_TAG_FIRE = 'fire';
 export const K_TAG_SHELTER = 'shelter';
 export const K_TAG_STORAGE = 'storage';
+/** 农田（farming 包写 / farming 包自读）：与上面三个的区别是它**可通行**——
+ *  小人要能站进/走出自家田地才谈得上播种收割。跨包语义＝"这是可耕种的地块"。 */
+export const K_TAG_FIELD = 'field';
 
 /** 工作系列词汇表（卡的 series）：需求钩子/特质 seriesMul 按系列命中。
  *  跨包词汇 → 常量 + 登记校验。（原"策略卡引用校验"随"××令"移除一并删除） */
@@ -28,6 +31,7 @@ export const SER_SOCIAL = 'social';
 export const SER_WANDER = 'wander';
 export const SER_FIGHT = 'fight';
 export const SER_FLEE = 'flee';
+export const SER_FARM = 'farm'; // 农耕（开垦/播种/收割）
 
 /** 全部合法系列（新系列必须在此登记，否则 validateContracts 报错） */
 export const ALL_SERIES: readonly string[] = [
@@ -40,6 +44,7 @@ export const ALL_SERIES: readonly string[] = [
   SER_WANDER,
   SER_FIGHT,
   SER_FLEE,
+  SER_FARM,
 ];
 
 import type { ModRegistry } from './registry';
