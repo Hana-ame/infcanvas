@@ -297,9 +297,9 @@ const SCENARIOS = [
   
   */
 const GOLDEN: Record<string, string> = {
-  '42@900': 'fp_829b3452',
-  '7@900': 'fp_7b1bb9fc',
-  '2026@900': 'fp_dd72a7c4',
+  '42@900': 'fp_9b479e92',
+  '7@900': 'fp_69939537',
+  '2026@900': 'fp_32ceeef4',
 };
 
 /** 跑一个场景：固定 seed 跑固定 tick 数，返回指纹（不存档直跑）。 */

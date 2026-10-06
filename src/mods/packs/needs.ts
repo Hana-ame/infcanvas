@@ -52,7 +52,7 @@ export const needsPack: ModPack = {
       return r < 25 ? 5 : r < 50 ? 2 : 1;
     });
     m.registerHook('cardWeight', (p, card) => {
-      if (p.needs.mood >= 35) return 1;
+      if (p.needs.mood >= 70) return 1;
       if (card.series === SER_SOCIAL) return 2; // 低落找同伴
       if (card.series === SER_WANDER) return 1.5;
       return 1;
