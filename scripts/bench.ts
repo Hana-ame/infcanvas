@@ -104,9 +104,13 @@ const asJson = parsed.json;
 // 所以基准要能拉到玩家真的会遇到的规模，否则优化的是"一个没人在玩的配置"。
 // --pawns 走 overrideTuning 改 bootstrap.pawnCount（数据驱动原则③：数值进表不改内核）。
 //
-// ⚠ 刻意的结构：registry / WARMUP 的最终定义在 runOnce() **内部**，每轮新建。
+// ⚠ 刻意的结构：registry 的定义在 runOnce() **内部**，每轮新建。
 //   若把 registry 提到模块级复用，第 2 轮就带着第 1 轮注册过的系统状态，
 //   测的不是同一个东西。（本轮重构时这里一度留了份死代码，已删。）
+//
+//   WARMUP 是纯常量（只由 --repeat 的 seconds 决定，与轮次无关），
+//   所以放模块级；registry 不行。
+const WARMUP = Math.min(120, Math.floor(seconds / 4));
 
 /** 一轮完整测量：建世界 → 自检 → 预热 → 计时 → 采样。
  *  必须**每轮重新建 Sim**：复用同一个 sim 会让第 2 轮的指纹带着第 1 轮的
@@ -129,7 +133,6 @@ function runOnce(): RunOnce {
 
   // ---- 热身后再计时：JIT 未预热的前几十个 tick 含编译/内联缓存冷启动，
   //      把它们算进均值会让"改一行代码"看起来像 ±30% 的波动（假信号 = 假优化）。
-  const WARMUP = Math.min(120, Math.floor(seconds / 4));
 
   const sim = new Sim({ seed, registry });
   const initialPawns = [...sim.pawns()].length;
