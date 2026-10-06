@@ -186,6 +186,22 @@ export const CARD_LABEL: Record<string, string> = {
   build_field: '🪏开垦农田',
   sow_field: '🌱播种',
   harvest_field: '🌾收割',
+  cook: '🍖生火烤熟',
+  build_store: '📦建仓库',
+  // ↓ 种子句 R4 一轮新增（hunting/medicine/fortify/combat/factions 五包）：
+  //   漏标的话 HUD 会显示原始 id（用户已指认过 3 次同类缺口，这里一次补齐）
+  hunt: '🏹追猎',
+  heal: '🩹照料',
+  build_bed: '🛏盖病榻',
+  build_wall: '🧱砌墙',
+  build_tower: '🗼造哨塔',
+  build_trap: '🕳挖陷阱',
+  hold: '🛡据守',
+  focus: '🎯集火',
+  flank: '↩迂回',
+  rally: '📣集结',
+  trade: '🤝贸易',
+  sample_pick_berry: '🫐摘蓝莓',
   _stun: '…愣住',
 };
 

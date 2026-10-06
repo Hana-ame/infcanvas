@@ -73,6 +73,11 @@ function statusBar(getSel: () => SelectionCtx): PanelDef {
       // 为什么必须显示：R3-4 的机制是"熟食更划算"，玩家要能看到自己攒了多少
       // 熟食才能判断"要不要花时间烤"——它是 R3-4 唯一的可观测反馈。
       const meal = view.stockpile['meal'] ?? 0;
+      // 生肉/草药（R4-GEN hunting + medicine）：肉是第三种食物（饱食 50，介于生食 40
+      // 与熟食 55 之间），草药是医疗包的治疗材料（deer 掉落）。与熟食同理由——
+      // 攒了多少决定了"要不要花时间狩猎/值不值得照料"，不可观测 = 机制不存在。
+      const meat = view.stockpile['meat'] ?? 0;
+      const herb = view.stockpile['herb'] ?? 0;
       // key 用定长标量：任一变化才重画；纯读取无 DOM
       const key = keyOf(
         Math.floor(s.time),
@@ -80,6 +85,8 @@ function statusBar(getSel: () => SelectionCtx): PanelDef {
         food,
         wood,
         meal,
+        meat,
+        herb,
         c.hostileCount,
         s.pawns.size,
       );
@@ -89,6 +96,8 @@ function statusBar(getSel: () => SelectionCtx): PanelDef {
         `<span>🐭 ${c.pawnCount}</span>` +
         `<span>🍎 ${food}</span>` +
         `<span>🍖 ${meal}</span>` +
+        (meat ? `<span>🥩 ${meat}</span>` : '') +
+        (herb ? `<span>🌿 ${herb}</span>` : '') +
         `<span>🪵 ${wood}</span>` +
         `<span>🔥🏚 ${view.buildings().length}</span>` +
         `<span>🐱 ${c.hostileCount}</span>` +

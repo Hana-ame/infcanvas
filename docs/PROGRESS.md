@@ -2,6 +2,22 @@
 
 > 与 docs/DESIGN.md 对齐的状态记录。每完成一块打勾并注明对应设计章节。
 > 当前装配态看文末；详细历史/数值追加见 `docs/CHANGELOG.md`。
+>
+> ## ⚠️ 方向转向（2026-10-07）：进入「种子句驱动」生成期
+>
+> 用户裁定：现有 v3 重建版**整版降级为参考素材**，不再在其上做增量迭代。
+> 改用「一句话生成」方式，从零生成 **Rimworld 式社会模拟 + 野外生存**。
+>
+> **新入口文档**：`docs/SEED.md`（种子句 + 逐词拆解施工清单 + 7 条生成纪律）。
+> **已归档的参考资产**：`docs/REIMPLEMENT_PROMPT.md`（旧规格书，设计原则仍有效）、
+> 本文档下方全部历史（v3 实现进度 + 5 轮磁铁/科技/性能记录，是**方法论参考**：
+> 磁铁范式踩坑 5 次、变步长会分叉、condition 是硬闸、断言要留余量不追噪声）。
+>
+> 本轮（R4 种子轮）已落地内核：敌人 `drops`/`passive`/`aggro` 字段 + 死亡掉落 +
+> 航点标签拆分（`K_TAG_WAYPOINT`，哨塔成寻路锚点）+ 契约词汇扩容
+> （`SER_HUNT`/`SER_HEAL`/`SER_DEFEND`/`SER_TRADE`、`K_STOCK_MEAT`/`K_STOCK_HERB`、
+> `K_TAG_WALL`/`K_TAG_TOWER`/`K_TAG_TRAP`/`K_TAG_BED`）。
+> 7 条玩法包线并发：`hunting` / `env` / `medicine` / `fortify` / `combat` / `factions` / `events`。
 
 ## 北极星
 **模拟一个现实的社会**（DESIGN §0）。当前 P0 在验证"小人自主运转"的最小闭环，
