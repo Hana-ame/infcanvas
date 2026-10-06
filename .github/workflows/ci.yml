@@ -89,7 +89,7 @@ jobs:
           set -euo pipefail
           for seed in 42 7 2026; do
             echo "-------- seed=$seed pawns=24 --------"
-            npx tsx scripts/bench.ts 900 "$seed" --pawns 24
+            npx tsx scripts/bench.ts 900 "$seed" --pawns=24
           done
           {
             echo '## 📊 性能基准（900 tick × 3 seed × 2 规模）'

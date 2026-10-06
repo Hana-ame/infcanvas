@@ -9,7 +9,9 @@
  * 任何优化 PR 都贴「优化前 / 优化后」两份 BENCH_JSON 数字。
  *
  * 用法（CI 里跑，本地不要跑——读数不可比）：
- *   npx tsx scripts/bench.ts [秒数] [seed] [--json]
+ *   npx tsx scripts/bench.ts [秒数] [seed] [--pawns=N] [--json]
+ *   位置参数只有两个槽（秒数、seed）；规模用具名 flag --pawns=N，
+ *   避免"位置槽被重复正则匹配"的歧义（见 parseArgs 注释里的真实踩坑）。
  *
  * 输出：人类可读表格 + 一行 `BENCH_JSON {...}`（CI 用它做前后对比/回归门禁）。
  *
@@ -24,13 +26,57 @@ import { Sim } from '../src/sim';
 import { ModRegistry } from '../src/mods';
 
 const args = process.argv.slice(2);
-const num = (re: RegExp, dflt: number): number => {
-  const hit = args.find((a) => re.test(a));
-  return hit === undefined ? dflt : Number(hit);
-};
-const seconds = num(/^\d+$/, 900);
-const seed = num(/^-?\d+$/, 42);
-const asJson = args.includes('--json');
+/**
+ * 参数解析：**位置参数必须逐位消费，不能靠"第一个匹配的正则"**。
+ *
+ * ⚠ 真实踩坑（2026-10-06 首轮 CI 实测抓到）：本脚本最初用
+ *   `num(/^\d+$/, 900)` 取 seconds、`num(/^\d+$/, 0)` 取 pawns、
+ *   `num(/^-?\d+$/, 42)` 取 seed。结果 `bench.ts 900 42` 三次都匹配到
+ *   **同一个 "900"**，于是所有 6 次 CI sweep 全都跑成 seed=900 / pawns=900 /
+ *   出生鼠 900 —— 输出"seed=42/7/2026"六组完全相同的指纹
+ *   （抽卡 402942 / 🍎27134 / 🪵24661 三个 seed 逐位相同）。
+ *   假到连"地形哈希不同"都不成立。**这比没有基准更糟**：它给出自信的假数字。
+ *
+ * 正确做法：先剥掉具名 flag，剩下的裸数按位置顺序依次消费
+ *   [秒数] [seed]，缺省补默认值。flag 永远不会被位置槽误吞。
+ */
+interface ParsedArgs {
+  seconds: number;
+  seed: number;
+  pawns: number;
+  json: boolean;
+}
+function parseArgs(argv: readonly string[]): ParsedArgs {
+  const flags = new Map<string, number>();
+  let json = false;
+  const positional: number[] = [];
+  for (const a of argv) {
+    if (a === '--json') {
+      json = true;
+      continue;
+    }
+    const m = /^--([a-z]+)(?:=(-?\d+))?$/.exec(a);
+    if (m) {
+      flags.set(m[1], m[2] === undefined ? 1 : Number(m[2]));
+      continue;
+    }
+    const n = Number(a);
+    if (!Number.isFinite(n)) throw new Error(`bench: 无法解析参数 ${a}`);
+    positional.push(n);
+  }
+  // 裸数第一槽 = 秒数（默认 900），第二槽 = seed（默认 42）
+  return {
+    seconds: positional[0] ?? 900,
+    seed: positional[1] ?? 42,
+    pawns: flags.get('pawns') ?? 0,
+    json,
+  };
+}
+const parsed = parseArgs(args);
+const seconds = parsed.seconds;
+const seed = parsed.seed;
+const pawns = parsed.pawns;
+const asJson = parsed.json;
 // ---- 规模档位（为什么需要它，2026-10-06 实测教训）：
 // 出厂 4 鼠 × 900 tick 整局只要 123ms（0.137ms/tick）。那个量级下：
 //   ① GC 抖动与计时器粒度占比过大，"改一处"淹没在噪声里 → 测不出收益；
@@ -52,6 +98,16 @@ const WARMUP = Math.min(120, Math.floor(seconds / 4));
 
 const sim = new Sim({ seed, registry });
 const initialPawns = [...sim.pawns()].length;
+
+// ---- 自检（2026-10-06 首轮 CI 假读数事故的直接对策）：
+// 基准自己出错时**必须响亮失败**，而不是安静地跑出一份好看的表。
+// 首轮事故就是参数解析把所有 sweep 跑成了同一组（seed=900/pawns=900），
+// 六行输出看起来正常、实则完全没测到不同世界。断言在这里：
+//  ① 请求了规模档就必须真的生效（否则 --pawns 是死参数 = 条件恒真式的假 flag）；
+//  ② 请求了规模档时，出生鼠数必须等于请求值。
+if (pawns > 0 && initialPawns !== pawns) {
+  throw new Error(`bench: --pawns=${pawns} 未生效（实际出生 ${initialPawns}）—— 基准参数没落到调参表上`);
+}
 
 for (let t = 0; t < WARMUP; t++) sim.step(1);
 
