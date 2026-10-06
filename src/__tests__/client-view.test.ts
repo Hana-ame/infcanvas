@@ -167,12 +167,15 @@ describe('HUD 汇总面 colony()（R3-HUD）', () => {
       expect(done, `放不下建筑：${defId}`).toBe(true);
     };
     place('campfire', 30);
+    const afterTwo = view.colony().buildingKinds.find((k) => k.defId === 'campfire')!.count;
     place('campfire', 60);
     place('hut', 100);
     const c = view.colony();
 
+    // 断言用**增量**而不是绝对值：bootstrap 包开局已在原点立了一座篝火，
+    // 写死 count=2 会把"开局那座"漏算（也解释了为什么这里不能用字面量）。
     const campfire = c.buildingKinds.find((k) => k.defId === 'campfire');
-    expect(campfire?.count).toBe(2); // 归并成一行（不是两行）
+    expect(campfire?.count).toBe(afterTwo + 1); // 归并成一行（数量累加，不是多出一行）
     expect(campfire?.name).toBe('篝火');
     expect(campfire?.fuelSec).toBe(12); // 燃料节奏是面板要显示的关键信息
     const hut = c.buildingKinds.find((k) => k.defId === 'hut');
@@ -272,6 +275,7 @@ describe('HUD 详情面 inspectPawn / inspectBuilding / inspectHostile（R3-HUD�
       expect(done, `放不下建筑：${defId}`).toBe(true);
     };
     place('hut', 12);
+    const one = view.colony().buildingKinds.find((k) => k.defId === 'hut')!.count;
     place('hut', 50);
     const hut = [...sim.world.buildings.values()].find((b) => b.defId === 'hut')!;
 
@@ -282,7 +286,7 @@ describe('HUD 详情面 inspectPawn / inspectBuilding / inspectHostile（R3-HUD�
     expect(d.maxHp).toBe(sim.tuning.buildings.hut.hp);
     expect(d.cost).toEqual(sim.tuning.buildings.hut.cost);
     expect(d.tags).toContain('shelter');
-    expect(d.sameKindCount).toBe(2); // "我有几座棚屋"是玩家反复要问的问题
+    expect(d.sameKindCount).toBe(one + 1); // "我有几座棚屋"是玩家反复要问的问题（用增量避开开局篝火干扰）
     expect(view.inspectBuilding('不存在的建筑id')).toBeNull();
   });
 

@@ -57,8 +57,10 @@ export class PanelHost {
   /** 每个面板上次写入的 key（差分基准） */
   private lastKeys = new Map<string, string>();
   private lastAt = 0;
-  /** 本帧是否发生过 DOM 写入（测试/诊断用） */
+  /** 上次 refresh 里重写了内容（innerHTML）的面板数 —— 0 = 本帧零 DOM 操作（性能契约） */
   lastWrites = 0;
+  /** 上次 refresh 里发生显隐翻转的面板数（与 lastWrites 分开计：一个是每帧成本，一个是低频事件） */
+  lastToggles = 0;
 
   /**
    * @param host 根容器；面板按 slot 生成分区容器（分区不存在则创建，顺序固定）。
@@ -92,12 +94,15 @@ export class PanelHost {
    *
    * @param force true = 忽略 minIntervalMs 立即刷新（玩家交互后调用）
    * @param nowMs 当前时间（测试可注入）
-   * @returns 本次实际写入 DOM 的面板数（0 = 全部命中缓存，本帧零 DOM 操作）
+   * @returns 本次实际重写内容（innerHTML）的面板数 —— **0 = 本帧零 DOM 操作**。
+   *   显隐翻转不计入返回值：它是"挂载/空态切换"这种低频事件，不是每帧成本，
+   *   混进同一个数会让这个性能契约无法被干净地断言。显隐次数见 lastToggles。
    */
   refresh(view: WorldView, force = false, nowMs = Date.now()): number {
     if (!force && nowMs - this.lastAt < this.minIntervalMs) return 0;
     this.lastAt = nowMs;
     this.lastWrites = 0;
+    this.lastToggles = 0;
     for (const def of this.panels) {
       const out = def.render(view);
       const wrap = this.ensureNode(def);
@@ -108,12 +113,12 @@ export class PanelHost {
         body.innerHTML = out.html;
         this.lastWrites++;
       }
-      // 显隐也要差分：empty 状态翻转也要写 DOM，但只在翻转时（复用同一 key 比对思路）。
+      // 显隐也要差分：empty 状态翻转要写 DOM，但只在翻转那一帧写一次。
       const visKey = out.empty ? 'e' : 'n';
       if (body.dataset.v !== visKey) {
         body.dataset.v = visKey;
         wrap.style.display = out.empty ? 'none' : '';
-        if (changed) this.lastWrites++; // 内容与显隐同一帧变的，只算一次写
+        this.lastToggles++;
       }
     }
     return this.lastWrites;

@@ -153,10 +153,14 @@ describe('PanelHost 可扩展性（R3-HUD）', () => {
     host.register({ id: 'mod:weather', slot: 'threat', icon: '🌦', title: '天气', render: () => ({ key: 'w', html: '晴' }) });
     host.register(mutablePanel('status', 'status'));
     expect(host.ids()).toEqual(['status', 'mod:weather']); // 落在 threat 分区，排在 status 之后
-    expect(host.refresh(fakeView(), true, 1000)).toBeGreaterThan(0);
+    expect(host.refresh(fakeView(), true, 1000)).toBe(2); // 两个面板各写一次内容
     const weather = root.find((e) => e.dataset.pid === 'mod:weather');
     expect(weather).not.toBeNull();
-    expect(weather!.textContent).toContain('天气');
+    // 标题在 head 上（wrap 是容器，FakeEl 的 textContent 是逐元素的）
+    const head = weather!.find((e) => e.className === 'panel-head')!;
+    expect(head.textContent).toContain('天气');
+    const body = weather!.find((e) => e.className === 'panel-body')!;
+    expect(body.innerHTML).toContain('晴');
   });
 });
 
@@ -168,18 +172,19 @@ describe('PanelHost 每帧差分：零 DOM 重建是硬契约（R3-HUD 性能）
     const p = mutablePanel('a');
     host.register(p);
 
-    // 模拟 60 帧：数据完全不变（最常见的稳态情况）
+    // 首次挂载必然写一次（那是建节点，不是每帧成本）
+    expect(host.refresh(fakeView(), true, 1000)).toBe(1);
+
+    // 然后模拟 60 帧：数据完全不变（最常见的稳态情况）——应为零 DOM 操作
     let writes = 0;
-    for (let f = 0; f < 60; f++) writes += host.refresh(fakeView(), false, 1000 + f * 16);
+    for (let f = 1; f < 61; f++) writes += host.refresh(fakeView(), false, 1000 + f * 16);
     expect(writes).toBe(0); // 60 帧零 DOM 操作
 
-    // 关键：body.innerHTML 不能被重新赋值过（不只是"值相同"）
-    const body = root.find((e) => e.className === 'panel-body')!;
-    body.innerHTML = '<b>a</b>';
-    host.refresh(fakeView(), false, 5000);
-    // 用对象身份判断"没被写过"：重新赋值 innerHTML 会换成新的字符串内容但这里值一样，
-    // 所以再加一道哨兵——写入哨兵后再刷新，哨兵必须还在（被写会被覆盖）
+    // 关键：body.innerHTML 不能被重新赋值过（不只是"值相同"）。
+    // 手法：写入一个哨兵后再刷新，若框架重写了 innerHTML 哨兵会被抹掉。
+    const body = root.find((e) => e.dataset.pid === 'a')!.find((e) => e.className === 'panel-body')!;
     body.innerHTML = '<b>a</b><i id="sentinel"></i>';
+    host.refresh(fakeView(), false, 5000);
     host.refresh(fakeView(), false, 5100);
     expect(body.innerHTML).toContain('sentinel'); // 没被重写 → 哨兵存活
   });
@@ -197,8 +202,11 @@ describe('PanelHost 每帧差分：零 DOM 重建是硬契约（R3-HUD 性能）
 
     a.cur = { key: 'k1', html: '<b>changed</b>' };
     expect(host.refresh(fakeView(), false, 1100)).toBe(1); // 只写 a
-    const bodyA = root.find((e) => e.className === 'panel-body')!;
+    expect(host.lastToggles).toBe(0); // 显隐没翻，不产生额外 DOM 操作
+    const bodyA = root.find((e) => e.dataset.pid === 'a')!.find((e) => e.className === 'panel-body')!;
     expect(bodyA.innerHTML).toContain('changed');
+    const bodyB = root.find((e) => e.dataset.pid === 'b')!.find((e) => e.className === 'panel-body')!;
+    expect(bodyB.innerHTML).toBe('<b>a</b>'); // b 一次都没被重写
   });
 
   it('节流：minIntervalMs 内即使 key 变了也先不写（数据变了最迟 100ms 内显示）', () => {
@@ -212,7 +220,7 @@ describe('PanelHost 每帧差分：零 DOM 重建是硬契约（R3-HUD 性能）
 
     p.cur = { key: 'k1', html: 'x' };
     expect(host.refresh(fakeView(), false, 1050)).toBe(0); // 距上次 50ms < 100ms → 节流
-    expect(host.refresh(fakeView(), false, 1100)).toBe(0); // 距上次 100ms，仍在窗内（< 判断）
+    expect(host.refresh(fakeView(), false, 1100)).toBe(0); // 距上次 100ms，仍在窗内（严格小于判断）
     expect(host.refresh(fakeView(), false, 1200)).toBe(1); // 超过窗内 → 写
   });
 
