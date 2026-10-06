@@ -26,10 +26,14 @@ function fullStateOf(sim: Sim): FullState {
     pawns: snap.pawns,
     hostiles: snap.hostiles,
     buildings: snap.world.buildings,
+    // hudScratch 是 R3-HUD 的必填字段：写死空表即可，本文件不测 HUD 那条线。
+    // 踩过：rebase 合入 R3-HUD 后这里漏了它，tsc 报 TS2741「缺 hudScratch」——
+    // 说明"必填字段"确实拦得住忘配，而不是等到运行时静默 undefined。
     events: snap.events,
     world: snap.world,
     techs: snap.techs,
     techFragments: snap.techFragments,
+    hudScratch: {},
   };
 }
 
