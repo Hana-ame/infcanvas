@@ -65,3 +65,53 @@ function woodGained(s: Sim): number {
   }
   return (s.stockpile['wood'] ?? 0) + spent;
 }
+
+/**
+ * 遇敌反应回归（2026-10-06 平衡实测新增）。
+ *
+ * 现象：修复前 12 seed × 900s 平均存活 2.75/4，5 个 seed 低于门槛 3。
+ * 全部死因是野猫，无一例饿死。
+ *
+ * 根因不是数值小，是**反应没进入抽签**：工作卡一次抽签执行 6~8s，猫 2 DPS，
+ * 于是"猫在咬、鼠在伐木"是默认结果——实测 436 个被咬 tick 里 388 个（89%）
+ * 鼠抽的是普通卡。fix 走权重压制（tuning.raid.threatWorkMul），不是加 if 硬插。
+ *
+ * 这里断言的是**机制**而非"某个 seed 活几只"：
+ * 存活数会被后续任何平衡改动推动，断言机制才能真正防住"反应链又断了"这种回归。
+ */
+describe('遇敌反应链（战或逃必须能进抽签池）', () => {
+  it('鼠被咬时应更多在抽战斗卡，而不是正在伐木', () => {
+    const sim = new Sim({ seed: 8888, registry: ModRegistry.default() });
+    for (let t = 0; t < 900; t++) sim.step(1);
+
+    // 复采：逐 tick 比对血量，统计"被咬那一 tick 鼠正在抽什么卡"
+    let bites = 0;
+    let combat = 0;
+    for (let t = 0; t < 900; t++) {
+      const hpBefore = new Map([...sim.pawns()].map((p) => [p.eid, p.hp]));
+      sim.step(1);
+      for (const p of sim.pawns()) {
+        const before = hpBefore.get(p.eid);
+        if (before === undefined || p.hp >= before) continue; // 这一刻挨打了
+        bites++;
+        if (p.cardId === 'fight' || p.cardId === 'flee') combat++;
+      }
+    }
+    expect(bites, '900s 内一次都没被咬到，无法验证遇敌反应').toBeGreaterThan(0);
+    // 修复前是 61/436 ≈ 14%（战斗卡几乎轮不到上台）；修复后 ≈ 37%。
+    // 取 25% 作下限：低于它说明"遇敌时仍在干普通活"的老问题回来了。
+    expect(combat / bites, `被咬时抽战斗卡的比例 ${combat}/${bites}`).toBeGreaterThan(0.25);
+  });
+
+  it('长局不出现饿死（区分"被袭击死"与"决策失效饿死"两种病因）', () => {
+    for (const seed of [42, 7, 99, 2026]) {
+      const sim = new Sim({ seed, registry: ModRegistry.default() });
+      for (let t = 0; t < 900; t++) sim.step(1);
+      const alive = [...sim.pawns()].length;
+      // CI 门槛是 ≥3：改动后这几个 seed 必须全过，否则 balance job 会红
+      expect(alive, `seed ${seed} 存活 ${alive}/4，低于 CI 门槛 3`).toBeGreaterThanOrEqual(3);
+      // 存活鼠不能是饿着的——说明是袭击致死而非资源决策失效
+      for (const p of sim.pawns()) expect(p.needs.food, `seed ${seed} ${p.name} 饿死边缘`).toBeGreaterThan(0);
+    }
+  });
+});

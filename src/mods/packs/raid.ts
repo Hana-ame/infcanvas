@@ -25,9 +25,22 @@ export const raidPack: ModPack = {
     m.registerEnemy({ id: 'cat', name: '野猫', hp: 24, dmg: 3, speed: 4.0, atkCd: 1.5, climb: 2 });
 
     // ---- 恐惧权重钩子：受伤越重越想跑、越不想打（数值即性格，无硬规则）----
-    m.registerHook('cardWeight', (p, card) => {
+    m.registerHook('cardWeight', (p, card, ctx) => {
       const hostileNear = card.series === SER_FIGHT || card.series === SER_FLEE;
-      if (!hostileNear) return 1;
+      if (!hostileNear) {
+        // 遭遇压制：猫在感知圈内时，把普通卡（采集/建造/睡觉/社交…）的权重压下去。
+        //
+        // 为什么必须有这一条（2026-10-06 实测，见 tuning.raid.threatWorkMul 的证据段）：
+        // 工作卡一次抽签要执行 6~8s，猫 2 DPS，所以"猫在咬、鼠在伐木"是默认结果——
+        // 实测 436 个被咬 tick 里 388 个（89%）鼠抽的确实是普通卡。
+        // 抽签池里没有战斗卡、或者战斗卡只占 1/3 权重时，战或逃根本轮不到上台，
+        // 鼠会在伐木途中被活活咬死。这不是数值大小问题，是**候选集/权重结构**问题。
+        //
+        // 为什么用权重而不是"遇敌打断当前卡"：见 tuning 里的红线说明——
+        // 加 if 强插是 Work-Tab 式越权；压权重仍然让结果由抽签决定，只是天平被局势倾斜。
+        const threat = nearestHostile(p, ctx);
+        return threat ? ctx.tuning.raid.threatWorkMul : 1;
+      }
       const ratio = p.hp / p.maxHp;
       if (ratio < 0.3) return card.series === SER_FLEE ? 5 : 0.4;
       if (ratio < 0.6) return card.series === SER_FLEE ? 2.5 : 0.8;
