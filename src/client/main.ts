@@ -55,6 +55,9 @@ async function boot(): Promise<void> {
   banner.hidden = true;
 
   let ctrl: Controller;
+  // 联机句柄提到外层：渲染循环每帧要用它上报视口（setInterest 内部有指纹节流）。
+  // 本地单机模式恒为 null —— 单机不需要裁剪，本地进程本来就持有全部世界。
+  let remoteCtl: RemoteSim | null = null;
   if (remoteArg) {
     document.title = 'infcanvas · 联机观察/指挥';
     // 本地专属按钮在联机模式是哑按钮：存档权在服务器侧，直接隐藏防误导
@@ -62,6 +65,7 @@ async function boot(): Promise<void> {
       document.getElementById(id)!.style.display = 'none';
     }
     const remote = new RemoteSim();
+    remoteCtl = remote;
     // R1-1 断连横幅：断连/重连期间让玩家知道「不是卡了，是在重连」，
     // 否则玩家会对着冻结的世界反复点击。所有权交给 main 的 render loop 控制显隐。
     remote.onConnectionChange = (connected) => {
@@ -260,6 +264,17 @@ async function boot(): Promise<void> {
     renderer.frame(now);
     // R3-HUD：把非鼠选中一并喂给 HUD（详情面板同时只描述一个对象）
     hud.frame(paused, selected, selBuilding, selHostile);
+    // 联机分区块同步（line/net 收尾）：把当前视口上报给服务端做快照裁剪。
+    //
+    // 为什么放在这里而不是镜头事件里：视口同时受**平移、缩放、窗口 resize** 三者影响，
+    // 事件驱动要挂三个入口、漏一个就出现"缩小后请求了一堆看不见的块"或"放大后缺块"。
+    // 每帧一次调用的成本是纯计算（无分配、无序列化）——真正的上行由
+    // RemoteSim.setInterest 内部的区块集合指纹节流挡住，集合没变就不发。
+    if (remoteCtl !== null) {
+      const v = renderer.viewRect();
+      // 半径取外接圆：矩形视口按圆订阅会多带一点四角，换来"任何缩放/窗口比例下都不漏块"。
+      remoteCtl.setInterest(v.x, v.y, Math.hypot(v.halfW, v.halfH));
+    }
   });
   void flash;
 }

@@ -11,7 +11,7 @@ import { RemoteSim } from '../client/remote';
 import { Sim, snapshotOf } from '../sim';
 import { ModRegistry } from '../mods';
 import type { FullState, DeltaMsg } from '../shared/protocol';
-import { chunkKey, chunkKeyToXY, fromChunkCoords, tileChunkKey } from '../shared/chunks';
+import { chunkBoundsOfList, chunkKey, chunkKeyToXY, chunksForInterest, fromChunkCoords, tileChunkKey } from '../shared/chunks';
 
 function simOf(seed = 42): Sim {
   return new Sim({ seed, registry: ModRegistry.default() });
@@ -323,6 +323,95 @@ describe('server 权威性回归：客户端不得自己决定逻辑状态', () 
     // 零流量地形：随机取若干格，客户端自推结果必须与服务器一致
     for (const [x, y] of [[0, 0], [37, 91], [-128, 256], [1000, -1000]] as [number, number][]) {
       expect(remote.tileAt(x, y)).toBe(sim.world.tileAt(x, y));
+    }
+  });
+});
+
+/**
+ * 视口上报的**覆盖性**回归（2026-10-06 接线收尾）。
+ *
+ * 背景：setInterest 一直有测试，但**没有任何调用方** —— 渲染循环从不调它，
+ * 于是 −76% 的带宽收益只能靠服务端「出生点默认视口」兜底，镜头一走远就失效。
+ * 接线之后，真正的风险从「没人调」变成「半径调错导致漏块」：
+ * 漏块不像带宽超标那样有数字报警，它表现为**画面周期性闪空**，极难从日志看出来。
+ *
+ * 断言的性质是「订阅范围 ⊇ 实际渲染范围」。不等号方向是刻意选的：
+ * 宁可多订阅（多花一点带宽），绝不能少订阅（漏块）。
+ *
+ * ⚠️ **判据必须是 tile 级，不是区块边界级**（2026-10-06 实测踩到的坑）：
+ * 第一版断言写的是「订阅的区块包围盒 ⊇ 渲染包围盒」，结果把半径从外接圆
+ * 换成内切圆（明显更小）**测试照样全绿** —— 因为区块边长 64 格，
+ * 包围盒对齐到块边界后把半径误差整个吞掉了，最小余量实测还有 3 格。
+ * 也就是说那条断言根本没有区分力，是个假测试。
+ * 现在改成逐 tile 验证「渲染范围内的每一格所属区块都在订阅集合里」，
+ * 这才是漏块真正会发生的地方；内切圆在 21:9 这类宽扁视口下会真的漏（已验）。
+ *
+ * 这里**不复刻** Renderer 的私有状态（TILE/cam 拿不到），而是把「渲染范围」
+ * 直接作为参数喂进去 —— 被测的是**覆盖性不等式**这个性质本身，
+ * 而不是某个具体视口的数值。具体调用点由 main.ts 的渲染循环承担。
+ */
+describe('视口上报：订阅范围必须覆盖渲染范围', () => {
+  /** 渲染范围内每一格所属的区块键（漏块就发生在这里 —— 某格的块没被订阅） */
+  const renderedChunkKeys = (cx: number, cy: number, halfW: number, halfH: number): number[] => {
+    const out = new Set<number>();
+    for (let y = Math.round(cy) - halfH; y <= Math.round(cy) + halfH; y++) {
+      for (let x = Math.round(cx) - halfW; x <= Math.round(cx) + halfW; x++) {
+        out.add(tileChunkKey(x, y).key);
+      }
+    }
+    return [...out];
+  };
+
+  it('外接圆订阅覆盖住渲染范围内的每一格（各种窗口比例/缩放/负坐标）', () => {
+    const remote = new RemoteSim();
+    const sent: { x: number; y: number; r: number }[] = [];
+    (remote as unknown as { ws: { send(d: string): void } | null }).ws = {
+      send: (d) => sent.push(JSON.parse(d).d as { x: number; y: number; r: number }),
+    };
+
+    // halfW/halfH 取自 drawTerrain 同一公式在不同窗口 + 缩放下的取值；
+    // cams 含负坐标与偏移，用来压区块偏置编码的边界侧。
+    const cases: { cx: number; cy: number; halfW: number; halfH: number; label: string }[] = [];
+    for (const [w, h] of [
+      [1920, 1080],
+      [1280, 720],
+      [800, 600],
+      [3440, 1440],
+    ] as [number, number][]) {
+      for (const tile of [8, 20, 44]) {
+        for (const [cx, cy] of [
+          [0, 0],
+          [1000, -750],
+          [-2000, 2000],
+        ] as [number, number][]) {
+          cases.push({
+            cx,
+            cy,
+            halfW: Math.ceil(w / 2 / tile) + 2,
+            halfH: Math.ceil(h / 2 / tile) + 2,
+            label: `${w}x${h} tile=${tile} cam=${cx},${cy}`,
+          });
+        }
+      }
+    }
+    expect(cases.length).toBe(36);
+
+    for (const c of cases) {
+      sent.length = 0;
+      // 复刻 main.ts 渲染循环的实际调用方式（外接圆半径）
+      remote.setInterest(c.cx, c.cy, Math.hypot(c.halfW, c.halfH));
+      expect(sent.length, `${c.label}: 未发出 interest`).toBe(1);
+
+      const subscribed = new Set(chunksForInterest(sent[0]!));
+      const need = renderedChunkKeys(c.cx, c.cy, c.halfW, c.halfH);
+      for (const k of need) {
+        const { cx: bx, cy: by } = chunkKeyToXY(k);
+        expect(
+          subscribed.has(k),
+          `${c.label}: 渲染区内的区块 (${bx},${by}) 不在订阅集合里 —— 该处会漏块闪空`,
+        ).toBe(true);
+      }
+      expect(subscribed.size).toBeGreaterThanOrEqual(need.length);
     }
   });
 });

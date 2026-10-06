@@ -115,6 +115,25 @@ export class Renderer {
   screenToWorld(sx: number, sy: number): { x: number; y: number } {
     return this.toWorld(sx, sy);
   }
+
+  /**
+   * 当前视口覆盖的世界范围（联机分区块同步用）。
+   *
+   * 为什么需要这个面：RemoteSim.setInterest(x, y, r) 要的是"镜头现在看得见哪一片"，
+   * 而相机位置与格子尺寸都是 Renderer 的私有状态。没有这个读取面，
+   * 调用方只能瞎猜一个半径 —— 猜小了会**周期性漏块**（走到边界时画面闪空），
+   * 猜大了等于没裁剪。所以视口矩形必须由持有相机的一侧算，不能让调用方复算一遍
+   * （复算就会和 frame() 里的可见范围算法漂移，两处各写一份迟早不一致）。
+   *
+   * 半宽半高沿用 drawTerrain 里同一套公式（+2 格余量给插值与描边），
+   * 保证"上报的区块集合"是"实际画出来的范围"的超集 —— 宁可多报一格，
+   * 不能少报导致空洞。
+   */
+  viewRect(): { x: number; y: number; halfW: number; halfH: number } {
+    const halfW = Math.ceil(appWidth() / 2 / this.TILE) + 2;
+    const halfH = Math.ceil(appHeight() / 2 / this.TILE) + 2;
+    return { x: this.cam.x, y: this.cam.y, halfW, halfH };
+  }
   private toWorld(sx: number, sy: number): { x: number; y: number } {
     return {
       x: (sx - appWidth() / 2) / this.TILE + this.cam.x,
