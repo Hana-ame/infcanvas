@@ -159,12 +159,25 @@ const SCENARIOS = [
  *     **收益**：长距 setPath 1.6ms → 0.96ms（−40%）；128 鼠 × 600 tick 27.6s → 21.6s
  *     （−22%）；4/64 鼠持平。**为无限地图支撑**：长距搜索不再依赖地图尺寸
  *     （8000 迭代上限 → 固定 1500/段），只依赖标志位网络密度。
- *     **验证**：路径逐段可达、终点精确命中、golden 其余 10 条不变。
+ * - 2026-10-07 第 10 次换血 —— **R4-GEN 种子轮首个合并：events 事件包**
+ *   （`src/mods/packs/events.ts`，5 事件谓词+效果表 + `EventSeedDef.effects` 扩容）：
+ *     指纹必然变：事件系统每 `checkSec` 扫一次局面并**改写世界状态**
+ *     （`stock` 加减 / `hpDelta` 全体扣血 / `spawnPawn` 出生新鼠），
+ *     RNG 消耗序列与实体集合同时位移。与第 4/8 次换血同源（内容变更，非平衡漂移）。
+ *     **为什么允许换血**：换血的理由永远是「世界状态变了」而不是「指纹对不上就改常量」。
+ *     本包的设计纪律已验证：所有阈值进 `tuning.events.thresholds`（零魔法数）、
+ *     冷却走 scratch（随档）、`tempShift` 读 `scratch['env.temp']` 用 `!== undefined`
+ *     判空（env 包未挂载时静默跳过）、只有 `{log}` 的旧 seed 形状仍触发不报错（向后兼容）。
+ *     **卸载验证已做**：不挂 events 时 eventSeeds 为空、无事件 log、世界照跑；
+ *     挂 env 不挂 events 时 `env.temp` 不受 tempShift 影响。
+ *     ⚠️ 换血纪律：本表每次换血都必须能说出「变的是什么」+「没变的是什么」。
+ *     本轮只合 events 一个包，其余 6 条种子线（hunting/env/medicine/fortify/combat/
+ *     factions）合并时若指纹再变，须各自单独换血并注明，不允许一次批量换血掩盖问题。
  */
 const GOLDEN: Record<string, string> = {
-  '42@900': 'fp_18455d0d',
-  '7@900': 'fp_85456929',
-  '2026@900': 'fp_ddb22a4e',
+  '42@900': 'fp_d93e46fd',
+  '7@900': 'fp_bf120cbf',
+  '2026@900': 'fp_18aa49f5',
 };
 
 /** 跑一个场景：固定 seed 跑固定 tick 数，返回指纹（不存档直跑）。 */
