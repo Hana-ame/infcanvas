@@ -5,7 +5,7 @@
  * 抽不到就继续饿（饿出故事）。衰减速率全部读 tuning.needs，零硬编码。
  */
 import type { ModPack } from '../pack';
-import { K_STOCK_FOOD, K_STOCK_MEAL } from '../contracts';
+import { K_STOCK_FOOD, K_STOCK_MEAL, K_STOCK_MEAT } from '../contracts';
 import { SER_EAT, SER_REST, SER_GATHER, SER_SOCIAL, SER_WANDER, SER_FIGHT } from '../contracts';
 import type { SimContext } from '../../sim/context';
 
@@ -94,6 +94,12 @@ export const needsPack: ModPack = {
     //  - 吃是**同一个动作**（取一份食物、结算饱食），只是"取哪一份"不同，所以
     //    "优先熟食"是一条确定性的取值规则，不是行为规则（原则① 只约束自主行为）。
     // 卸载纪律：cooking 包不在时 stockpile.meal 恒 undefined → 退化成纯生食，行为同改动前。
+    // R3-3 狩猎：hunting 包不在时 tuning.hunting?.meatGain ?? 0 → 肉不可吃，退化成纯生食。
+    // 优先级 meal(55) > meat(50) > food(40)：确定性取值规则，不是行为规则。
+    // 这是"先吃哪个"的取值规则——与 cooking 的"先吃熟食"同理：
+    //   吃是**同一个动作**（取一份食物、结算饱食），只是"取哪一份"不同，
+    //   所以"优先熟食 > 肉 > 生食"是一条确定性的取值规则，不是行为规则（原则① 只约束自主行为）。
+    // 注释：这是确定性"取值规则"，不是行为规则——precedent: cooking 已让 needs.eat 优先吃熟食。
     m.registerCard({
       id: 'eat',
       label: '吃东西',
@@ -103,8 +109,9 @@ export const needsPack: ModPack = {
       action: (p, ctx) => {
         // 即时结算卡：效果一次 + finishCard 防止 duration 内重复进食
         const meal = ctx.stockpile[K_STOCK_MEAL] ?? 0;
+        const meat = ctx.stockpile[K_STOCK_MEAT] ?? 0;
         const raw = ctx.stockpile[K_STOCK_FOOD] ?? 0;
-        if (meal <= 0 && raw <= 0) {
+        if (meal <= 0 && meat <= 0 && raw <= 0) {
           ctx.finishCard(p);
           return;
         }
@@ -113,6 +120,11 @@ export const needsPack: ModPack = {
           // 熟食优先：同等"花一次吃的工夫"换更多饱食，鼠没有理由挑差的
           ctx.stockpile[K_STOCK_MEAL] = meal - 1;
           p.needs.food = clamp(p.needs.food + c.cooking.eatCookedFoodGain);
+        } else if (meat > 0) {
+          // 生肉次之：hunting 包不在时 meatGain=0 → 肉吃了不恢复（但也不会扣血）
+          // 为什么用 ?? 0 而非直接访问：hunting 可能未挂载，必须保证卸载 hunting 后 needs 仍工作
+          ctx.stockpile[K_STOCK_MEAT] = meat - 1;
+          p.needs.food = clamp(p.needs.food + (c.hunting?.meatGain ?? 0));
         } else {
           ctx.stockpile[K_STOCK_FOOD] = raw - 1;
           p.needs.food = clamp(p.needs.food + c.needs.eatFoodGain);
@@ -184,11 +196,13 @@ export function clamp(v: number): number {
   return Math.max(0, Math.min(100, v));
 }
 
-/** 营地里有没有任何可入口的东西（生食或熟食，R3-4 起熟食也算）。
+/** 营地里有没有任何可入口的东西（生食/肉/熟食，R3-3 起肉也算）。
  *  抽成函数是为了 condition 与 action 用**同一份**判据——两处各写一遍必然漂移，
  *  而漂移的后果是"卡被抽中却吃不到东西"（空转一整个 duration）。 */
 function hasAnyFood(ctx: SimContext): boolean {
-  return (ctx.stockpile[K_STOCK_FOOD] ?? 0) > 0 || (ctx.stockpile[K_STOCK_MEAL] ?? 0) > 0;
+  return (ctx.stockpile[K_STOCK_FOOD] ?? 0) > 0 ||
+    (ctx.stockpile[K_STOCK_MEAT] ?? 0) > 0 ||
+    (ctx.stockpile[K_STOCK_MEAL] ?? 0) > 0;
 }
 
 /** 火边半径（格）：贴到火这么近才结算"火旁睡"的高档数值。

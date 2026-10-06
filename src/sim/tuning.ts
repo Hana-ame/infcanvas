@@ -300,6 +300,20 @@ export interface Tuning {
     /** 遇敌时非战斗卡的权重乘数（<1 让"正在伐木"不再压过战或逃；依据见默认值处证据段） */
     threatWorkMul: number;
   };
+  /** hunting —— 狩猎包数值（R3-3）。 */
+  hunting: {
+    meatGain: number;
+    huntSenseRadius: number;
+    huntMagnetRadius: number;
+    huntWorkRadius: number;
+    spawnIntervalSec: number;
+    spawnRadius: number;
+    maxAnimals: number;
+    leaveRadius: number;
+    wanderStepMin: number;
+    wanderStepMax: number;
+    fleeRadius: number;
+  };
   /**
    * combat —— 战术包数值（防御的行为层：据守/集火/迂回/集结）。
    *
@@ -674,6 +688,53 @@ export const DEFAULT_TUNING: Tuning = {
   },
   buildings: {}, // 玩法包种子：building 包注册 campfire(1×1)/hut(2×2)
   enemies: {}, // 玩法包种子：raid 包注册 cat
+  /**
+   * hunting —— 狩猎包数值（R3-3）。出厂值是**保守基线**：
+   * 狩猎的定位是"被动动物 → 肉/草药"的材料链，不是战斗系统——
+   * 鼠追的是兔子，不是猫。数值刻意让猎杀需要多只鼠配合、多轮追击。
+   */
+  hunting: {
+    /** 吃一份生肉恢复的食欲（50，介于生食 40 与熟食 55 之间）。
+     *  为什么给独立值而不是复用 cookRawCost：肉是独立资源键 K_STOCK_MEAT，
+     *  不是 food 的子标记——每份肉换到的饱食是固定值，不是"生食换算"。
+     *  取 50 = 比生食(40)高 25%，但不到熟食(55)——"比生食划算，但没火烤不划算"。 */
+    meatGain: 50,
+    /** 狩猎感知半径（格）：动物在此半径内鼠才会去追（条件谓词）。
+     *  取 24 = 与 build.newFireRadius 同量级，语义都是"营地的势力范围"。
+     *  不取太大（30+）：否则鼠被远处兔子拉走，营地扩张受阻（见 cooking magnetRadius 踩坑）。 */
+    huntSenseRadius: 24,
+    /** 狩猎磁铁半径（格）：action 内找动物用此半径（候选池）。
+     *  当前与 senseRadius 同值——将来若需拆分（如"看得见但不值得追"），改这里即可。 */
+    huntMagnetRadius: 24,
+    /** 狩猎到位半径（格）：鼠走到距动物此距离内才结算伤害（伸手可及）。
+     *  取 2.0 = 与 cooking.workRadius 同量级（伸手够得着）。
+     *  动物速度 > 鼠速度时，2.0 格内动物可能跑掉——这是"追击需要多只鼠"的数值体现。 */
+    huntWorkRadius: 2.0,
+    /** 动物出生间隔（秒）：每隔此秒数尝试在营地外围刷一只动物。
+     *  取 25s = 大约 4 分钟一波（配合 maxAnimals=6 上限），
+     *  让鼠群有"偶尔有猎物可追"的节奏，但不泛滥。 */
+    spawnIntervalSec: 25,
+    /** 动物出生半径（格）：在营地锚点外围此半径内随机取落点。
+     *  取 30 = 略大于 huntSenseRadius(24)，保证动物出生在鼠群外围但不远到不可达。 */
+    spawnRadius: 30,
+    /** 场上被动动物上限：超过此数不再刷新的。
+     *  取 6 = 防止长局里动物堆积成"必死雪球"（与 raid 的离场阀同理）。 */
+    maxAnimals: 6,
+    /** 离场半径（格）：动物离营地超此距离且附近无鼠 → 悻悻离去（despawn）。
+     *  取 40 = 远超 spawnRadius(30)，只清理"已经跑远且无人追"的流浪动物。
+     *  与 raid 的 AWAY_SEC(45) 离场阀同理：防止动物只增不减。 */
+    leaveRadius: 40,
+    /** 游荡最小步长（格）：动物随机游荡时的最小移动距离。
+     *  取 1 = 小步随机游荡，不是瞬移。 */
+    wanderStepMin: 1,
+    /** 游荡最大步长（格）：动物随机游荡时的最大移动距离。
+     *  取 3 = 最多一次挪 3 格，保持"动物会走但不会瞬移跨图"。 */
+    wanderStepMax: 3,
+    /** 受击逃跑半径（格）：动物被击中后朝远离最近鼠的方向跑此距离。
+     *  取 2.5 = 与 cooking.workRadius 同量级（"跑几步"而非"瞬移逃跑"）。
+     *  跑完这一段后动物恢复游荡——给鼠"追一段"的机会窗口。 */
+    fleeRadius: 2.5,
+  },
   traits: {
     // 特质 = 权重倾向数据，不是行为规则：owl 夜猫子多干活、lazy 懒鬼多休息……
     strong: { name: '壮硕', seriesMul: {} },

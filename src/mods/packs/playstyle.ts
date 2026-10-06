@@ -19,6 +19,7 @@ import { farmingPack } from './farming';
 import { cookingPack } from './cooking';
 import { eventsPack } from './events';
 import { combatPack } from './combat';
+import { huntingPack } from './hunting';
 
 export const DEFAULT_PLAYSTYLE_PACKS: ModPack[] = [
   needsPack, // 需求衰减 + 吃/睡 + 饥饿权重调制
@@ -32,4 +33,5 @@ export const DEFAULT_PLAYSTYLE_PACKS: ModPack[] = [
   cookingPack, // 烹饪（R3-4）：烹烤卡（走火边）+ 熟食这种更划算的食物
   eventsPack, // 事件（局面触发）：丰收/寒潮/瘟疫/流浪者/丰收节，谓词+效果表，无脚本线
   combatPack, // 战术：据守/集火/迂回/集结（防御的行为层 = 大兵团战术空间入口）
+  huntingPack, // 狩猎（R3-3）：被动动物/肉/草药材料链
 ];
