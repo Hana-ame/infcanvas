@@ -152,8 +152,15 @@ describe('区块化合入：scope 内替换、scope 外卸载', () => {
     const remote = new RemoteSim();
     remote.handleForTest(welcomeOf(sim));
     const p1 = placeInChunk(sim, 2, 1);
-    const p2 = { x: p1.x + 3, y: p1.y + 3 }; // 与 p1 同块
-    if (!sim.world.addBuilding('campfire', p2.x, p2.y)) throw new Error('第二座篝火放不下（应与 p1 同块且间距够）');
+    // 同块第二座：**必须隔开 ≥ minSpacing（出厂 5）**。同款篝火的间距判定把既有
+    // 矩形外扩 pad=minSpacing-1 格再判交，所以 p1+3 必然放不下。
+    // 踩过：这行原本写 p1.x+3，CI 报的是"第二座篝火放不下"——报错完全指不到真因
+    // （真因是间距规则，与区块逻辑无关），改成 +8 后一眼可辨。
+    const p2 = { x: p1.x + 8, y: p1.y + 8 };
+    if (tileChunkKey(p2.x, p2.y).key !== tileChunkKey(p1.x, p1.y).key) {
+      throw new Error('p2 应与 p1 同块（+8 不跨 64 边界）');
+    }
+    if (!sim.world.addBuilding('campfire', p2.x, p2.y)) throw new Error('第二座篝火放不下');
     const p3 = placeInChunk(sim, 9, 9);
     void p3;
     const localScope = [{ cx: 2, cy: 1 }];
