@@ -57,7 +57,7 @@ export const eventsPack: ModPack = {
     // （registry 是每次 mountPacks 新建的，不同装配互不串扰）。
     const seeds: EventSeedDef[] = [];
 
-    // ---- 丰收 harvest-blessing：荒年（food < 阈值）+ 有浆果丛 → 浆果格外丰硕 ----
+    // ---- 丰收 harvest-blessing：低年（food < 阈值）+ 有浆果丛 → 浆果格外丰硕 ----
     seeds.push({
       id: 'harvest-blessing',
       name: '丰收之年',
@@ -66,7 +66,10 @@ export const eventsPack: ModPack = {
         if ((ctx.stockpile[K_STOCK_FOOD] ?? 0) >= t.harvestFoodBelow) return false;
         // 浆果丛必须在 60 格内（半径硬编码在谓词里，与 tuning.world.berryRate 无关——
         // 这是"事件能感知多远的世界"，属于事件语义而非世界生成，留作包内常量）
-        return ctx.nearestFeature('berry', 0, 0, 60) !== null;
+        // 用第一只鼠的位置作为锚点（营地可能在地图任何位置，不能硬编码 (0,0)）
+        const firstPawn = [...ctx.pawns()][0];
+        if (!firstPawn) return false;
+        return ctx.nearestFeature('berry', firstPawn.pos.x, firstPawn.pos.y, 60) !== null;
       },
       effects: {
         log: '📦 丰收之年：浆果丛格外丰硕',

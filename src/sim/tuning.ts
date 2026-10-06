@@ -1029,7 +1029,7 @@ export const DEFAULT_TUNING: Tuning = {
     checkSec: 12,        // 每 12s 扫一次事件谓词（与行为卡 duration 同量级）
     cooldownSec: 120,     // ⚠ 必须 > 任何 durationSec（coldsnap 60s），否则持续型事件无限级联（见接口注释）
     thresholds: {
-      harvestFoodBelow: 30,   // 荒年（food < 30）才显丰收
+      harvestFoodBelow: 60,   // 低年（food < 60）才显丰收（实测 food min=51，30 永不触发）
       coldsnapMinPawns: 6,    // 人多（≥6）才扛不住冷
       plagueMinPawns: 6,      // 人多（≥6）才传得开
       strangerFoodAbove: 40,  // 富余（>40）才招得来流浪者
