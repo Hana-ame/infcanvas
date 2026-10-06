@@ -141,4 +141,24 @@ describe('敌袭包', () => {
       '猫在感知圈内却没有鼠抽到战/逃卡',
     ).toBe(true);
   });
+
+  // ---- 孤儿敌人防线（2026-10-07 R4-GEN 集成期）----
+  //
+  // 场景：读「含 raider 的存档」但当前装配没挂 factions 包 ⇒ tuning.enemies['raider']
+  // 为 undefined。这条防线挡的是**卸载不破坏核心**：未知类的敌人不能让整个 raid 系统崩。
+  it('spawnHostile 对未注册的敌人类别抛清晰错误（而不是让下一行 def.hp 抛隐晦 TypeError）', () => {
+    const s = new Sim({ seed: 1, registry: ModRegistry.mountPacks([raidPack]) });
+    expect(() => s.spawnHostile('raider', 0, 0)).toThrow(/未注册的敌人类别/);
+  });
+
+  it('damageHostile 对未注册的类别照常击杀并移除（否则变成不灭的隐形障碍）', () => {
+    const s = new Sim({ seed: 1, registry: ModRegistry.mountPacks([raidPack]) });
+    // 直接注入一只「装配里没有的」敌人：模拟"存档里有 raider 但当前没挂 factions"
+    s.hostilesList.push({ id: 999, kind: 'raider', pos: { x: 0, y: 0 }, hp: 1, maxHp: 1, atkCd: 0 });
+    expect(s.hostilesList.length).toBe(1);
+    expect(() => s.damageHostile(999, 10), '未知类别击杀时抛 TypeError').not.toThrow();
+    // 关键：必须被移除。raid.tickCats 已 `if (!def) continue` 跳过未知类，
+    // 若此处不 despawn，这只 raider 就永远无法被杀死、留在场上当隐形障碍。
+    expect(s.hostilesList.length, '未知类别敌人未被击杀移除').toBe(0);
+  });
 });

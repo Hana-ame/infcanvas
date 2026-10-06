@@ -186,6 +186,10 @@ export class Sim implements SimContext {
   }
   spawnHostile(kind: string, x: number, y: number): Hostile {
     const def = this.tuning.enemies[kind];
+    // 未注册的 kind：抛清晰错误而不是让下一行 `def.hp` 抛
+    // 「Cannot read properties of undefined (reading 'hp')」。
+    // 读档后 spawn 一个本装配里没有的敌人类型 = 调用方的装配错误，属 bug 不是边界情况。
+    if (!def) throw new Error(`spawnHostile：未注册的敌人类别「${kind}」（缺挂载注册它的玩法包）`);
     const h: Hostile = {
       id: this.nextHostileId++,
       kind,
@@ -214,11 +218,16 @@ export class Sim implements SimContext {
     if (!h) return;
     h.hp -= dmg;
     if (h.hp <= 0) {
+      // 判空（2026-10-07 R4-GEN 集成期补）：读一个「含 raider 的存档」但当前装配
+      // 没挂 factions 包时，`def` 为 undefined。此处**必须照常击杀并 despawn**——
+      // 缺判空会抛 TypeError，而 raid.tickCats 已加 `if (!def) continue` 跳过未知类，
+      // 结果是这只 raider **永远无法被杀死、变成不灭的隐形障碍**（比报错更坏）。
+      // 降级策略：drops 视为空表、名字用 kind 兜底，日志语义仍成立。
       const def = this.tuning.enemies[h.kind];
       // 掉落（R3-3 起支持）：把 drops 表写进营地库存。这是**世界事实**（随档/进协议），
       // 不是行为规则，所以进内核而不是 hunting 包——做成"拾取卡"需要尸体实体系统，
       // 成本远高于收益。缺省 undefined = 不掉落，日志与改动前逐字一致（golden 基线不动）。
-      const drops = def.drops ?? {};
+      const drops = def?.drops ?? {};
       const dropTxt = Object.entries(drops)
         .map(([k, v]) => `+${v} ${k}`)
         .join(' ');
@@ -226,7 +235,7 @@ export class Sim implements SimContext {
         this.stockpile[k] = (this.stockpile[k] ?? 0) + v;
       }
       this.despawnHostile(id);
-      this.log(dropTxt ? `${def.name} 被击退了（${dropTxt}）` : `${def.name} 被击退了`);
+      this.log(dropTxt ? `${def?.name ?? h.kind} 被击退了（${dropTxt}）` : `${def?.name ?? h.kind} 被击退了`);
     }
   }
 

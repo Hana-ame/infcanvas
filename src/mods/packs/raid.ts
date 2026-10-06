@@ -184,6 +184,12 @@ function tickCats(ctx: SimContext, dt: number): void {
   const leaving: number[] = [];
   for (const h of ctx.hostiles()) {
     const def = ctx.tuning.enemies[h.kind];
+    // 卸载防线：def 可能不存在——存档里带着某种 hostile 的种类（例：factions 包刷出的
+    // raider），而读档时那个包没挂，tuning.enemies 里没有它的定义。此时**跳过**而不是
+    // 抛错：否则 def.passive 触发 TypeError，整条 raid 系统每 tick 崩一次，
+    // 「卸载 factions 后 raid 照常工作」这条卸载纪律就破了。
+    // 对本包自己的 cat 零行为影响（def 永远存在）。
+    if (!def) continue;
     // 被动动物（R3-3 hunting）不跑掠食逻辑：它们的游荡/逃跑由 hunting 包自己的系统驱动。
     // 不跳过会让猫的智能把兔子也变成追猎鼠的猎手——既不是生态位差异，也不是设计。
     if (def.passive) continue;

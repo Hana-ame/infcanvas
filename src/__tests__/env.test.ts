@@ -349,4 +349,60 @@ describe('env 环境包', () => {
     expect([...s.pawns()].some((p) => p.eid === wild.eid), '野外鼠应已被冻死').toBe(false);
     expect(warm.hp, '火旁鼠全程不该受伤').toBe(warm.maxHp);
   });
+
+  it('⑩ needs 真的消费 env.foodDecayMul：雨天食物衰减 ≈ 晴天 × rainFoodDecayMul（接线而非只暴露事实）', () => {
+    // env 只写 scratch['env.foodDecayMul']，needs 负责读。本条钉的是**双向都到位**：
+    // 只测「env 写了」是抓不到 needs 没消费的情况（那时雨天和晴天衰减一模一样，
+    // 而雨水的生存压力设计意图就落空了）。
+    const s = new Sim({
+      seed: 1,
+      registry: ModRegistry.mountPacks([needsPack, envPack]),
+      pawnCount: 1,
+    });
+    const t = s.tuning.env;
+    const p = [...s.pawns()][0];
+    s.stockpile = {}; // 清空库存，防 eat 卡消费食物干扰衰减量（food need=100 本就满，不吃）
+    s.run(1); // 让 env 把全部 scratch 键初始化好
+
+    const measure = (ticks: number) => {
+      p.needs.food = 100;
+      s.run(ticks);
+      return 100 - p.needs.food;
+    };
+
+    // ⚠ 天气是按 weatherCycleSec 掷骰的周期状态（不是每 tick 掷），所以不能靠
+    // 「改 rainChance 再跑几拍」来切雨——已下的雨要等下一个周期边界才会翻。
+    // 直接改状态键 env.rain，并让 rainChance=1/0 保证窗口内不会跨边界重掷。
+    // 测量窗口 40 tick < weatherCycleSec 90，窗口内不会跨掷骰边界。
+    const W = 40;
+    s.tuning.env.rainChance = 1;
+    s.scratch['env.rain'] = 1;
+    s.run(1); // 让 env 把 mul 写成 rainFoodDecayMul（needs 在 category 'needs' 早于
+    // env 的 'world'，所以必须等 env 写完本拍，下一拍 needs 才读得到）
+    const rainDrop = measure(W);
+
+    s.tuning.env.rainChance = 0;
+    s.scratch['env.rain'] = 0;
+    s.run(1);
+    const sunDrop = measure(W);
+
+    expect(rainDrop, '雨天没衰减食物').toBeGreaterThan(0);
+    expect(sunDrop, '晴天没衰减食物').toBeGreaterThan(0);
+    // 比值就是 env 写进去的那个乘数。needs 与 env 同拍执行且 needs 在前，
+    // 所以窗口内每拍读到的都是上一拍 env 写好的值，比值应是精确的 1.4。
+    expect(rainDrop / sunDrop, '雨天食物衰减没比晴天快，needs 可能没消费 env 的乘数').toBeCloseTo(
+      t.rainFoodDecayMul,
+      5,
+    );
+  });
+
+  it('⑪ env 未挂载时 needs 的食物衰减静默退化为原速率（卸载不破坏核心）', () => {
+    // `?? 1` 的另半边：env 缺席时 scratch 里没这个键，needs 不能报错也不能崩。
+    const s = new Sim({ seed: 1, registry: ModRegistry.mountPacks([needsPack]), pawnCount: 1 });
+    const p = [...s.pawns()][0];
+    s.stockpile = {};
+    p.needs.food = 100;
+    expect(() => s.run(10)).not.toThrow();
+    expect(p.needs.food).toBeCloseTo(100 - s.tuning.needs.foodDecay * 10, 5);
+  });
 });
