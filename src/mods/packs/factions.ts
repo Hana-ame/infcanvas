@@ -395,8 +395,42 @@ function doTrade(p: PawnState, ctx: SimContext): void {
 
 // ================= 掠夺 =================
 
-/** 每 checkSec 跑一次：遍历派系对（双向），命中仇恨 + 冷却到期的就刷一波。 */
+/**
+ * 声望漂移：每 check 拍对每一对派系施加
+ *   `rep += (repInit - rep) * repMeanRev + (rng()*2 - 1) * repDriftMag`
+ *
+ * **为什么必须存在**（2026-10-07 定位）：改动前声望的**唯一写入方**是
+ * trade（+repGainTrade）与 raid（-repLossRaid），而 raid 的触发条件是
+ * `rep < hostileThresh`——即「必须先敌对才能掠夺」。所以声望**只升不降**：
+ * repInit(35) > friendlyThresh(30) ⇒ 开局即可贸易 ⇒ 声望单调升到 +100，
+ * 而掠夺门槛 -25 永远到不了。种子句承诺的「背叛与战争」这半个系统永久关着。
+ * （冒烟实测 `raids: 0` 全 4 seed 就是这个锁的直接表现。）
+ *
+ * 漂移给声望一个向**敌对侧**游走的通道：贸易把声望推上去、掠夺把它拉下去、
+ * 漂移让它自然游移，三者形成一个能来回摆动的系统。取值理由见 tuning 注释。
+ * ⚠ 漂移在 `checkRaids` 之前跑，且消耗 `ctx.rng()`——所以它是 RNG 序列里的
+ *   一个消费者，接入后全局指纹必然变（第 13 次换血）。
+ */
+function driftReputation(ctx: SimContext): void {
+  const t = ctx.tuning.factions;
+  if (t.repMeanRev <= 0 && t.repDriftMag <= 0) return; // 都关 = 保持改动前的冻结语义
+  const ids = factionIds(ctx);
+  for (let i = 0; i < ids.length; i++) {
+    for (let j = 0; j < ids.length; j++) {
+      if (i === j) continue;
+      const k = FACTION_KEYS.rep(ids[i], ids[j]);
+      const cur = ctx.scratch[k] ?? 0;
+      if (cur === 0) continue; // 还没建立过关系：不凭空造一个中性关系出来
+      const rev = (t.repInit - cur) * t.repMeanRev;
+      const drift = (ctx.rng() * 2 - 1) * t.repDriftMag;
+      setRep(ctx, ids[i], ids[j], cur + rev + drift);
+    }
+  }
+}
+
+/** 每 checkSec 跑一次：先让声望漂移，再遍历派系对（双向）刷一波掠夺。 */
 function checkRaids(ctx: SimContext): void {
+  driftReputation(ctx);
   const fires = firesOf(ctx);
   for (let i = 0; i < fires.length; i++) {
     for (let j = i + 1; j < fires.length; j++) {

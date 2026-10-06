@@ -44,11 +44,18 @@ function freeSpot(s: Sim, ox: number, oy: number, rMin = 6, rMax = 16): { x: num
   throw new Error(`找不到可落脚地（原点 ${ox},${oy}，环 ${rMin}~${rMax}）`);
 }
 
-/** 两座篝火的最小装配 + 一步同步，返回两个派系 id（[0] = 出生篝火）。 */
-function twoFactionSim(seed: number): Sim {
+/** 两座篝火的最小装配 + 一步同步，返回两个派系 id（[0] = 出生篝火）。
+ *  `noDrift` = true 时关掉声望漂移，用于隔离测掠夺/贸易本身
+ *  （漂移每 check 拍施加 ±repDriftMag 的噪声，会把「声望恰好降了 repLossRaid」
+ *  这类精确断言打散——那是漂移的本职，不是掠夺的）。 */
+function twoFactionSim(seed: number, noDrift = false): Sim {
   const reg = ModRegistry.mountPacks(SOLO);
   reg.overrideTuning((t) => {
     t.bootstrap.pawnCount = 0; // 要的是可控世界，不要随机鼠群
+    if (noDrift) {
+      t.factions.repMeanRev = 0;
+      t.factions.repDriftMag = 0;
+    }
   });
   const s = new Sim({ seed, registry: reg });
   // 喂足木柴：building 包的 buildings-upkeep 每 12s 烧一份 wood，断薪会按 id 序
@@ -159,7 +166,7 @@ describe('派系外交包', () => {
   });
 
   it('掠夺：声望低于敌对线且过了 checkSec → 刷 raider、声望再降、gossip 上升', () => {
-    const s = twoFactionSim(5);
+    const s = twoFactionSim(5, true);
     const [A, B] = factionIds(s);
     expect(s.hostiles()).toHaveLength(0);
     s.scratch[FACTION_KEYS.rep(A, B)] = -40; // < hostileThresh(-25)
@@ -193,7 +200,7 @@ describe('派系外交包', () => {
   });
 
   it('掠夺：声望高于敌对线时绝不刷 raider（谓词不是常开的）', () => {
-    const s = twoFactionSim(6);
+    const s = twoFactionSim(6, true);
     const [A, B] = factionIds(s);
     s.scratch[FACTION_KEYS.rep(A, B)] = 80; // 友好
     s.scratch[FACTION_KEYS.rep(B, A)] = 80;
@@ -306,5 +313,57 @@ describe('派系外交包', () => {
     restored.step(1);
     expect(restored.scratch[FACTION_KEYS.seq]).toBe(2);
     expect(factionIds(restored)).toHaveLength(2);
+  });
+
+  it('声望漂移：默认开启时声望必须真的会动（改动前是永久冻结，掠夺数学上不可能）', () => {
+    const s = twoFactionSim(5);
+    const [A, B] = factionIds(s);
+    const k = FACTION_KEYS.rep(A, B);
+    const start = s.scratch[k] ?? 0;
+    // 跑 30 拍（600s）：期间至少应触发一次 driftReputation
+    for (let i = 0; i < 30; i++) s.step(1);
+    const after = s.scratch[k] ?? 0;
+    // ⚠ 核心断言：改动前 rep 只升不降（trade +4 / raid -12），而 raid 要求 rep<-25
+    //    才能发生——所以 rep 恒 ≥ repInit(35)，掠夺永远不可能。这里断言"声望真的
+    //    离开了 35"，就是在断言那个死锁被打断了。
+    expect(after).not.toBe(start);
+
+    // 关掉漂移 → 回到冻结语义：声望恒等于 repInit（trade 会涨，但纯跑不动就不会有）
+    const reg2 = ModRegistry.mountPacks(SOLO);
+    reg2.overrideTuning((t) => {
+      t.bootstrap.pawnCount = 0;
+      t.factions.repMeanRev = 0;
+      t.factions.repDriftMag = 0;
+    });
+    const s2 = new Sim({ seed: 5, registry: reg2 });
+    s2.stockpile[K_STOCK_WOOD] = 500;
+    const spot2 = freeSpot(s2, 0, 0);
+    expect(s2.addBuilding('campfire', spot2.x, spot2.y)).not.toBeNull();
+    s2.step(1);
+    const [A2, B2] = factionIds(s2);
+    const k2 = FACTION_KEYS.rep(A2, B2);
+    for (let i = 0; i < 30; i++) s2.step(1);
+    expect(s2.scratch[k2] ?? 0).toBe(35); // 严格冻结
+  });
+
+  it('声望漂移：足以触达敌对区并真的刷出掠夺（改动前数学上不可能）', () => {
+    // 直接断言「掠夺发生过」——这是「背叛与战争」半系统存在性的判据。
+    // 改动前 rep 只升不降、恒 ≥ 35，掠夺门槛 -25 永远到不了，该断言必然失败。
+    const s = new Sim({ seed: 42, registry: ModRegistry.default() });
+    let minRep = 1e9;
+    for (let t = 0; t < 6000; t++) {
+      s.step(1);
+      for (const key of Object.keys(s.scratch)) {
+        if (!key.startsWith('factions.rep.')) continue;
+        const v = s.scratch[key];
+        if (v < minRep) minRep = v;
+      }
+    }
+    expect(minRep).not.toBe(1e9); // 至少有派系对存在（否则漂移无从谈起）
+    expect(minRep).toBeLessThan(s.tuning.factions.hostileThresh); // 穿到 -25 以下
+    expect(
+      s.events.filter((e) => /袭击了.+的营地/.test(e.text)).length,
+      `minRep=${minRep.toFixed(1)} 已穿敌对线却没有掠夺发生`,
+    ).toBeGreaterThan(0);
   });
 });
