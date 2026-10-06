@@ -329,6 +329,20 @@ export interface Tuning {
     approachRadius: number;
     chatMoodGain: number;
     chatRelGain: number;      // 关系值增量（-100..100）
+    /**
+     * 关系自强化标度（2026-10-07）：闲聊的影响乘子 = clamp(1 + relation/affinityDenom, 0, 2)。
+     *
+     * 为什么必须有它——**否则关系值是个死端**。2026-10-07 实测（4 seed × 1200 tick）：
+     *   关系值全库**唯一写入方**是闲聊（social.ts addRelation），而 `ctx.relation()`
+     *   的**唯一读取方是一个测试断言**——没有任何行为消费它。关系是纯累加器，
+     *   写了不改任何事。种子句承诺「人际关系」，这一层当时是死代码。
+     *  自强化把关系接回行为面：已经是朋友 → 聊得更来劲（正反馈）；已经是仇敌 →
+     *   聊了白聊且更易翻脸（负反馈）。朋友滚成挚友、仇人滚成死敌，
+     *   「人际关系」这才有了可观测的社会分层。
+     *  取 100 = 关系满值：|relation| 到满值时乘子 = 2.0（正反馈极限），
+     *   relation=0 时乘子 = 1.0（与改动前的原始行为完全一致）。
+     */
+    affinityDenom: number;
     quarrelChance: number;    // 口角概率（低心情时闲聊翻脸——事件从局面触发）
     lowMoodQuarrelAt: number; // 心情低于此值才可能口角
     quarrelMoodHit: number;
@@ -767,7 +781,24 @@ export const DEFAULT_TUNING: Tuning = {
     // 取 26 = 略低于中位距离的一半，保证「总有一只同伴在磁铁圈内」但不遍地搭话。
     approachRadius: 26,
     chatMoodGain: 8,
-    chatRelGain: 2,
+    // 【实测·社交速率】2026-10-07：原值 2 让「人际关系」整个是死端。
+    //   实测（4 seed × 1200 tick，dt=1，全装配）：关系值全库**唯一写入方**是闲聊，
+    //   而 `ctx.relation()` 的唯一读取方是一个测试断言——**零生产消费者**。
+    //   即：写了不改任何事，20 分钟模拟时间后最大关系只有 6/100，0 对达到 ±50。
+    //   种子句承诺「人际关系」，这一层当时是纯累加器。
+    //   修两件事：① 加 affinityDenom 自强化（关系接回行为面，见上方机制立论）；
+    //   ② 把速率调到能在一局内长出真友谊。A/B 扫（10 seed × 1200 tick）：
+    //     gain=2  → max 17.2，0/10 seed 有 ≥30 的友谊   （不可见）
+    //     gain=6  → max 59.4，2/10 seed 有 ≥30，多数对停在 12~19  ← 取此
+    //     gain=8  → max 85.1，3/10
+    //     gain=12 → max 100（**顶到上限饱和**），5/10
+    //   取 6：2/10 长出真友谊、max 未饱和，留足长局继续增长的空间；
+    //   多数关系对停在 12~19（"认识但没交心"），这才是 4~6 只鼠的合理社会分层。
+    //   ⚠ 负值侧全程 0/10——口角需要心情 < lowMoodQuarrelAt(30)，而食物永不稀缺
+    //     所以心情常年很高，仇怨路径自然不触发。这是自洽的后果（安逸的营地不打架），
+    //     不是缺陷；要制造内部分裂得先有压力来源，那是另一个立项。
+    chatRelGain: 6, // 2026-10-07 从 2 改 6，理由见上方【实测·社交速率】
+    affinityDenom: 100, // relation 满值时自强化乘子 = 2.0（见上方机制立论）
     quarrelChance: 0.08,
     lowMoodQuarrelAt: 30,
     quarrelMoodHit: 4,

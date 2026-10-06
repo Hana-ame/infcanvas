@@ -139,14 +139,19 @@ describe('玩法包独立测试（最小装配）', () => {
     d.needs.mood = 10;
     c.pos = { x: 0, y: 0 };
     d.pos = { x: 0, y: 1 };
+    d.holdUntil = 1e9; // 只让 c 说话：单卡池下 d 必然回聊，增量翻倍
     let quarrels = 0;
     for (let i = 0; i < 200; i++) {
       c.needs.mood = 10; // 按回低点：保证口角谓词（心情<30）每轮都成立
-      d.needs.mood = 10;
+      // ⚠ 每轮把关系拉回 0：自强化会让 pair 聊着聊着变挚友（aff→2），
+      //    口角乘子 2-aff → 0，口角就消失了。这里要测的是「低心情 × 概率」这个
+      //    局面谓词本身，得把自强化这个正反馈隔离掉。
+      const rBefore = s2.relation(c.eid, d.eid);
       s2.debugForceCard(c.eid, 'chat');
       const before = s2.events.length;
       s2.step(1);
       quarrels += s2.events.slice(before).filter((e) => e.text.includes('吵了一架')).length;
+      s2.addRelation(c.eid, d.eid, -(s2.relation(c.eid, d.eid) - rBefore));
     }
     expect(quarrels).toBeGreaterThan(0);
 
@@ -157,6 +162,80 @@ describe('玩法包独立测试（最小装配）', () => {
     f2.pos = { x: 50, y: 50 };
     s3.run(60);
     expect((e2.uses['chat'] ?? 0) + (f2.uses['chat'] ?? 0)).toBe(0);
+  });
+
+  it('social：关系自强化——已是朋友聊得更来劲，已是仇敌聊了白聊（关系接回行为面）', () => {
+    /** 造一对贴身站定的鼠，只有 a 会说话（单卡池下 b 必回聊，增量翻倍）。 */
+    function pair(startRel: number) {
+      const s = new Sim({ seed: 21, registry: ModRegistry.mountPacks([socialPack]), pawnCount: 2 });
+      const [a, b] = [...s.pawns()];
+      a.pos = { x: 0, y: 0 };
+      b.pos = { x: 1, y: 0 };
+      a.needs.mood = 80;
+      b.needs.mood = 80;
+      b.holdUntil = 1e9;
+      if (startRel !== 0) s.addRelation(a.eid, b.eid, startRel);
+      return { s, a, b };
+    }
+    // 断言基准取自 tuning 本身（不硬编码），改出厂值时这里会跟着改
+    const { s: sBase, a: aB, b: bB } = pair(0);
+    const gain = sBase.tuning.social.chatRelGain;
+    const denom = sBase.tuning.social.affinityDenom;
+
+    // ① 关系=0：乘子 1.0，单次闲聊净增量 = chatRelGain
+    {
+      const { s, a, b } = pair(0);
+      s.debugForceCard(a.eid, 'chat');
+      s.step(1);
+      expect(s.relation(a.eid, b.eid)).toBeCloseTo(gain, 5);
+    }
+
+    // ② 关系=+50：乘子 1.5 ⇒ 净增量 = chatRelGain × 1.5
+    //    （正反馈 = 朋友滚成挚友；这是「人际关系」不再只是死累加器的判据）
+    {
+      const { s, a, b } = pair(50);
+      s.debugForceCard(a.eid, 'chat');
+      s.step(1);
+      const got = s.relation(a.eid, b.eid) - 50;
+      expect(got).toBeCloseTo(gain * (1 + 50 / denom), 5);
+    }
+
+    // ③ 关系=-40：乘子 0.6 ⇒ 净增量明显低于中性那一次（聊了白聊）
+    {
+      const { s, a, b } = pair(-40);
+      s.debugForceCard(a.eid, 'chat');
+      s.step(1);
+      const got = s.relation(a.eid, b.eid) + 40;
+      expect(got).toBeCloseTo(gain * (1 - 40 / denom), 5);
+      expect(got).toBeLessThan(gain);
+    }
+
+    // ④ 关系=-100：乘子 clamp 到 0 ⇒ 聊了完全不加关系（死敌之间客套无用）
+    {
+      const { s, a, b } = pair(-100);
+      s.debugForceCard(a.eid, 'chat');
+      s.step(1);
+      expect(s.relation(a.eid, b.eid)).toBeLessThanOrEqual(-99.9);
+    }
+  });
+
+  it('social：挚友绝不翻脸——关系满值时口角乘子 2-aff = 0，心情极低也不吵', () => {
+    const s2 = new Sim({ seed: 4, registry: ModRegistry.mountPacks([socialPack]), pawnCount: 2 });
+    const [c, d] = [...s2.pawns()];
+    c.pos = { x: 0, y: 0 };
+    d.pos = { x: 0, y: 1 };
+    d.holdUntil = 1e9; // 只让 c 说话
+    s2.addRelation(c.eid, d.eid, s2.tuning.social.affinityDenom); // relation = 满值 ⇒ aff = 2.0
+    let quarrels = 0;
+    for (let i = 0; i < 200; i++) {
+      c.needs.mood = 10;
+      d.needs.mood = 10;
+      s2.debugForceCard(c.eid, 'chat');
+      const before = s2.events.length;
+      s2.step(1);
+      quarrels += s2.events.slice(before).filter((e) => e.text.includes('吵了一架')).length;
+    }
+    expect(quarrels).toBe(0);
   });
 });
 

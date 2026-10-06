@@ -1,8 +1,14 @@
 /**
  * social 包 —— 社交种子卡：闲聊（心情/关系）+ 口角（低心情翻脸）。
  *
- * 关系值（-100..100）是"事实层"：本阶段只有闲聊写它，未来外交/贸易/传闻包读它。
- * 口角不是脚本事件：概率 × 局面谓词（心情低）→ 效果表，事件从局面触发（原则②）。
+ * 关系值（-100..100）是"事实层"：本阶段由闲聊写它。
+ * ⚠ 2026-10-07 订正：**关系值曾长期是死端**——全库唯一写入方是闲聊，而
+ * `ctx.relation()` 的唯一读取方是一个测试断言，**零生产消费者**，写了不改任何事。
+ * 加上出厂速率让 20 分钟模拟时间只积累到 6/100，10 seed 里 0 对达到 ±30。
+ * 种子句承诺「人际关系」，这一层当时事实上是死代码。
+ * 修了两件事：① 本包的 **关系自强化**（见下方 chat action 的 aff 乘子）把关系接回
+ * 行为面；② tuning.social.chatRelGain 2→6（tuning 内有完整 A/B 扫表）。
+ *
  * 本包无系统——证明玩法可以纯由卡构成（系统不是必需品）。
  *
  * ---- 缺陷订正（2026-10-06）：闲聊卡从"硬闸"改成"磁铁" ----
@@ -67,14 +73,20 @@ export const socialPack: ModPack = {
         }
         p.path = []; // 到位停走
         const other = target;
-        p.needs.mood = clamp100(p.needs.mood + s.chatMoodGain);
-        other.needs.mood = clamp100(other.needs.mood + Math.round(s.chatMoodGain / 2));
-        ctx.addRelation(p.eid, other.eid, s.chatRelGain);
+        // 关系自强化：闲聊的影响乘子 = clamp(1 + relation/affinityDenom, 0, 2)。
+        // ⚠ 必须用闲聊**前**的关系值算乘子——否则这一轮自己写进去的增量会反馈给自己。
+        // 正反馈（朋友滚成挚友）与负反馈（仇人滚成死敌）共用同一个 aff 的对称两端，
+        // 口角走 (2 - aff)：挚友 aff=2 → 口角率 0，仇敌 aff=0 → 口角率 2×。
+        const rel = ctx.relation(p.eid, other.eid);
+        const aff = Math.max(0, Math.min(2, 1 + rel / s.affinityDenom));
+        p.needs.mood = clamp100(p.needs.mood + s.chatMoodGain * aff);
+        other.needs.mood = clamp100(other.needs.mood + Math.round(s.chatMoodGain * aff / 2));
+        ctx.addRelation(p.eid, other.eid, s.chatRelGain * aff);
         // 口角：局面谓词（有人心情很低）× 概率 → 负面效果。抽卡决定聊不聊，聊砸了是命运
-        if (ctx.rng() < s.quarrelChance && Math.min(p.needs.mood, other.needs.mood) < s.lowMoodQuarrelAt) {
+        if (ctx.rng() < s.quarrelChance * (2 - aff) && Math.min(p.needs.mood, other.needs.mood) < s.lowMoodQuarrelAt) {
           p.needs.mood = clamp100(p.needs.mood - s.quarrelMoodHit);
           other.needs.mood = clamp100(other.needs.mood - s.quarrelMoodHit);
-          ctx.addRelation(p.eid, other.eid, -s.quarrelRelHit);
+          ctx.addRelation(p.eid, other.eid, -s.quarrelRelHit * (2 - aff));
           ctx.log(`😾 ${p.name} 和 ${other.name} 吵了一架`);
         }
         ctx.log(`💬 ${p.name} 和 ${other.name} 聊了几句`);
