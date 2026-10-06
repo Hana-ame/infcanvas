@@ -15,7 +15,7 @@ import type { ModRegistry } from '../mods/registry';
 import { mulberry32 } from './rng';
 import type { Hostile, LogEvent, PawnState } from './types';
 
-export const SAVE_VERSION = 2;
+export const SAVE_VERSION = 3;
 
 /** vN → vN+1 的迁移函数表；索引 i = 把 i 版档迁到 i+1 版。缺省迁移 = 显式 no-op。 */
 export const SAVE_MIGRATIONS: ((d: Record<string, unknown>) => void)[] = [
@@ -26,6 +26,13 @@ export const SAVE_MIGRATIONS: ((d: Record<string, unknown>) => void)[] = [
   (d) => {
     const pawns = d.pawns as Array<Record<string, unknown>> | undefined;
     if (Array.isArray(pawns)) for (const p of pawns) if (p.climb === undefined) p.climb = 1;
+  },
+  // [2→3] 科技抽卡池（R2-1）引入：旧档没有 techs / techFragments。
+  // 缺省语义 = 空进度（还没抽到任何碎片），**不硬塞出厂科技表**——
+  // 填表会把"旧局没科技"变成"旧局已解锁全部科技"，是数据事故。
+  (d) => {
+    if (d.techs === undefined) d.techs = [];
+    if (d.techFragments === undefined) d.techFragments = {};
   },
 ];
 
@@ -50,6 +57,14 @@ export interface SaveData {
   };
   /** 玩法包运行态（ctx.scratch）原样随档 */
   scratch: Record<string, number>;
+  /**
+   * 科技抽卡池状态（R2-1，v3 新增）：
+   *  - techs：已解锁科技 id 列表（tuning.techs 表键）；
+   *  - techFragments：各科技已攒碎片数 techId → 碎片数（已解锁的科技会清零）。
+   * 两字段缺省 = 空进度（旧档迁移/新开档），语义等价，无需区分"缺失"与"空"。
+   */
+  techs: string[];
+  techFragments: Record<string, number>;
 }
 
 /** 深度把 -0 规范成 0：Math.round 会产生负零，JSON 序列化看不出差异，
@@ -81,6 +96,8 @@ export function snapshotOf(sim: Sim): SaveData {
     events: structuredClone(sim.events),
     world: sim.world.exportState(),
     scratch: { ...sim.scratch },
+    techs: [...sim.techUnlocked()],
+    techFragments: { ...sim.techFragments },
   });
 }
 

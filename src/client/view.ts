@@ -38,6 +38,22 @@ export interface WorldView {
    * 插值只能是画出来的那一份，逻辑判定永远读权威值。
    */
   renderPos?(eid: number, nowMs: number): { x: number; y: number } | undefined;
+  /**
+   * 科技抽卡池进度（R2-1）：已组装好的展示模型。
+   * 为什么是"拼装好的对象"而不是 (techs表, 碎片, 已解锁集合) 三个原始面：
+   * HUD 只管展示，联机模式下这三个原始面还得各自从协议字段重建——放实现方拼，
+   * render/hud 才能零分支复用（与 inspect 同一设计动机）。
+   */
+  techProgress(): readonly TechProgressRow[];
+}
+
+/** 科技面板一行（🔩 have/need + 是否已解锁） */
+export interface TechProgressRow {
+  id: string;
+  name: string;
+  have: number;   // 已攒碎片数
+  need: number;   // 攒齐所需
+  unlocked: boolean;
 }
 
 export interface TileInspect {

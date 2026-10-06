@@ -65,3 +65,20 @@
 - 架构与数据表见 `docs/DESIGN.md` / `docs/DATA_DRIVEN.md` 文末「从零重来 v3」章节。
 - **后续排期**见 `docs/ROADMAP.md`（R1 联机还账 → R2 补阶段③ 科技池/.mod.json → R3+ 玩法种子），
   接到「继续」类指令时按该文档顺序推进并逐项走完成定义。
+
+### R2 阶段③补全快照（2026-08-21，当前基线）
+
+- 测试：`npm test` = **98 用例 / 17 文件**全绿；类型：`npx tsc --noEmit` 干净。
+- **科技 = 独立抽卡池（碎片制）**：数据表 `tuning.techs` + `tuning.techPool`（出厂空表，科技是玩法包种子）；
+  注册面 `registerTech`（重复 id 抛错）+ `techOrder()`（动态算，**不用 Object.keys 快照**——旧项目致命 bug：
+  DLC 后注册的科技永远进不了抽卡池）。包 `mods/packs/tech-pool.ts`：候选含已解锁、权重按 TECH_ORDER 线性递减、
+  重复卡不累计（用户 2026-08-15 裁决）。计时器走 `ctx.scratch['tech-pool.acc']` 随档。
+- **门控**：`BuildingTuningEntry.tech` + `SimContext.techSatisfied()`，判定写在**卡谓词**里（与材料门同款）。
+  空表/表外引用一律放行 → 卸载 tech-pool = 永无科技但核心照跑。
+- **存档**：`SAVE_VERSION 3`（`SAVE_MIGRATIONS[2→3]` 把缺字段回填为**空进度**，不硬塞出厂表）。
+  **协议**：`FullState.techs/techFragments`，只随 welcome/full 走，delta 不带（低频状态走低频通道）。
+- **.mod.json 数据化部署**：格式 `shared/mod-schema.ts`；加载器 `server/mod-loader.ts`（扫描→解析→Kahn 拓扑→
+  注册面→契约校验，**拓扑在 apply 之前**，绝不半挂载）；CLI `npm run mods -- [目录] [--dry]`。
+  卡的 JSON 化边界：v1 支持无谓词卡或 `{predicate:"已登记名"}`；**action v1 不支持**（JSON 无法表达函数）。
+- **同一内容两种形态**：`mods/sample-berry.mod.json` ↔ `src/mods/packs/sample-berry.ts`，
+  两条输入经 `modPackageToPack` 合流到同一个 `ModPack` 装配器（`dlc-twin.test.ts` 逐字段对拍）。

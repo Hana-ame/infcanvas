@@ -37,6 +37,12 @@ export const buildingPack: ModPack = {
       passable: false,
       w: 2,
       h: 2,
+      // 刻意**不加科技门控**（2026-08-21 平衡复采修正）：
+      // 门控同时压在棚屋与仓库上时，一局 900s 内两项都解锁不完 → 鼠群唯一的建筑出口
+      // 只剩篝火，木料全砸进篝火（实测 4 seed 全是"篝火×N"，棚屋/仓库一座不出），
+      // 世界退化成"多堆火"。棚屋是刚需（人口比例门 + 睡旁边回心情），门控它等于
+      // 拿掉一个刚需维度。门控留给"锦上添花"的建筑才不伤核心循环。
+      tech: undefined,
     });
     // 仓库：2×2，木料经济锚点
     m.registerBuilding({
@@ -48,6 +54,7 @@ export const buildingPack: ModPack = {
       passable: false,
       w: 2,
       h: 2,
+      tech: ['storage:store'], // 科技门控（R2-1）：解锁仓储术才建仓库
     });
 
     // ---- 系统：燃料维护（production 组）。数据驱动：
@@ -129,6 +136,8 @@ export const buildingPack: ModPack = {
       series: SER_BUILD,
       weight: 3,
       condition: (p, ctx) => {
+        // 科技门控前置（R2-1）：同 wantHut 语义
+        if (!ctx.techSatisfied(ctx.tuning.buildings['store']?.tech)) return false;
         if ((ctx.stockpile[K_STOCK_WOOD] ?? 0) < costOf(ctx, 'store')) return false;
         let stores = 0;
         for (const b of ctx.buildingsAll()) {
@@ -166,6 +175,10 @@ function wantNewFire(p: PawnState, ctx: SimContext): boolean {
 /** 棚屋刚需：材料够 + 棚屋数 < 按人口比例的上限。
  *  4 只鼠 × 0.5 = 2 座就够——此前只查木料，900s 狂盖 28~43 座（用户反馈）。 */
 function wantHut(p: PawnState, ctx: SimContext): boolean {
+  // 科技门控（R2-1）：无条件生效——wantHut 是唯一读取 hut.tech 的地方，
+  // 保留这一行是为了"门控规则只有一处实现"的纪律（techSatisfied 的"表外放行"
+  // 语义也要在这里被真实消费一次）。hut 本身不带 tech（见注册处注释）。
+  if (!ctx.techSatisfied(ctx.tuning.buildings['hut']?.tech)) return false;
   if ((ctx.stockpile[K_STOCK_WOOD] ?? 0) < costOf(ctx, 'hut')) return false;
   let shelters = 0;
   let pawns = 0;

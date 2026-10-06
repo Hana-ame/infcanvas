@@ -24,6 +24,15 @@ export interface FullState {
   events: LogEvent[];
   /** 特征运行态（余量/冷却），客户端本地 World 用它回答 featureAt */
   world: SaveData['world'];
+  /**
+   * 科技抽卡池状态（R2-1）：已解锁 id 列表 + 各科技碎片数。
+   * 走 full/welcome 段同步而**不走 delta**：科技碎片每 ~120s 才变一次，
+   * 放进 500ms 的增量帧纯属浪费带宽；且 delta 的基线比对是逐 pawn JSON 对照，
+   * 科技是全局状态另开一路反而复杂。客户端最迟 5s 看到新碎片——
+   * 抽卡节奏本身就是分钟级，这个延迟不可感知。
+   */
+  techs: string[];
+  techFragments: Record<string, number>;
 }
 
 export interface WelcomeMsg {

@@ -10,6 +10,11 @@
     <!-- HUD 叠层（渲染 canvas 由 Pixi 注入 #app；DOM 层样式见 src/client/style.css） -->
     <div id="hud-top"></div>
     <div id="hud-feed"></div>
+    <!-- 科技抽卡池面板（R2-1）：默认折叠，不抢画面；🔩 x/N = 碎片进度 -->
+    <details id="hud-tech">
+      <summary>🔬 科技</summary>
+      <div id="hud-tech-body"></div>
+    </details>
     <div id="hud-sel"></div>
     <div id="hud-btns">
       <button id="btn-pause">⏸ 暂停</button>

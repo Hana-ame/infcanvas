@@ -94,18 +94,10 @@ export function createGameServer(opts: GameServerOptions): Promise<GameServerHan
     for (const ctx of clients) {
       ctx.lastPawnJson.clear();
       ctx.sentEvents = sim.events.length;
-      send(ctx, {
-        t: 'full',
-        d: {
-          time: sim.time,
-          stockpile: { ...sim.stockpile },
-          pawns: [...sim.pawns()].map((p) => structuredClone(p)),
-          hostiles: sim.hostiles().map((h) => structuredClone(h)),
-          buildings: [...sim.world.buildings.values()].map((b) => structuredClone(b)),
-          events: structuredClone(sim.events),
-          world: sim.world.exportState(),
-        },
-      });
+      // 走共享的 fullState()，不要内联第二份副本（2026-10-06 R1+R2 合并修）：
+      // 内联那份漏了 R2-1 新增的 techs/techFragments 字段，replaceSim 触发的重连
+      // 对账会静默少发科技状态——客户端科技面板在重连后倒退。
+      send(ctx, { t: 'full', d: fullState() });
     }
   }
 
@@ -118,6 +110,8 @@ export function createGameServer(opts: GameServerOptions): Promise<GameServerHan
       buildings: [...sim.world.buildings.values()].map((b) => structuredClone(b)),
       events: structuredClone(sim.events),
       world: sim.world.exportState(),
+      techs: [...sim.techUnlocked()], // 科技抽卡池状态（R2-1；只随 full/welcome 走，delta 不带）
+      techFragments: { ...sim.techFragments },
     };
   }
 

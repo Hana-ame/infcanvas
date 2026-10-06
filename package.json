@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "play": "tsx scripts/play.ts",
-    "server": "tsx src/server/index.ts"
+    "server": "tsx src/server/index.ts",
+    "mods": "tsx scripts/mods.ts"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

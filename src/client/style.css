@@ -191,4 +191,57 @@ button:hover {
 }
 #hud-banner[hidden] {
   display: none;
+/* ---- 科技抽卡池面板（R2-1，2026-08-21 追加）----
+   为什么用 <details> 折叠：科技是低频信息（每 ~120s 才有一次抽池），
+   常驻展开会和右上事件 feed 抢注意力；折叠后默认只占一行标题。 */
+#hud-tech {
+  position: fixed;
+  top: 44px;
+  right: 350px;
+  z-index: 9;
+  min-width: 150px;
+  padding: 4px 8px;
+  background: rgba(10, 12, 10, 0.72);
+  border: 1px solid #2a332a;
+  border-radius: 6px;
+  color: #cde;
+  font: 12px/1.5 system-ui, sans-serif;
+}
+#hud-tech summary {
+  cursor: pointer;
+  user-select: none;
+  color: #dde;
+}
+#hud-tech-body {
+  margin-top: 4px;
+}
+#hud-tech-body .tech {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  color: #9ab;
+}
+/* 已解锁 = 变绿并划掉进度（解锁是既成事实，不该继续显示待攒） */
+#hud-tech-body .tech.done {
+  color: #7ec97e;
+}
+#hud-tech-body .tech.done .fr {
+  text-decoration: line-through;
+  opacity: 0.65;
+}
+#hud-tech-body .tech .fr {
+  color: #ffd94a;
+  font-variant-numeric: tabular-nums;
+}
+#hud-tech-body .empty {
+  color: #667;
+}
+@media (max-width: 900px) {
+  /* 窄屏时 feed 已占满右侧，科技面板退到左下角免重叠 */
+  #hud-tech {
+    right: auto;
+    left: 14px;
+    top: auto;
+    bottom: 52px;
+  }
 }

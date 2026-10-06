@@ -4,8 +4,8 @@
  * 注册面一览（本阶段用到的全实现；数据表类先立骨架供 DLC/测试扩展）：
  *   registerSystemDef / registerCommand / registerCard / registerHook(cardWeight) /
  *   registerBuilding(→tuning) / registerItem / registerRecipe / registerEnemy(→tuning) /
- *   registerEvent / registerPredicate / overrideTuning / disableSystem
- *   （2026-08-21 用户裁定：registerStrategyCard/"××令"机制整体移除）
+ *   registerEvent / registerPredicate / overrideTuning / disableSystem /
+ *   registerTech（R2-1 科技抽卡池；2026-08-21 用户裁定：registerStrategyCard/"××令"机制整体移除）
  *
  * 装配序 = 类别序 × 组内注册序（见 systems.ts）。内核系统（behavior）在构造时最先注册，
  * 自然排在 ai 类首位。disableSystem 只影响装配过滤，不删注册数据（重装配可复活）。
@@ -14,7 +14,7 @@ import { DEFAULT_TUNING, type Tuning } from '../sim/tuning';
 import type { SimContext, CardWeightHook } from '../sim/context';
 import type { CardDef } from '../sim/cards';
 import { behaviorCtor, CATEGORY_ORDER, type Category, type GameSystem, type SystemDef } from '../sim/systems';
-import type { BuildingTuningEntry, EnemyTuningEntry } from '../sim/tuning';
+import type { BuildingTuningEntry, EnemyTuningEntry, TechTuningEntry } from '../sim/tuning';
 import { topoSort, type ModPack } from './pack';
 
 export type CommandHandler = (ctx: SimContext, args: Record<string, unknown>, source: 'player' | 'system') => void;
@@ -102,6 +102,37 @@ export class ModRegistry {
     const { id, ...rest } = entry;
     if (this.baseTuning.enemies[id]) throw new Error(`敌人已存在：${id}`);
     this.baseTuning.enemies[id] = rest;
+  }
+
+  /**
+   * 科技注册（R2-1 科技抽卡池）：写进 tuning.techs 表。
+   *
+   * 为什么走 tuning 表而不是另开一张 registry 表：科技条目同时被两个消费方读取——
+   * ① tech-pool 包抽卡（候选集合 + 权重位）；② building 包的建造门控（查表键）。
+   * 放同一张表 = 单一事实源，mod 追加科技后两个消费方自动接入（原则③ 数据驱动）。
+   *
+   * 失败策略：重复 id **抛错**（与 registerBuilding/registerEnemy 一致）。
+   * 这是响亮失败——两个包注册同一科技 id 一定是配置冲突，静默覆盖会让"抽池抽到谁"
+   * 变成不可复现的谜题（旧项目教训）。
+   */
+  registerTech(entry: TechTuningEntry & { id: string }): void {
+    const { id, ...rest } = entry;
+    if (this.baseTuning.techs[id]) throw new Error(`科技已存在：${id}`);
+    this.baseTuning.techs[id] = rest;
+  }
+
+  /**
+   * TECH_ORDER：按 order 升序的科技 id 数组（抽卡池顺序位）。
+   * 为什么要动态算而不是模块级常量：旧项目的致命 bug 就是 TECH_ORDER = Object.keys(TECHS)
+   * 在模块加载时取快照——DLC 后续 registerTech 注册的科技永远进不了抽卡池（用户反馈
+   * 「制衣术 165 分钟 0 碎片」）。这里每次从生效表现算，任何时点注册都进池。
+   */
+  techOrder(): string[] {
+    return Object.keys(this.effectiveTuning().techs).sort((a, b) => {
+      const ta = this.effectiveTuning().techs[a];
+      const tb = this.effectiveTuning().techs[b];
+      return ta.order - tb.order || a.localeCompare(b); // order 相同按 id 稳定排序（确定性）
+    });
   }
 
   /** 调参覆盖：mod 不改出厂表，按路径写覆盖函数（生效值 = 出厂 → 覆盖链依次应用） */

@@ -42,6 +42,17 @@ export class Sim implements SimContext {
   selected: Eid[] = []; // 客户端选中（框选/点选），纯 UI 投影
   /** 玩法包运行态暂存（随档）：键 "<包>.<名>"。系统状态放这里而非闭包，存档才能还原 */
   readonly scratch: Record<string, number> = {};
+  /**
+   * 科技抽卡池运行态（R2-1）：已解锁科技 id + 各科技已攒碎片数。
+   *
+   * 为什么是显式字段而不放 ctx.scratch（scratch 是 Record<string,number>，
+   * 已解锁是"集合"塞不进去；碎片数倒是能塞）。理由有三：
+   *  1. 存档契约：已解锁是**世界事实**，必须整份进 SaveData（读档后门控判定才一致）；
+   *  2. 协议契约：联机 HUD 的科技面板要看到解锁进度，走 FullState 一段透传；
+   *  3. 可读性：scratch 是"包私有运行态"，科技是跨包共享事实（tech-pool 写 / building 读）。
+   */
+  private techsUnlocked = new Set<string>();
+  readonly techFragments: Record<string, number> = {};
   private rngImpl: RngFn;
   private nextEid = 1;
   private nextHostileId = 1;
@@ -225,6 +236,43 @@ export class Sim implements SimContext {
     this.world.removeBuilding(id);
   }
 
+  // ---- 科技抽卡池面（R2-1 实现；查询面见 context.ts 的语义注释）----
+  techUnlocked(): ReadonlySet<string> {
+    return this.techsUnlocked;
+  }
+  techOrder(): string[] {
+    return this.reg.techOrder();
+  }
+  techFragmentsOf(techId: string): number {
+    return this.techFragments[techId] ?? 0;
+  }
+  grantTechFragment(techId: string): 'progress' | 'unlocked' | 'dup' | 'unknown' {
+    const def = this.tuning.techs[techId];
+    if (!def) return 'unknown'; // 表里没有（如 mod 热卸载了科技）→ 不静默累计
+    // 重复卡：已解锁科技再抽到 = 白抽，不累计（用户 2026-08-15 裁决：稀释而非奖励）
+    if (this.techsUnlocked.has(techId)) return 'dup';
+    const next = (this.techFragments[techId] ?? 0) + 1;
+    this.techFragments[techId] = next;
+    if (next < def.fragments) return 'progress';
+    // 攒满：解锁整卡。碎片数清零（进度条归零，HUD 靠"已解锁"态显示而非残留计数）
+    this.techFragments[techId] = 0;
+    this.techsUnlocked.add(techId);
+    this.log(`🔬 科技解锁：${def.name}`);
+    return 'unlocked';
+  }
+
+  /** 建筑门控判定（R2-1）：科技表为空（tech-pool 未挂）时一律放行——
+   *  "卸载科技包 = 永无科技但核心照跑"，否则卸载会锁死整个建造玩法。 */
+  techSatisfied(tech?: readonly string[]): boolean {
+    if (!tech || tech.length === 0) return true;
+    for (const id of tech) {
+      // 门控引用的科技不在表里（mod 未挂/热卸载）= 不阻断建造：
+      // 门控是"需要先解锁"，不是"必须存在于表"，否则数据半残就锁死世界。
+      if (this.tuning.techs[id] !== undefined && !this.techsUnlocked.has(id)) return false;
+    }
+    return true;
+  }
+
   relation(a: Eid, b: Eid): number {
     return this.relations.get(pairKey(a, b)) ?? 0;
   }
@@ -375,6 +423,12 @@ export class Sim implements SimContext {
     this.events = structuredClone(d.events);
     Object.keys(this.scratch).forEach((k) => delete this.scratch[k]);
     Object.assign(this.scratch, d.scratch);
+    // 科技抽卡池状态随档（R2-1）：碎片数 + 已解锁集合。
+    // 缺字段回落空（旧档经迁移后 techs/techFragments 可能不存在）——"没有科技进度"
+    // 等价于"还没抽到任何碎片"，不是坏档。
+    this.techsUnlocked = new Set(d.techs ?? []);
+    for (const k of Object.keys(this.techFragments)) delete this.techFragments[k];
+    Object.assign(this.techFragments, d.techFragments ?? {});
     this.world.importState(d.world);
     this.world.now = d.time; // 单时钟源必须随档：否则再生冷却相对新时钟全部误判（真实踩坑）
   }

@@ -23,6 +23,10 @@ function fullStateOf(sim: Sim): FullState {
     buildings: snap.world.buildings,
     events: snap.events,
     world: snap.world,
+    // R2-1 新增字段：科技抽卡池状态（2026-10-06 R1+R2 合并补）。
+    // 插值测试不关心科技，但 FullState 是必填字段，缺了 tsc 就红。
+    techs: [...sim.techUnlocked()],
+    techFragments: { ...sim.techFragments },
   };
 }
 

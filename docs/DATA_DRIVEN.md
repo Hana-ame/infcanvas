@@ -713,3 +713,77 @@ validateContracts 校验卡的系列已登记。
 - `protocol.ts` 与 `server/save-store.ts` 各持一份同规则实现，互为纵深防御——
   即便调用方漏了过滤，写盘前仍会拒绝。
 
+## 从零重来 v3 · R2 阶段③补全数据面（2026-08-21 追加）
+
+> 本节记录 R2-1/R2-2/R2-3 引入的数据表、注册面与协议字段。上文「从零重来 v3·阶段④数据面」
+> 描述的是本节之前的状态，两者并存不矛盾。
+
+### 科技抽卡池数据表（tuning.ts）
+
+| 表 | 字段 | 语义 | 消费方 |
+| --- | --- | --- | --- |
+| `techs` | `name` | 科技名（HUD 面板 + 事件文案） | tech-pool 包、协议 |
+| | `fragments` | 攒齐所需碎片数（≥1）——**碎片制**，抽中一次只 +1 | tech-pool 包、协议 |
+| | `order` | TECH_ORDER 位次（0 = 权重最高） | tech-pool 包（权重 = n - rank） |
+| | `unlocks` | 该科技解锁的建筑 defId（信息登记） | 人读文档 |
+| `techPool` | `intervalSec` | 发碎片抽池的间隔（秒） | tech-pool 包系统 |
+| | `chance` | 每次抽池真正发碎片的概率（0..1），其余轮次空转 | tech-pool 包系统 |
+
+**出厂 `techs: {}`（空）** —— 科技是玩法包种子数据，同 `buildings`/`enemies` 的纪律，内核零玩法内容。
+条目由 `tech-pool` 包的 `registerTech` 注入；mod 追加科技 = 往这张表加条目，抽卡池与门控自动接入。
+
+### 建筑科技门控（BuildingTuningEntry.tech）
+
+`tech?: string[]` = 本建筑需要先解锁的科技 id 列表（`tuning.techs` 表键）。三条判定语义（`SimContext.techSatisfied`）：
+
+1. 缺省 / 空数组 = **无门控**（放行）；
+2. 引用的科技**不在表里** = 放行（mod 未挂 / 热卸载导致的数据半残**不许锁死世界**）；
+3. 表里有但未解锁 = 拒绝。
+
+门控写在 **building 包的卡谓词**里（`wantHut` / `build_store` 的 condition），与「材料门」同款表现：
+都是**这张卡抽不中**，而不是抽中了才失败。
+
+### 科技运行态与存档（SaveData v3）
+
+| 字段 | 类型 | 语义 |
+| --- | --- | --- |
+| `techs` | `string[]` | 已解锁科技 id 列表 |
+| `techFragments` | `Record<string, number>` | 各科技已攒碎片数（解锁那一刻清零） |
+
+`SAVE_VERSION` 2→3，`SAVE_MIGRATIONS[2→3]` 把缺字段回填为**空进度**。
+**刻意不硬塞出厂科技表** —— 填表会把「旧局没科技」变成「旧局已解锁全部科技」，是数据事故。
+
+抽卡计时器（`ctx.scratch['tech-pool.acc']`）走 scratch 随档（跨 tick 运行态不进闭包的存档纪律）。
+已解锁集合**不用 scratch**：它已解锁是集合而非数字，且是跨包共享的世界事实（tech-pool 写 / building 读），
+所以放 Sim 显式字段并整份进 SaveData。
+
+### 协议字段（shared/protocol.ts）
+
+`FullState` 增 `techs: string[]` 与 `techFragments: Record<string, number>`。
+**只随 `welcome` / `full` 段同步，`delta` 不带** —— 科技是分钟级低频状态，
+放进 500ms 增量帧纯属浪费带宽，且 delta 的逐 pawn JSON 基线比对机制不适用于全局状态。
+客户端最迟 5s（full 对账周期）看到新碎片，抽卡节奏本身就是分钟级，该延迟不可感知。
+
+### .mod.json 数据包格式（shared/mod-schema.ts）
+
+```
+{ manifest: { id, requires[], title, author?, description?, version? },
+  defs:    { buildings[], enemies[], items[], cards[], techs[] } }
+```
+
+| 约束 | 规则 | 理由 |
+| --- | --- | --- |
+| `manifest.id` | 必须匹配 `/^[a-z0-9][a-z0-9-_.]*$/i` | 同时防路径穿越（`../`）、URL 注入、文件名非法字符 |
+| `defs.*` | 只接受白名单字段，未知字段**报错** | 拼错的字段名被静默忽略 = 作者以为内容生效了 |
+| `cards[].series` | 必须是 `ALL_SERIES` 已登记系列 | 由 `validateContracts` 在装配末把关 |
+| `cards[].condition` | v1 仅 `{ predicate: "已登记名" }` 或省略 | `condition` 是函数，JSON 无法表达；省略 = 永远可抽 |
+| `cards[].action` | v1 **不支持** | `action` 必须执行游戏逻辑，只能由 TS 包提供 |
+
+**卡的可 JSON 化边界（诚实声明）**：v1 的 JSON 卡用途是**扩充卡池权重**（新系列 / 新权重 = 新的涌现维度），
+`action` 走「抽中即收工」占位；真正的行为效果由 TS 包提供。谓词可跨形态引用 —— JSON 卡写
+`{predicate: "foodLow"}`，由 TS 包 `registerPredicate('foodLow', fn)` 提供实现。
+
+**挂载路径同构**：JSON 包经 `modPackageToPack` 适配成 `ModPack`，与 TS 包走**完全相同**的
+`topoSort → apply → validateContracts` 链路（这就是 R2-3 要证明的「同一内容两种部署形态」）。
+失败策略见 `server/mod-loader.ts` 文件头注释（响亮失败且绝不半挂载）。
+

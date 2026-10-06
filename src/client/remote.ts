@@ -34,6 +34,12 @@ export class RemoteSim implements WorldView {
   eventsList: LogEvent[] = [];
   /** 本地地形推导器（seed+tuning 与服务器一致；余量随 full 快照同步） */
   world!: World;
+  /**
+   * 科技抽卡池状态（R2-1）：只随 welcome/full 到达，delta 不更新
+   * （与 game-server 的发送策略对称——低频状态走低频通道，避免拖慢 500ms 增量帧）。
+   */
+  private techsUnlocked = new Set<string>();
+  private techFrag: Record<string, number> = {};
   _tuning: Tuning = DEFAULT_TUNING;
   connected = false;
 
@@ -263,6 +269,10 @@ export class RemoteSim implements WorldView {
     this.eventsList = d.events;
     this.world.importState(d.world);
     this.world.now = d.time; // 与读档同理：再生冷却的基准时钟必须对齐
+    // 科技状态整份覆盖（full 是权威快照）：替换而非累加，否则 delta 后的陈旧
+    // techsUnlocked 会永久残留——客户端不做"科技回退"推理。
+    this.techsUnlocked = new Set(d.techs ?? []);
+    this.techFrag = { ...(d.techFragments ?? {}) };
   }
 
   /**
@@ -335,6 +345,19 @@ export class RemoteSim implements WorldView {
   }
   featureAt(x: number, y: number) {
     return this.world.featureAt(x, y);
+  }
+  techProgress(): import('./view').TechProgressRow[] {
+    // 与 LocalView 同构：顺序取自 tuning 科技表（welcome 已带全表 tuning），状态取自 full 快照
+    const techs = this._tuning.techs ?? {};
+    return Object.keys(techs)
+      .sort((a, b) => techs[a].order - techs[b].order || a.localeCompare(b))
+      .map((id) => ({
+        id,
+        name: techs[id].name ?? id,
+        have: this.techFrag[id] ?? 0,
+        need: techs[id].fragments ?? 1,
+        unlocked: this.techsUnlocked.has(id),
+      }));
   }
   /** 与 LocalView 同构：联机模式的地形来自本地推导 World + full 快照运行态，信息等价 */
   inspect(x: number, y: number): TileInspect {

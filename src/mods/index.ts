@@ -11,4 +11,5 @@ export {
   type RecipeDef,
   type EventSeedDef,
 } from './registry';
+export type { TechTuningEntry } from '../sim/tuning';
 export * from './contracts';
