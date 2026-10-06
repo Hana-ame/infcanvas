@@ -147,13 +147,20 @@ describe('性能线 · 记忆化缓存正确性', () => {
     empty.importState({ ...state, buildings: [], nextBuildingId: state.nextBuildingId });
     expect(empty.nearestBuildingByTag('fire', s1.x, s1.y)).toBeUndefined();
     expect(empty.nearestBuildingByTag('fire', s2.x, s2.y)).toBeUndefined();
-    // 换成一个完全不同的存档：只能看到新档里的那座
+    // 换成一个完全不同的存档：只能看到新档里的那两座，看不到 world 自己的旧建筑
+    // ⚠ 哨兵坐标必须离 s1/s2 **足够远**（> nearestBuildingByTag 的默认搜索半径），
+    //   否则"最近的那座恰好是存档里的 b1/b2"，断言会假失败。
+    //   （本轮首版把哨兵写死 (40,40)，而 findFree 在 (20,20) 附近找到的 s2 可能
+    //   就在半径内 → 断言的是"存进去的那座"而不是"旧建筑已消失"，语义错了。）
+    const SENTINEL = 9999;
     const other = mkWorld();
-    other.addBuilding('campfire', 40, 40);
+    const old = other.addBuilding('campfire', SENTINEL, SENTINEL)!;
     other.importState(state);
     expect(other.nearestBuildingByTag('fire', s1.x, s1.y)?.id).toBe(b1.id);
     expect(other.nearestBuildingByTag('fire', s2.x, s2.y)?.id).toBe(b2.id);
-    expect(other.nearestBuildingByTag('fire', 40, 40)).toBeUndefined(); // 旧档那座已不在
+    // 旧建筑已不在表里 → 倒排里也不该能被查到（幽灵建筑）
+    expect(other.buildings.has(old.id)).toBe(false);
+    expect(other.nearestBuildingByTag('fire', SENTINEL, SENTINEL, 1)).toBeUndefined();
   });
 
   it('③b importState 后索引里的对象就是 buildings 表里的那一个（身份一致）', () => {
@@ -209,7 +216,11 @@ describe('性能线 · 记忆化缓存正确性', () => {
 
 /** 在以 (cx,cy) 为心的区域里找一块可放 1×1 的空地（错开让开安全区与树） */
 function findFree(w: World, cx: number, cy: number): { x: number; y: number } {
-  for (let r = 6; r < 60; r++) {
+  // ⚠ 注意篝火是 passable 的，所以"能放篝火"≠"w.passable 为真"就能区分已占用；
+  //   这里只求"一块可放 1×1 的空地"，是否已被别的建筑占用由调用方保证。
+  //   但仍要避开**出生安全区**（安全区内 addBuilding 会被拒）。
+  const clear = w.tuning.world.spawnClearRadius;
+  for (let r = clear + 2; r < 80; r++) {
     for (let dy = -r; dy <= r; dy++) {
       for (let dx = -r; dx <= r; dx++) {
         if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
