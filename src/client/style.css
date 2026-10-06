@@ -1,4 +1,15 @@
-/* client/style.css —— HUD 样式（阶段④正式客户端；与调试查看器同风格） */
+/* client/style.css —— HUD 样式（R3-HUD 结构化面板体系，2026-10-06 重排）
+ *
+ * 视觉系统约定（写给下一个改 UI 的人看）：
+ *  - 面板 = 半透明深色卡（背景 rgba(10,12,10,.8) + 1px #2a332a 边框 + 8px 圆角）浮在 Pixi 画布之上。
+ *    刻意不用大面积实色：HUD 压在游戏画面上，透明度决定玩家还看不看得见鼠群。
+ *  - 信息密度分三档：**顶栏**（极低，一行扫过，不重复标题）→ **中部分区**（中，条目+进度条）
+ *    → **详情**（高，条+表，只有点开才看）。层级 = 玩家阅读顺序。
+ *  - 进度条统一 `.mbar`（5px 高 / 圆角 2 / 底色 #222），色值由面板按语义给：
+ *    食欲 #d98a3a · 睡眠 #4a7dc9 · 心情 #c96f9c · 理智 #8a6fc9 · 生命 #7ec97e · 敌袭压力按阈值（绿/黄/红）。
+ *  - 分区绝对定位，各自不重叠：status 通栏在顶，vitals/colony/threat/detail 左侧竖排，
+ *    log 在右上。窄屏（≤900px）整体收窄让位给事件流（见文件末尾 media query）。
+ */
 html,
 body {
   margin: 0;
@@ -10,26 +21,169 @@ canvas {
   display: block;
 }
 
-#hud-top {
+/* ---- 面板宿主与分区（R3-HUD）---- */
+#hud-panels {
   position: fixed;
+  inset: 0;
+  z-index: 9;
+  pointer-events: none; /* 面板不挡鼠标交互（画布在下面照常收事件） */
+}
+#hud-panels .slot {
+  position: absolute;
+}
+#hud-panels .slot .panel {
+  background: rgba(10, 12, 10, 0.8);
+  border: 1px solid #2a332a;
+  border-radius: 8px;
+  color: #eee;
+  font: 13px/1.4 system-ui, sans-serif;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+}
+.panel-head {
+  padding: 6px 10px 4px;
+  font-size: 12px;
+  color: #9ab;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  user-select: none;
+}
+.panel-body {
+  padding: 8px 10px;
+}
+.panel-body .muted {
+  color: #9ab;
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 4px 0;
+}
+.panel-body .empty {
+  color: #667;
+  font-size: 12px;
+}
+.panel-body .danger {
+  color: #e08a8a;
+  font-size: 12px;
+  margin: 4px 0;
+}
+
+/* 顶栏状态条：通栏一行。隐藏标题栏——状态条内容自带语义，再来个标题就是重复噪声。 */
+#slot-status {
   top: 0;
   left: 0;
   right: 0;
-  z-index: 10;
+}
+#slot-status .panel {
+  border-radius: 0;
+  border-left: none;
+  border-right: none;
+  border-top: none;
+  background: rgba(10, 12, 10, 0.82);
+}
+#slot-status .panel-head {
+  display: none;
+}
+#slot-status .panel-body {
   display: flex;
   gap: 14px;
   align-items: center;
   flex-wrap: wrap;
   padding: 8px 14px;
-  background: rgba(10, 12, 10, 0.82);
+  font-size: 13px;
   color: #ddd;
-  font: 13px/1.4 system-ui, sans-serif;
-  border-bottom: 1px solid #2a332a;
 }
-#hud-top b {
+#slot-status .panel-body b {
   color: #fff;
 }
+#slot-status .sel {
+  color: #ffd94a; /* 选中态用强调黄：它是"你的意图"，与客观读数区分开 */
+}
 
+/* 中部分区（健康/营地/威胁/详情）：左上竖排，等宽，靠 top 值错开 */
+#slot-vitals,
+#slot-colony,
+#slot-threat,
+#slot-detail {
+  left: 14px;
+  width: 210px;
+}
+#slot-vitals {
+  top: 52px;
+}
+#slot-colony {
+  top: 200px;
+}
+#slot-threat {
+  top: 330px;
+}
+#slot-detail {
+  top: 450px;
+}
+
+/* 事件流：右上角。保留原有的右侧宽条形态（玩家读 feed 是"扫右边缘"的习惯）。 */
+#slot-log {
+  top: 44px;
+  right: 0;
+  width: 340px;
+}
+#slot-log .panel {
+  border-radius: 0;
+  border-right: none;
+}
+#slot-log .panel-body {
+  padding: 8px 10px;
+  font: 12px/1.6 ui-monospace, monospace;
+  color: #cde;
+  overflow-y: auto;
+  max-height: 42vh;
+}
+
+/* 指标行：标签 + 进度条 + 数值（三段式，详情与健康面板共用） */
+.mrow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0;
+}
+.mrow .mk {
+  width: 20px;
+  flex: none;
+  font-size: 12px;
+}
+.mrow .mbar {
+  flex: 1;
+  height: 5px;
+  background: #222;
+  border-radius: 2px;
+  overflow: hidden;
+}
+.mrow .mbar i {
+  display: block;
+  height: 100%;
+}
+.mrow .mv {
+  width: 30px;
+  flex: none;
+  text-align: right;
+  color: #cde;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums; /* 数字等宽：条读数跳动时不左右抖 */
+}
+
+/* 营地构成：建筑条目（种类 × 数量 + 燃料节奏） */
+.brow {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: #cde;
+}
+.brow .fuel {
+  color: #667;
+  font-size: 11px;
+}
+
+/* ---- 底部按钮条 ---- */
 #hud-btns {
   position: fixed;
   bottom: 0;
@@ -56,64 +210,7 @@ button:hover {
   background: #33453a;
 }
 
-#hud-feed {
-  position: fixed;
-  top: 44px;
-  right: 0;
-  width: 340px;
-  max-height: 42vh;
-  overflow-y: auto;
-  z-index: 9;
-  pointer-events: none;
-  background: rgba(10, 12, 10, 0.72);
-  color: #cde;
-  padding: 8px 10px;
-  font: 12px/1.6 ui-monospace, monospace;
-  border-left: 1px solid #2a332a;
-  border-bottom: 1px solid #2a332a;
-}
-
-#hud-sel {
-  position: fixed;
-  left: 14px;
-  top: 52px;
-  z-index: 9;
-  width: 190px;
-  padding: 10px 12px;
-  display: none;
-  background: rgba(10, 12, 10, 0.8);
-  border: 1px solid #2a332a;
-  border-radius: 8px;
-  color: #eee;
-  font: 13px system-ui, sans-serif;
-}
-#hud-sel .muted {
-  color: #9ab;
-  font-size: 12px;
-  margin: 4px 0;
-}
-#hud-sel .bar {
-  height: 5px;
-  background: #222;
-  border-radius: 2px;
-  margin: 5px 0;
-  overflow: hidden;
-}
-#hud-sel .bar i {
-  display: block;
-  height: 100%;
-}
-
-#hud-hint {
-  position: fixed;
-  bottom: 52px;
-  left: 14px;
-  z-index: 9;
-  color: #9ab;
-  font: 12px system-ui;
-  opacity: 0.85;
-}
-
+/* ---- 悬停属性卡（跟随鼠标的地块信息；由 main.ts 的 mousemove 驱动）---- */
 #hud-tip {
   position: fixed;
   bottom: 48px;
@@ -144,61 +241,24 @@ button:hover {
   color: #9cc98a;
 }
 
-#hud-sel .row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin: 5px 0;
-}
-#hud-sel .row .k {
-  width: 26px;
-  flex: none;
-  font-size: 12px;
-}
-#hud-sel .row .bar {
-  flex: 1;
-  height: 6px;
-  background: #222;
-  border-radius: 2px;
-  overflow: hidden;
-}
-#hud-sel .row .bar i {
-  display: block;
-  height: 100%;
-}
-#hud-sel .row .v {
-  width: 30px;
-  flex: none;
-  text-align: right;
-  color: #cde;
-  font-size: 12px;
+#hud-hint {
+  position: fixed;
+  bottom: 52px;
+  left: 14px;
+  z-index: 9;
+  color: #9ab;
+  font: 12px system-ui;
+  opacity: 0.85;
 }
 
-/* R1-1 断连横幅：顶部居中警示条。默认 hidden（联机断开时由 main.ts 取消隐藏）。
-   刻意做成醒目的橙色半透明条——断连期间世界是冻结的，若提示太淡玩家会以为游戏卡死。 */
-#hud-banner {
-  position: fixed;
-  top: 8px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 30;
-  padding: 6px 14px;
-  border-radius: 6px;
-  background: rgba(200, 110, 40, 0.92);
-  color: #fff;
-  font: 13px system-ui, sans-serif;
-  pointer-events: none;
-}
-#hud-banner[hidden] {
-  display: none;
 /* ---- 科技抽卡池面板（R2-1，2026-08-21 追加）----
    为什么用 <details> 折叠：科技是低频信息（每 ~120s 才有一次抽池），
-   常驻展开会和右上事件 feed 抢注意力；折叠后默认只占一行标题。 */
+   常驻展开会和右上事件流抢注意力；折叠后默认只占一行标题。 */
 #hud-tech {
   position: fixed;
   top: 44px;
   right: 350px;
-  z-index: 9;
+  z-index: 11;
   min-width: 150px;
   padding: 4px 8px;
   background: rgba(10, 12, 10, 0.72);
@@ -236,11 +296,37 @@ button:hover {
 #hud-tech-body .empty {
   color: #667;
 }
+
+/* R1-1 断连横幅：顶部居中警示条。默认 hidden（联机断开时由 main.ts 取消隐藏）。
+   刻意做成醒目的橙色半透明条——断连期间世界是冻结的，若提示太淡玩家会以为游戏卡死。 */
+#hud-banner {
+  position: fixed;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 30;
+  padding: 6px 14px;
+  border-radius: 6px;
+  background: rgba(200, 110, 40, 0.92);
+  color: #fff;
+  font: 13px system-ui, sans-serif;
+  pointer-events: none;
+}
+#hud-banner[hidden] {
+  display: none;
+}
+
 @media (max-width: 900px) {
-  /* 窄屏时 feed 已占满右侧，科技面板退到左下角免重叠 */
+  /* 窄屏时事件流已占满右侧，左侧分区整体收窄让位（科技面板退到左下角免重叠） */
+  #slot-vitals,
+  #slot-colony,
+  #slot-threat,
+  #slot-detail {
+    width: 148px;
+  }
   #hud-tech {
     right: auto;
-    left: 14px;
+    left: 176px;
     top: auto;
     bottom: 52px;
   }

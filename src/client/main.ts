@@ -44,6 +44,10 @@ async function boot(): Promise<void> {
 
   const remoteArg = new URLSearchParams(location.search).get('remote');
   const selected = new Set<number>();
+  /** R3-HUD：选中非鼠目标（建筑 id / 敌袭单位 id）。与 selected 互斥：
+   *  点鼠清空这两个，点建筑/敌人清空 selected（语义单一：详情面板同时只描述一个对象）。 */
+  let selBuilding: string | null = null;
+  let selHostile: number | null = null;
   let paused = false;
   let speed = 3;
   // R1-1 断连横幅（仅联机用；本地模式永远 hidden）
@@ -114,13 +118,30 @@ async function boot(): Promise<void> {
     onSelect(eid) {
       selected.clear();
       if (eid !== null) selected.add(eid);
+      // 点到鼠即取消非鼠选中：详情面板同时只描述一个对象
+      if (eid !== null) {
+        selBuilding = null;
+        selHostile = null;
+      }
       renderer.selected = selected;
+      hud.forceNow(); // R3-HUD：交互后立即刷 HUD（不等节流窗）
     },
     // R1-4 框选：整批替换选中集合（不是叠加——叠加会让「再框一次」无法缩小范围）
     onSelectMany(eids) {
       selected.clear();
       for (const id of eids) selected.add(id);
+      selBuilding = null;
+      selHostile = null;
       renderer.selected = selected;
+      hud.forceNow();
+    },
+    // R3-HUD：点到建筑/敌袭单位 → 详情面板切换目标（清空鼠选中）
+    onPickNonPawn(pick) {
+      selected.clear();
+      renderer.selected = selected;
+      selBuilding = pick.buildingId;
+      selHostile = pick.hostileId;
+      hud.forceNow();
     },
     onMove(x, y) {
       if (selected.size === 0) return;
@@ -237,7 +258,8 @@ async function boot(): Promise<void> {
       renderer.lerpCam(cx, cy);
     }
     renderer.frame(now);
-    hud.frame(paused, selected);
+    // R3-HUD：把非鼠选中一并喂给 HUD（详情面板同时只描述一个对象）
+    hud.frame(paused, selected, selBuilding, selHostile);
   });
   void flash;
 }

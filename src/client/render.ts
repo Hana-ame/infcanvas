@@ -35,6 +35,12 @@ export interface RenderInput {
   onSelect(eid: number | null): void;
   /** R1-4 框选：一次选中一批（单击点选走 onSelect，两者不冲突——拖动阈值区分） */
   onSelectMany?(eids: number[]): void;
+  /**
+   * R3-HUD：点中**建筑/敌袭单位**（而不是鼠）时上报。HUD 详情面板据此展示
+   * 建筑明细（种类/耐久/燃料）或敌袭单位档案（血量/距离/是否警戒）。
+   * 命中优先级：鼠 > 敌袭 > 建筑（离镜头中心更近的优先）；全空则三个都 null。
+   */
+  onPickNonPawn?(pick: { buildingId: string | null; hostileId: number | null }): void;
   onMove(x: number, y: number): void;
   onUserPan?(): void;
 }
@@ -157,6 +163,47 @@ export class Renderer {
   }
 
   /**
+   * R3-HUD：点中非鼠目标（敌袭单位 / 建筑）时上报，供 HUD 详情面板展示。
+   *
+   * 命中阈值按"看得见的精灵尺寸"给：敌人画得比鼠小，阈值相应收紧（1.2 → 0.9），
+   * 否则在密集营地里点篝火很容易误判成旁边的鼠。
+   *
+   * 敌袭优先于建筑：敌袭是**当前威胁**，玩家在危机时刻点东西时，多半是想看威胁，
+   * 而不是想看篝火耐久。渲染层零逻辑——只做命中判定并上报，优先级是表现层选择。
+   */
+  private pickNonPawn(wx: number, wy: number): void {
+    let hostileId: number | null = null;
+    let hBest = 0.9;
+    for (const h of this.view.hostiles()) {
+      const d = Math.hypot(h.pos.x - wx, h.pos.y - wy);
+      if (d <= hBest) {
+        hBest = d;
+        hostileId = h.id;
+      }
+    }
+    if (hostileId !== null) {
+      this.input.onPickNonPawn?.({ buildingId: null, hostileId });
+      return;
+    }
+    let buildingId: string | null = null;
+    let bBest = 1.0;
+    for (const b of this.view.buildings()) {
+      const def = this.view.buildingDef(b.defId);
+      // 多格建筑（棚屋/仓库 2×2）：命中任一占位格都算选中，否则只能点左上角
+      const w = def?.w ?? 1;
+      const h2 = def?.h ?? 1;
+      const dx = Math.max(b.pos.x - wx, 0, wx - (b.pos.x + w - 1));
+      const dy = Math.max(b.pos.y - wy, 0, wy - (b.pos.y + h2 - 1));
+      const d = Math.hypot(dx, dy);
+      if (d <= bBest) {
+        bBest = d;
+        buildingId = b.id;
+      }
+    }
+    this.input.onPickNonPawn?.({ buildingId, hostileId: null });
+  }
+
+  /**
    * 把选框画在实体层之上。
    * 为什么用世界坐标而非屏幕坐标：相机一直在动，屏幕坐标的框会「粘」在屏幕上
    * 相对地平移，看起来像是框跟着鼠标跑而不是框住世界。
@@ -232,6 +279,8 @@ export class Renderer {
           if (Math.hypot(p.pos.x - w.x, p.pos.y - w.y) <= 1.2) hit = p.eid;
         }
         this.input.onSelect(hit);
+        // R3-HUD：没点到鼠才去点建筑/敌人（点中鼠时清空另外两格选中，语义单一）
+        if (!hit) this.pickNonPawn(w.x, w.y);
         return;
       }
       // 平移：拖动过才算平移（并通知上层关掉相机跟随，否则两个力打架）

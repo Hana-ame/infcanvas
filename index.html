@@ -7,15 +7,40 @@
   </head>
   <body>
     <div id="app"></div>
-    <!-- HUD 叠层（渲染 canvas 由 Pixi 注入 #app；DOM 层样式见 src/client/style.css） -->
-    <div id="hud-top"></div>
-    <div id="hud-feed"></div>
+
+    <!--
+      HUD 叠层（R3-HUD 结构化面板体系，2026-10-06 重排）。
+
+      结构说明：
+      - #hud-panels 是**面板宿主根**，其下的 6 个 .slot 分区由 PanelHost 按需创建
+        （内容由 hud/panels.ts 的注册表生成，index.html 不再逐块写死内容）。
+        分区顺序 = 信息层级：状态条 → 健康 → 营地 → 威胁 → 详情 → 日志。
+      - 内联顺序只是**DOM 顺序的初始占位**；真实渲染顺序由 PanelHost 按 slot 固定排。
+      - #hud-tech 仍是独立的折叠 <details>（科技是低频信息，常驻展开会抢画面，见 style.css）。
+      - #hud-top / #hud-feed / #hud-sel 已移除：它们的内容迁进了分区面板，
+        保留旧 id 只会让人误以为还在用（死 id 是维护负担）。
+    -->
+    <div id="hud-panels">
+      <!-- 顶栏状态条：时钟 / 人口 / 食物 / 木料 / 建筑数 / 敌人数 / 已选 -->
+      <div id="slot-status" class="slot" data-slot="status"></div>
+      <!-- 鼠群健康均值：食/眠/情/智/血 五条彩条 */
+      <div id="slot-vitals" class="slot" data-slot="vitals"></div>
+      <!-- 营地构成：建筑种类 × 数量 -->
+      <div id="slot-colony" class="slot" data-slot="colony"></div>
+      <!-- 敌袭威胁：叙事压力条 + 下一波倒计时（未挂 raid 包时隐藏） -->
+      <div id="slot-threat" class="slot" data-slot="threat"></div>
+      <!-- 选中详情：鼠 / 建筑 / 敌袭单位 三合一 -->
+      <div id="slot-detail" class="slot" data-slot="detail"></div>
+      <!-- 事件流 -->
+      <div id="slot-log" class="slot" data-slot="log"></div>
+    </div>
+
     <!-- 科技抽卡池面板（R2-1）：默认折叠，不抢画面；🔩 x/N = 碎片进度 -->
     <details id="hud-tech">
       <summary>🔬 科技</summary>
       <div id="hud-tech-body"></div>
     </details>
-    <div id="hud-sel"></div>
+
     <div id="hud-btns">
       <button id="btn-pause">⏸ 暂停</button>
       <button id="btn-speed">⏩ 速度 ×3</button>
