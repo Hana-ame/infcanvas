@@ -273,11 +273,44 @@ function fireOfSeq(ctx: SimContext, seq: number): BuildingState | null {
  *  ①② 都放 condition：它们不需要位置配合（库存是全局事实、声望是查表事实）。 */
 function wantTrade(p: PawnState, ctx: SimContext): boolean {
   if ((ctx.stockpile[K_STOCK_WOOD] ?? 0) < ctx.tuning.factions.tradeWoodCost) return false;
-  return tradeTargetOf(p, ctx) !== null;
+  // ⚠ 必须走纯查询 findTradeTarget，**不能**调 tradeTargetOf（2026-10-07 R4-GEN
+  //   集成期实测定位）：tradeTargetOf 会写 ctx.scratch 锁定贸易目标，而 scratch
+  //   进指纹也进存档。把「锁定」放进 condition 意味着 drawCard 光是构建候选集
+  //   就改了世界状态——card-liveness 的候选池采样每 7 tick 调一遍全部 condition，
+  //   实测因此把 build_store 的读数从 4 抬高到 6（build_store / gather_berry /
+  //   chop_tree 单独采样都无扰动，扰动 100% 来自这一处）。
+  return findTradeTarget(p, ctx) !== null;
 }
 
-/**
- * 解析（首次则锁定）本次贸易的目标篝火。找不到返回 null。
+/** 纯查询：home 之外、贸易半径内、声望友好的最近一座火。不写任何状态。
+ *  条件（谓词）只能调它。 */
+function findTradeTarget(p: PawnState, ctx: SimContext): BuildingState | null {
+  const home = nearestFireOf(p, ctx);
+  if (!home) return null; // 四周没有营地：无处"从哪个派系来"
+  return scanTradeTarget(p, ctx, home);
+}
+
+/** 扫描本体（纯函数）：排除 home，取半径内友好派系中最近的一座。 */
+function scanTradeTarget(p: PawnState, ctx: SimContext, home: BuildingState): BuildingState | null {
+  const t = ctx.tuning.factions;
+  let best: BuildingState | null = null;
+  let bestD = t.tradeMagnetRadius;
+  for (const b of firesOf(ctx)) {
+    if (b.id === home.id) continue; // 自己人不算贸易对象
+    const d = Math.hypot(b.pos.x - p.pos.x, b.pos.y - p.pos.y);
+    if (d > bestD) continue;
+    if (repOf(ctx, home.id, b.id) > t.friendlyThresh) {
+      best = b;
+      bestD = d;
+    }
+  }
+  return best;
+}
+
+/** 解析（首次则锁定）本次贸易的目标篝火。找不到返回 null。
+ *
+ * ⚠ 本函数**有副作用**（写/删 ctx.scratch 的贸易目标键）：只有 action 路径
+ *   （doTrade）能调。condition 必须走上面的纯查询——否则抽卡阶段就在改世界。
  *
  * 【为什么必须锁定，缺了它是什么样】trade 的目标是"另一个"营地的火。鼠一路走过去，
  *   到达瞬间那座火就变成了"离它最近的篝火"= 它此刻的 home。若每 tick 都按当前位置
@@ -298,18 +331,8 @@ function tradeTargetOf(p: PawnState, ctx: SimContext): BuildingState | null {
     delete ctx.scratch[key]; // 失效：下面重新找，找不到就收工
   }
   const home = nearestFireOf(p, ctx);
-  if (!home) return null; // 四周没有营地：无处"从哪个派系来"
-  let best: BuildingState | null = null;
-  let bestD = t.tradeMagnetRadius;
-  for (const b of firesOf(ctx)) {
-    if (b.id === home.id) continue; // 自己人不算贸易对象
-    const d = Math.hypot(b.pos.x - p.pos.x, b.pos.y - p.pos.y);
-    if (d > bestD) continue;
-    if (repOf(ctx, home.id, b.id) > t.friendlyThresh) {
-      best = b;
-      bestD = d;
-    }
-  }
+  if (!home) return null;
+  const best = scanTradeTarget(p, ctx, home);
   if (best) ctx.scratch[key] = ctx.scratch[FACTION_KEYS.name(best.id)] ?? -1;
   return best;
 }

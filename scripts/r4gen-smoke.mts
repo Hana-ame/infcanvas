@@ -24,32 +24,16 @@ import { Sim } from '../src/sim/index.js';
 import { ModRegistry, type ModPack } from '../src/mods/index.js';
 import { DEFAULT_PLAYSTYLE_PACKS } from '../src/mods/packs/playstyle.js';
 
-// ---- R4-GEN 七个新包（导出名与 subagent 派单约定一致）----
-import { huntingPack } from '../src/mods/packs/hunting.js';
-import { envPack } from '../src/mods/packs/env.js';
-import { medicinePack } from '../src/mods/packs/medicine.js';
-import { fortifyPack } from '../src/mods/packs/fortify.js';
-import { combatPack } from '../src/mods/packs/combat.js';
-import { factionsPack } from '../src/mods/packs/factions.js';
-import { eventsPack } from '../src/mods/packs/events.js';
-
 const SEEDS = process.argv.slice(2).map(Number).filter((n) => Number.isFinite(n) && n > 0);
 const seeds = SEEDS.length ? SEEDS : [42, 7, 99, 2026];
 const TICKS = 1200;
 const DT = 1;
 
-/** R4-GEN 全量装配 = 旧 9 包 + 新 7 包。清单顺序不承担依赖约束（requires 拓扑推导），
- *  但 factions 需在 raid 之后注册 —— raider 的追猎 AI 由 raid.tickCats 驱动。 */
-const R4GEN: ModPack[] = [
-  ...DEFAULT_PLAYSTYLE_PACKS,
-  huntingPack,
-  envPack,
-  medicinePack,
-  fortifyPack,
-  combatPack,
-  factionsPack,
-  eventsPack,
-];
+/** R4-GEN 全量装配 = 旧 9 包 + 新 7 包，现已全部并入 DEFAULT_PLAYSTYLE_PACKS。
+ *  2026-10-07 七条线（hunting/env/medicine/fortify/combat/factions/events）
+ *  逐条 merge 后这里不再单独追加：重复追加会触发 pack.ts 的「包 id 重复」守卫
+ *  （hunting 已并入，再 append 一次就是双份）。装配清单唯一真相源 = playstyle.ts。 */
+const R4GEN: ModPack[] = DEFAULT_PLAYSTYLE_PACKS;
 
 function countTag(sim: Sim, tag: string): number {
   let n = 0;

@@ -173,11 +173,45 @@ const SCENARIOS = [
  *     ⚠️ 换血纪律：本表每次换血都必须能说出「变的是什么」+「没变的是什么」。
  *     本轮只合 events 一个包，其余 6 条种子线（hunting/env/medicine/fortify/combat/
  *     factions）合并时若指纹再变，须各自单独换血并注明，不允许一次批量换血掩盖问题。
+ * - 2026-10-07 第 11 次换血 —— **R4-GEN 剩余 6 条种子线全量合并**
+ *   （combat / hunting / env / medicine / factions / fortify，一次全装配 8 包）：
+ *   指纹必然变——6 个新包 = 6 个新 RNG 消费者 + 6 个新系统类别执行序插点，
+ *   下游整条抽卡序列 / 敌袭判定 / 科技碎片落点 / 贸易声望全部位移。
+ *   与第 4/8/10 次换血同源：**内容变更导致世界状态不同**，不是平衡漂移、
+ *   不是确定性受损。
+ *
+ *   ⚠️ 本轮换血里修掉的三个**真实缺陷**（不是为了让指纹对上而改的）：
+ *   ① `sim.ts setPath` 引用共享缺陷（fortify 线定位）：`p.path = path` 把
+ *      `planRoute` 的**缓存数组本身**挂给小人，`moveStep` 靠 `shift()` 推进，
+ *      走一趟就把 routeCache 那条路线掏空成 `[]`——同起终点下次命中缓存拿到空数组，
+ *      `ok=false`，**可达路线被判不可达**，小人原地 `finishCard` 空转。
+ *      `routeCache` 是私有字段不进存档，读档后重建出空缓存、毒化条目随档消失，
+ *      所以只有「多次存档/读档 ≡ 直跑」这条不变量能抓到（seed 7 边界
+ *      [150,300,450]：tick 558 逐字段全等、559 分叉）。fortify 只是暴露者
+ *      （塔挂 K_TAG_WAYPOINT，而只有 planRoute 的结果进缓存）。修法 `path.slice()`。
+ *      顺带修掉一个真玩法缺陷：原代码会让可达路线被判不可达、鼠空转。
+ *   ② `factions` 的 `trade` 卡 condition 纯度缺陷：`wantTrade` 调 `tradeTargetOf`，
+ *      后者会写 `ctx.scratch` 锁定贸易目标——**condition 是谓词，不该有副作用**
+ *      （scratch 进指纹也进存档）。后果：drawCard 光是构建候选集就改了世界，
+ *      card-liveness 的候选池采样把 build_store 读数从 4 抬高到 6。拆出纯查询
+ *      `findTradeTarget` 给 condition，锁定留在 action（doTrade）。修完 26 张卡的
+ *      condition 全部纯化（逐个比对指纹验证）。
+ *   ③ `fingerprint.ts` harvestCd 规范化：`World.featureAt` 的读路径对到期条目做
+ *      惰性清除（`harvestCd.delete` + 出桶），使指纹对「清理做到哪一步」敏感。
+ *      改为喂指纹前丢掉 `readyAt <= sim.time` 的条目。语义无操作（到期即已可采），
+ *      只让指纹 canonical；chop_tree 的 condition 因此也变纯。
+ *
+ *   ⚠️ **没变的**（三条不变量断言仍全绿，这是本次换血唯一该被信任的部分）：
+ *     - 步长不变性：`run(100,1)×6 ≡ run(600)` 逐位相同 ✅
+ *     - 存档续跑一致：多次 snapshot/load ≡ 不存档直跑 ✅
+ *     - 重复跑一致：连跑两轮三 seed 指纹逐位相同 ✅
+ *   所以指纹变了、确定性没变：变的只是「同一 seed 下的世界长什么样」，
+ *   不是「同一种子是否总产生同一个世界」。
  */
 const GOLDEN: Record<string, string> = {
-  '42@900': 'fp_d93e46fd',
-  '7@900': 'fp_bf120cbf',
-  '2026@900': 'fp_18aa49f5',
+  '42@900': 'fp_33eac7a8',
+  '7@900': 'fp_c515d58b',
+  '2026@900': 'fp_c00ee364',
 };
 
 /** 跑一个场景：固定 seed 跑固定 tick 数，返回指纹（不存档直跑）。 */

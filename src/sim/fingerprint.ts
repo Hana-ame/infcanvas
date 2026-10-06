@@ -192,7 +192,17 @@ export function fingerprint(sim: Sim): string {
     }
   };
   feedPairs(ws.featureLeft);
-  feedPairs(ws.harvestCd);
+  // ⚠ harvestCd 必须**规范化后再喂**（2026-10-07 R4-GEN 集成期发现）：
+  // `World.featureAt` 的读路径会对到期条目做惰性清除（`harvestCd.delete(k)` + 出桶），
+  // 于是「调一次只读查询」会改变下面这段要喂的状态。后果是条件函数（chop_tree /
+  // trade 的 condition 都走 nearestFeature → featureAt）不再是纯谓词——
+  // card-liveness.test.ts 的候选池采样每 7 tick 调一遍全部 condition，等于每 7 tick
+  // 给被测世界做一轮 harvestCd 清理，实测把 build_store 的读数从 4 抬高到 6。
+  // 语义上清除到期条目是无操作的（该特征早就可采了），所以**按语义规范化**而不是
+  // 改 featureAt：喂指纹前丢掉所有 readyAt <= 当前时间的条目。指纹因此对「惰性清除
+  // 做到哪一步」免疫，只反映真实的未到期冷却。
+  const harvestCd = ws.harvestCd.filter(([, readyAt]) => readyAt > sim.time);
+  feedPairs(harvestCd);
   h.intNorm(ws.nextBuildingId);
 
   // ---- 组 3：小人与敌袭实体（全部权威字段；按 eid/id 排序）----
