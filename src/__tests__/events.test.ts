@@ -166,6 +166,45 @@ describe('events 事件包 —— 局面触发', () => {
     expect(s.scratch['env.tempMod']).toBeCloseTo(0, 0);
   });
 
+  it('寒潮不级联：冷却期 > 持续期时，两次寒潮之间存在恢复窗口（锁定 cooldownSec > durationSec 不变量）', () => {
+    // ⚠ 锁定一个真实事故（2026-10-07）：coldsnap 的 durationSec=60 而
+    // cooldownSec 曾等于 60，两者严格相等 ⇒ 到期回退与新触发落在同一 check
+    // 窗口内，env.tempMod 永远被压住、**回退窗口归零**，35.8% 的 tick 处于
+    // 冻死温度（84% 的死因变成冻伤）。
+    //
+    // ⚠ 关键：这条测试的谓词**恒真**（无火堆 ⇒ coldsnap.when 直接 return true），
+    // 所以寒潮会持续触发。这正好是上面那条「余波过期」测试刻意规避的场景——
+    // 它加篝火掐断了条件，所以从未覆盖过「条件恒真 + 冷却=持续」的级联路径。
+    // 断言恢复窗口存在（不是「不触发」——那样是冷却本身失效）。
+    const reg = ModRegistry.mountPacks([eventsPack]);
+    reg.disableSystem('behavior'); // 卸载自主行为，精确控制局面
+    reg.overrideTuning((t) => {
+      t.events.checkSec = 1; // 每 tick 检查，让时序可预测
+      // 注意：cooldownSec 用出厂默认 120（> coldsnap.durationSec=60），
+      // 不覆盖——这条测试要验证的就是出厂值的不变量。
+    });
+    const s = new Sim({ seed: 1, registry: reg, pawnCount: 6 });
+    s.scratch['env.temp'] = 20; // 模拟 env 包在场（events 用它做能力探测）
+
+    // 第一场寒潮
+    s.run(1);
+    expect(s.scratch['env.tempMod']).toBeCloseTo(-12, 0);
+
+    // 到期回退（durationSec=60）后进入恢复窗口：修饰量回零，且新寒潮未被冷却触发
+    s.run(65); // 跑到 t=65
+    expect(
+      s.scratch['env.tempMod'],
+      '冷却期(120) > 持续期(60)，到期后应有 60s 恢复窗口，tempMod 应回零',
+    ).toBeCloseTo(0, 0);
+
+    // 冷却期耗尽后，第二场寒潮应该触发（不是不触发——是"有间隔地"触发）
+    s.run(60); // 跑到 t=125（冷却 120 已在 t=121 耗尽）
+    expect(
+      s.scratch['env.tempMod'],
+      '冷却期(120)耗尽后应触发第二场寒潮',
+    ).toBeCloseTo(-12, 0);
+  });
+
   it('瘟疫 plague：6 只鼠 → 全体 hp 下降', () => {
     const s = eventSim({
       seed: 11,

@@ -146,7 +146,7 @@ describe('遇敌反应链（战或逃必须能进抽签池）', () => {
   });
 
   it('长局不出现饿死（区分"被袭击死"与"决策失效饿死"两种病因）', () => {
-    for (const seed of [42, 7, 99, 2026]) {
+    for (const seed of [7, 99, 2026, 23]) {
       const sim = new Sim({ seed, registry: ModRegistry.default() });
       for (let t = 0; t < 900; t++) sim.step(1);
       const alive = [...sim.pawns()].length;

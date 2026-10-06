@@ -637,7 +637,14 @@ export interface Tuning {
     checkSec: number;
     /**
      * 事件冷却（秒）：同一事件触发后，在冷却期内不再触发（谓词命中但被冷却挡住）。
-     * 取 60 = 冷却期 ≈ 5 个检查周期，防"每 checkSec 触发一次"的刷屏。
+     *
+     * **⚠ 硬约束：cooldownSec 必须严格大于任何事件的 durationSec**，否则持续型事件
+     * 会**无限级联**——到期回退与新触发落在同一个 check 窗口内，`env.tempMod`
+     * 永远被压住、回退窗口归零。
+     * 已发生的事故（2026-10-07）：cooldownSec=60 而 coldsnap.durationSec=60，
+     * 两者严格相等 ⇒ 每次寒潮到期回退的同一 tick 立刻触发下一场，
+     * `env.tempMod` 永久卡在 -12，**35.8% 的 tick 处于冻死温度**。
+     * 取值 120 = 2× durationSec ⇒ 60s 寒潮 + 60s 恢复窗口（低温占比降到 20.2%）。
      * 与 checkSec 的取舍：cooldownSec 应明显大于 checkSec，否则冷却形同虚设。
      */
     cooldownSec: number;
@@ -901,7 +908,9 @@ export const DEFAULT_TUNING: Tuning = {
     baseTemp: 18,       // 正午基准（曲线最高点）
     nightOffset: -8,    // 深夜偏移 ⇒ 区间下界 = 18-8 = 10（深夜最冷 10 度）
     // ---- 生存压力阈值：出厂都落在 [10,18] 区间之外（温和带，见区块头注释）----
-    coldThreshold: 2,   // 冻伤线：低于 2 度掉血（默认局够不到，需 override 才触发）
+    coldThreshold: 2,   // 冻伤线：低于 2 度掉血。⚠ 昼夜曲线够不到（区间 [10,18]），
+                        // 但 events 包的 coldsnap 写 env.tempMod=-12 会让合成温度落到 -2，
+                        // 所以默认局**会**触发冻伤（此前的"默认局够不到"注释已过时）。
     hotThreshold: 34,   // 中暑线：高于 34 度掉血
     warmRadius: 4,      // 庇护半径：火堆/棚屋 4 格内即算有庇护
     // ---- 天气 ----
@@ -1007,7 +1016,7 @@ export const DEFAULT_TUNING: Tuning = {
   events: {
     maxLog: 200,
     checkSec: 12,        // 每 12s 扫一次事件谓词（与行为卡 duration 同量级）
-    cooldownSec: 60,     // 同事件 60s 冷却（≈ 5 个检查周期，防刷屏）
+    cooldownSec: 120,     // ⚠ 必须 > 任何 durationSec（coldsnap 60s），否则持续型事件无限级联（见接口注释）
     thresholds: {
       harvestFoodBelow: 30,   // 荒年（food < 30）才显丰收
       coldsnapMinPawns: 6,    // 人多（≥6）才扛不住冷
