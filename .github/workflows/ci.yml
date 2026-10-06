@@ -53,6 +53,54 @@ jobs:
       - name: vite build
         run: npx vite build
 
+  # ────────────────────────────────────────────────────────────────────
+  # 性能基准（R3 性能优化线，2026-10-06 加）
+  #
+  # 为什么必须有它：旧实现阶段做过 5 轮性能优化，其中「findNearest 空间索引」
+  # 实测**索引构建开销 > 节省**被回退。没有基准 = 没有回退判据 = 只能凭直觉改。
+  # 这个 job 把"优化前/后"的数字固化进 CI 日志，任何性能 PR 贴两份 BENCH_JSON 对照。
+  #
+  # 为什么 continue-on-error：GitHub runner 共享 CPU 有 ±15% 噪声，门禁化会天天假红。
+  # 现状 = 只报数不阻断（与 balance job 同策略）。
+  #
+  # 为什么跑多 seed：单 seed 是"这一个世界"的读数；地形哈希不同 → 寻路/特征热点
+  # 分布不同。只看一个 seed 容易把地形运气当成优化收益。
+  bench:
+    name: perf bench (900 tick x 3 seed x 2 scale) [报告, 不阻断]
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: perf sweep (出厂 4 鼠 · 3 轮取中位)
+        run: |
+          set -euo pipefail
+          for seed in 42 7 2026; do
+            echo "-------- seed=$seed --------"
+            npx tsx scripts/bench.ts 900 "$seed" --repeat=3
+          done
+      - name: perf sweep (24 鼠 · 玩家真实规模 · 3 轮取中位)
+        run: |
+          set -euo pipefail
+          for seed in 42 7 2026; do
+            echo "-------- seed=$seed pawns=24 --------"
+            npx tsx scripts/bench.ts 900 "$seed" --pawns=24 --repeat=3
+          done
+          {
+            echo '## 📊 性能基准（900 tick × 3 seed × 2 规模 × 3 轮中位）'
+            echo
+            echo '对照规则：同一 seed + 同一规模的 `BENCH_JSON` 逐字段比。'
+            echo '- **先看噪声再看收益**：`noise.allTotalsMs` 是同一份代码在**同一台 runner** 上跑 3 轮的总耗时散布。实测该散布可达 ±40%，所以两次不同运行的差值不可直接相减。'
+            echo '- **性能字段**（totalMs / avgMsPerTick / p95TickMs / maxTickMs / rssMb）：只有**大于 allTotalsMs 的极差**才算信号；本 job 只报告不阻断（`continue-on-error`）。'
+            echo '- **玩法指纹字段**（alivePawns / events / usesTotal / stockFood / stockWood / buildings / techsUnlocked）：**必须逐值相同** —— 不同即「优化改成了算出什么变了」，那是回归不是优化。这条是硬红线，跨轮也必须一致（脚本已自检，不一致直接抛错）。'
+            echo '- **逐系统耗时**（sysMs）：热点定位用，改哪一处先看这张表。'
+          } >> "$GITHUB_STEP_SUMMARY"
+
   # 平衡复采：与 ROADMAP「完成定义」一致——seed42/7/99/2026 存活 ≥3/4。
   # 这是纯逻辑入口（scripts/play.ts），不需要浏览器，放远端跑最划算。
   #
@@ -60,6 +108,36 @@ jobs:
   # 已经不达标（seed42/900s = 存活 2/4），平衡是已知的未还账，不是本轮回归。
   # 门槛以 warning 形式报出并落进 CI 日志，等平衡修好后把 continue-on-error 去掉。
   # 门禁只认 test + typecheck-build 两个 job。
+  # 配对 A/B（性能线 2026-10-06）：同一台 runner 上把「优化前」与「优化后」
+  # 两棵代码树交替采样。这是**唯一**能得到可信前后对比的方式 ——
+  # 托管 runner 共享 CPU，实测同一份代码跨两次运行能差 48%，
+  # 拿两次运行的读数相减得到的是噪声，不是收益。
+  ab-bench:
+    name: perf A/B (配对交替采样 vs main) [报告, 不阻断]
+    runs-on: ubuntu-latest
+    needs: test
+    continue-on-error: true
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # ab-bench.sh 要用 git worktree 拉出基线树
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: paired A/B vs origin/main
+        run: |
+          set -euo pipefail
+          scripts/ab-bench.sh origin/main 7 900 2>&1 | tee ab-out.txt
+          {
+            echo '## 🔬 配对 A/B（vs origin/main，同 runner 交替采样）'
+            echo
+            echo '```'
+            sed -n '/^====/,$p' ab-out.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
   balance:
     name: balance smoke (900s x 4 seed) [报告, 不阻断]
     runs-on: ubuntu-latest

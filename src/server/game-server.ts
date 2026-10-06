@@ -20,6 +20,7 @@ import { PING_MS, SERVER_COMMANDS, validateAdminArgs, validMoveArgs, HUD_SCRATCH
 import { authorizeAdmin, authorizeHandshake } from './auth';
 import { SaveStore, timestampName } from './save-store';
 import { loadSim, snapshotOf, type SaveData } from '../sim/sim-save';
+import type { PawnState } from '../sim/types';
 
 export interface GameServerOptions {
   port?: number;
@@ -239,17 +240,40 @@ export function createGameServer(opts: GameServerOptions): Promise<GameServerHan
   // ---- 增量同步 ~500ms：逐连接对照自己的基线（新事件/变更 pawn/删除名单）----
   const deltaMs = opts.deltaMs ?? 500;
   const deltaTimer = setInterval(() => {
+    // 性能线（2026-10-06）：把「每只鼠算一次指纹」提到**连接循环之外**。
+    //
+    // 原缺陷（现象/根因）：原实现把 JSON.stringify(p) 放在 `for (const ctx of clients)`
+    // 里面，于是**每条连接都要把所有鼠重新序列化一遍**。指纹只取决于 pawn 当前
+    // 状态，与"发给谁"无关 —— 3 条连接就白算 3 遍，10 条就白算 10 遍。
+    // 顺带修一处更浪费的：变更的鼠先 structuredClone(p)（深拷贝），紧接着又被
+    // send() 里的 JSON.stringify(msg) 整体再序列一次 —— 同一份数据走两遍序列化。
+    // 那次 clone 不能简单删掉（delta 消息要跨 tick 存活，必须是快照不能是活引用，
+    // 否则 sim 下一步推进会改掉已排队的消息 —— 这是真实正确性约束，不是冗余）。
+    //
+    // 做法：每 tick 对每只鼠算**一次** JSON 指纹存进共享 Map，各连接各自比对；
+    // 指纹相同的连接直接复用该鼠的**缓存 clone**，省掉重复深拷贝。
+    const fingerprints = new Map<string, string>();
+    const snapshots = new Map<string, PawnState>();
+    for (const p of sim.pawns()) {
+      const id = String(p.eid);
+      const json = JSON.stringify(p);
+      fingerprints.set(id, json);
+      snapshots.set(id, structuredClone(p)); // 本轮唯一的深拷贝
+    }
     for (const ctx of clients) {
-      const changedPawns: import('../sim/types').PawnState[] = [];
+      const changedPawns: PawnState[] = [];
       const removedPawns: number[] = [];
       const currentIds = new Set<string>();
-      for (const p of sim.pawns()) {
-        const id = String(p.eid);
+      for (const [id, json] of fingerprints) {
         currentIds.add(id);
-        const json = JSON.stringify(p);
         if (ctx.lastPawnJson.get(id) === json) continue; // 该连接已知，跳过
         ctx.lastPawnJson.set(id, json);
-        changedPawns.push(structuredClone(p));
+        // 复用本轮共享快照（性能线）：指纹相同的连接拿同一份 clone。
+        // ⚠ 安全性：send() 内部**同步** JSON.stringify(msg) 后才返回，
+        //   消息离开本函数时已经变成字符串，所以多个连接共享同一个 clone
+        //   对象是安全的——没有任何地方会跨 tick 持有它。
+        //   若将来改成异步/批量攒帧发送，必须改回 per-connection clone。
+        changedPawns.push(snapshots.get(id)!);
       }
       for (const id of [...ctx.lastPawnJson.keys()]) {
         if (!currentIds.has(id)) {

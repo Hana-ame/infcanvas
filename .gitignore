@@ -1,5 +1,8 @@
 # `node_modules/` 只匹配目录；指向别处的软链会被误 add，故补一条无斜杠的裸名
 node_modules/
+# node_modules 也可能是指向别的 checkout 的**符号链接**（多 agent 并行 worktree
+# 隔离时用它复用依赖）。`node_modules/` 带斜杠只匹配目录，匹配不到 symlink，
+# 结果 symlink 本身会被 git add 进去 —— 必须显式补一条无斜杠规则。
 node_modules
 dist/
 *.log

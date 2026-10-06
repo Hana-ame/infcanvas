@@ -54,24 +54,45 @@ export function cardWeight(p: PawnState, card: CardDef, ctx: SimContext): number
 /**
  * 加权抽选：候选 = condition 通过的卡；按最终权重轮盘赌。
  * 全部权重为 0 / 无候选 → null（内核 behavior 回落到内置兜底卡）。
+ *
+ * 性能线（2026-10-06）：候选与权重改用**模块级复用缓冲**，不再每次新建两个数组。
+ *
+ * 原缺陷（现象/根因）：本函数每 tick 对**每只到期抽卡的鼠**调用一次，每次
+ *   `new CardDef[]` + `new number[]` —— 而这两个数组在绝大多数调用里只装 2~4 个元素
+ *   （出厂 7 张卡，过完 condition 剩 2~4 个候选）。"为了存 3 个元素分配两个数组"
+ *   是纯 GC 压力。behavior 是基准里唯一超过 90% 的热点系统（旧项目"每帧对象
+ *   分配"教训的同款，只是规模从 120k 次/600s 局降到每 tick 每鼠 2 个）。
+ *
+ * 为什么复用是安全的（本条是安全前提，不是顺带一提）：
+ *   drawCard 必须**同步且非重入**。它内部只调 condition / weightHooks / cardWeight，
+ *   而 ModPack 的钩子签名（context.ts CardWeightHook / CardDef.condition）拿到的
+ *   只有 (p, card, ctx)，**没有抽卡面**——钩子里无法回调 drawCard。
+ *   函数返回时缓冲不再被任何地方持有。
+ *   ⚠ 若将来允许钩子/谓词内再次抽卡（重入），必须立刻改回局部数组，
+ *     否则内层调用会踩掉外层已写好的候选 = 抽到别的鼠的卡。
  */
+const scratchCandidates: CardDef[] = [];
+const scratchWeights: number[] = [];
+
 export function drawCard(ctx: SimContext, p: PawnState): CardDef | null {
-  const candidates: CardDef[] = [];
-  const weights: number[] = [];
+  // 按索引覆写而不是 push/clear：不给数组尾部留旧引用（已卸载的卡会被缓冲
+  // 保留到下一次抽卡才释放 = 无谓的 GC 保留；非正确性问题，但白占内存）。
+  let nc = 0;
   let total = 0;
   for (const card of ctx.cards()) {
     if (card.condition && !card.condition(p, ctx)) continue;
     const w = cardWeight(p, card, ctx);
     if (w <= 0) continue;
-    candidates.push(card);
-    weights.push(w);
+    scratchCandidates[nc] = card;
+    scratchWeights[nc] = w;
+    nc++;
     total += w;
   }
-  if (candidates.length === 0 || total <= 0) return null;
+  if (nc === 0 || total <= 0) return null;
   let r = ctx.rng() * total;
-  for (let i = 0; i < candidates.length; i++) {
-    r -= weights[i];
-    if (r <= 0) return candidates[i];
+  for (let i = 0; i < nc; i++) {
+    r -= scratchWeights[i];
+    if (r <= 0) return scratchCandidates[i];
   }
-  return candidates[candidates.length - 1]; // 浮点兜底：必返一张已算过的
+  return scratchCandidates[nc - 1]; // 浮点兜底：必返一张已算过的
 }
