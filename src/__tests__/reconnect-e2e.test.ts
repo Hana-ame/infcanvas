@@ -8,6 +8,12 @@
  *
  * 时间断言用宽松上界：退避封顶 8s + 握手开销；卡太紧会让 CI 偶发失败，
  * 但上界又远小于「永不恢复」，仍能抓住真回归。
+ *
+ * 为什么注入 ws 的 WebSocket（2026-10-06 补）：
+ * RemoteSim 走 `globalThis.WebSocket`。浏览器与 node 22+ 自带，但 **node 20 没有**
+ * ——CI 矩阵里的 node 20 上这两个用例会永远等不到重连（实测 attempts 涨但 connected 恒 false）。
+ * 生产代码已给出可读报错并照常排队重连；测试侧则由 `src/__tests__/setup.ts`
+ * 全局注入 ws 实现（ws 本来就是 server 端的依赖），让「真实链路」在所有 node 版本上都能验。
  */
 import { describe, expect, it } from 'vitest';
 import { createGameServer, type GameServerHandle } from '../server/game-server';

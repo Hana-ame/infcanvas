@@ -19,6 +19,24 @@ import { WATCHDOG_MS } from '../shared/protocol';
 import { BackoffState, shouldWatchdogTrip } from './reconnect';
 import { InterpSlot } from './interp';
 
+/**
+ * 取 WebSocket 构造器（2026-10-06 补）。
+ *
+ * 为什么不能直接 `new WebSocket(...)`：
+ * 浏览器有全局 WebSocket，node ≥22 也有（node 22 起把 undici 的 WebSocket 开放为全局），
+ * 但 **node 20 没有**——在那里 `new WebSocket(url)` 直接抛 `WebSocket is not defined`。
+ * 后果不只是联机测试挂：RemoteSim 会**静默地永远不重连**，因为异常发生在
+ * scheduleReconnect() 之前，排队逻辑根本没机会执行（实测 node20：
+ * attempts=1、failures=0、12s 内零重连）。
+ *
+ * 所以这里显式取构造器并给出可读的缺失原因，同时让 connect() 在缺失时
+ * **仍然排队重连**——这样「运行环境不支持」会表现为重连而不是静默死掉。
+ */
+function resolveWebSocketCtor(): typeof WebSocket | undefined {
+  const ctor = (globalThis as { WebSocket?: typeof WebSocket }).WebSocket;
+  return typeof ctor === 'function' ? ctor : undefined;
+}
+
 export class RemoteSim implements WorldView {
   time = 0;
   stockpile: Record<string, number> = {};
@@ -81,10 +99,23 @@ export class RemoteSim implements WorldView {
     this.url = url;
     return new Promise((resolve, reject) => {
       let settled = false;
+      const Ctor = resolveWebSocketCtor();
+      if (!Ctor) {
+        // 运行环境没有 WebSocket（典型：node 20）。**照样排队重连**，
+        // 否则 autoReconnect 模式下会静默停止自愈；错误信息要说清根因，
+        // 不能让排查的人以为是服务器没起来。
+        const err = new Error(
+          '当前运行环境没有全局 WebSocket（node 22+ / 浏览器才内置）。请换 node 22，或在入口注入 WebSocket 实现。',
+        );
+        this.scheduleReconnect();
+        reject(err);
+        return;
+      }
       let ws: WebSocket;
       try {
-        ws = new WebSocket(url);
+        ws = new Ctor(url);
       } catch (e) {
+        this.scheduleReconnect();
         reject(e instanceof Error ? e : new Error(String(e)));
         return;
       }
