@@ -80,6 +80,17 @@ describe('分区块同步（服务端集成）', () => {
       const c = await connect(h.port);
       // 上报一个**很窄**的视口（r=0 → 只要一块）
       c.ws.send(JSON.stringify({ t: 'interest', d: { x: 0, y: 0, r: 0 } }));
+      // ⚠ 必须等 `interestAck` 再取 delta，**不能**发完就 await delta
+      // （2026-10-06 修的真实偶发红：CI run 37411026329 报 `expected 49 to be 1`，
+      //  49 = 默认 512 半径的 7×7 块 —— interest 还没被服务端处理，
+      //  delta 定时器先跑了一步，于是拿到的是**默认视口**那一帧）。
+      // 原测试是本地过、node20 过、node22 红的**竞态**，不是稳定复现的逻辑错误。
+      // 正确修法是补协议信号（interestAck）而不是加 sleep：等久一点只是掩盖
+      // "没有信号"，既慢又不稳。ack 到达 = 服务端已按新视口裁剪，这是可观测事实。
+      const ack = await c.next<{ t: string; d: { x: number; y: number; r: number; chunks: number } }>(
+        'interestAck',
+      );
+      expect(ack.d).toEqual({ x: 0, y: 0, r: 0, chunks: 1 });
       const d = await c.next<{ t: string; d: { scope?: unknown[]; droppedChunks?: unknown[] } }>('delta');
       expect(d.d.scope).toBeDefined();
       expect(Array.isArray(d.d.scope)).toBe(true);

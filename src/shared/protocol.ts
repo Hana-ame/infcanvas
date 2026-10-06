@@ -142,7 +142,43 @@ export interface PingMsg {
   /** 服务端 sim.time（秒）：兼作链路活性 + 时间对齐的粗校验 */
   d: { time: number };
 }
-export type ServerMsg = WelcomeMsg | FullMsg | DeltaMsg | PingMsg;
+/**
+ * 兴趣区生效确认（line/net，2026-10-06 补）。
+ *
+ * **为什么需要这条 ack**：`interest` 是**单向**的，服务端此前不回任何确认，
+ * 于是客户端无从知道"服务端已经按新视口裁剪了"。这有两个真实后果，
+ * 不只是测试问题：
+ *
+ *  1. **客户端可能先收到一帧按旧视口（甚至默认 512 半径）裁剪的 delta/full**。
+ *     镜头已经推远、服务端还没处理完 interest 时，那一帧就是超范围的。
+ *     对带宽的影响是"多发一帧"（可容忍），但对**正确性**有隐患：
+ *     客户端会把这一帧的 scope 当成自己当前应该持有的范围，而真正生效的那一帧里
+ *     已退出的区块未必出现在 `droppedChunks` 里（差集是相对"上一轮 delta 生效的集合"
+ *     算的，见 game-server 的 lastScope 注释）—— 于是可能残留幽灵实体。
+ *  2. **测试只能靠 sleep 赌时序**：`chunked-server.test.ts` 原本
+ *    「发 interest → 立刻 await delta」在 CI 上偶发红（实测 `expected 49 to be 1`，
+ *    49 = 默认 512 半径的 7×7 块），本地与另一 node 版本只是碰巧不撞上。
+ *    有 ack 之后「interest 已生效」变成**可观测事实**而不是时间假设。
+ *
+ * **为什么不能靠加长 sleep 解决**：那是在用"等久一点"掩盖"没有信号"，
+ * 而且会让每个测试都变慢、且仍不稳定。协议缺确认信号就是协议缺陷。
+ *
+ * 兼容性：这是**新增消息类型**，旧客户端不认识会忽略（服务端从不回显错误是既有纪律），
+ * 不影响既有流式语义，故不构成破坏性变更。
+ */
+export interface InterestAckMsg {
+  t: 'interestAck';
+  d: {
+    /** 服务端实际采用的视口中心（tile） */
+    x: number;
+    y: number;
+    /** 服务端**实际生效**的半径（已钳到 [0, MAX_INTEREST_RADIUS]，故可能≠请求值） */
+    r: number;
+    /** 本次生效的订阅区块数（客户端可用来核对与本地预期是否一致） */
+    chunks: number;
+  };
+}
+export type ServerMsg = WelcomeMsg | FullMsg | DeltaMsg | PingMsg | InterestAckMsg;
 
 /** 心跳广播周期（ms）。ROADMAP R1-1 规定 10s。 */
 export const PING_MS = 10000;

@@ -274,7 +274,15 @@ export function createGameServer(opts: GameServerOptions): Promise<GameServerHan
         if (!validInterest(m.d)) return;
         const d = m.d;
         ctx.center = { x: d.x, y: d.y };
-        ctx.interest = new Set(chunksForInterest({ x: d.x, y: d.y, r: d.r }));
+        const keys = chunksForInterest({ x: d.x, y: d.y, r: d.r });
+        ctx.interest = new Set(keys);
+        // 回报生效范围（2026-10-06 补）：此前 interest 是单向的，客户端无从知道
+        // 服务端何时已经按新视口裁剪，于是「已生效」只能靠 sleep 猜 —— 这既让
+        // chunked-server 的断言在 CI 上偶发红（实测 expected 49 to be 1，
+        // 49 = 默认 512 半径的 7×7 块：interest 还没被处理就收到了默认视口的帧），
+        // 也让真实客户端可能把"旧视口那一帧"当成自己当前该持有的范围。
+        // 代价是每条 interest 多一条小消息（每次镜头移动/缩放一次），可忽略。
+        send(ctx, { t: 'interestAck', d: { x: d.x, y: d.y, r: d.r, chunks: keys.length } });
         return;
       }
       if (m?.t !== 'cmd' || typeof m.c?.type !== 'string') {
