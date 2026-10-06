@@ -335,24 +335,41 @@ export class Sim implements SimContext {
     // （真实踩坑：半路重规划全部静默失败）。findPath 内部也会兜底 round。
     const tx = Math.round(txRaw);
     const ty = Math.round(tyRaw);
-    const dist = Math.abs(tx - Math.round(p.pos.x)) + Math.abs(ty - Math.round(p.pos.y));
-    const maxIter = dist <= 24 ? 1500 : 8000;
+    const sx = Math.round(p.pos.x);
+    const sy = Math.round(p.pos.y);
+    const dist = Math.abs(tx - sx) + Math.abs(ty - sy);
     // 按边注入 z 判定：|Δz| ≤ 该鼠攀爬（岩层上不去就是上不去，A* 自动绕行）
     const stepOk = (fx: number, fy: number, ax: number, ay: number): boolean =>
       this.world.canStep(fx, fy, ax, ay, p.climb);
     const goalOk = (ax: number, ay: number): boolean => this.world.canStand(ax, ay);
 
-    // 直连 → 失败则借火堆锚点分段中转（远距离/隔地形时是唯一可行路径）
-// 锚点列表走 tag 倒排桶 + tagVersion 缓存（2026-10-06 性能线）。
-    // 表外建筑（所属玩法包已卸载）根本不会进桶——World.pushIndex 对 def 缺失
-    // 直接 return——所以这里无需再判空，语义与内容线补的守卫一致。
+    // ⚡ R4-Battle 有限范围 A* + 标志位导航（用户架构指令 2026-10-06：
+    //   「使用有限范围的 A* 为了无限地图支撑。地图上会设置大坐标标志位置点」）。
+    //
+    // 原缺陷（现象/根因）：长距（>24 格）时直连 A* 用 8000 迭代上限——实测
+    //   长距单次 1.6ms（64 鼠下 setPath 占 45% 耗时），且 8000 迭代上限意味着
+    //   搜索范围随地图变大而变贵 = **依赖地图尺寸**，撑不起无限地图。
+    // 修法：**长距默认走标志位导航**（planRoute：起点→最近标志位→…→目标的分段
+    //   有限 A*，每段 1500 迭代），直连 A* 只用于短距（≤24 格）。
+    //   标志位 = 火堆锚点（fireAnchors，已有 tag 倒排 + tagVersion 缓存）。
+    //   行为差异：长距路径会绕标志位（分段最优 ≠ 全局直连最优），属架构性变更，
+    //   golden 换血时记录。
     const anchors = this.fireAnchorsList();
-    let path = findPath(stepOk, goalOk, p.pos.x, p.pos.y, tx, ty, maxIter);
-    if (path.length === 0 && !(Math.round(p.pos.x) === tx && Math.round(p.pos.y) === ty)) {
-      path = planRoute(stepOk, goalOk, p.pos.x, p.pos.y, tx, ty, anchors, maxIter, 1500, this.routeCache);
+    const isLong = dist > 24;
+    let path: Pos[];
+    if (isLong && anchors.length > 0) {
+      // 长距 + 有标志位：直接走分段导航（不再先试 8000 迭代直连）
+      path = planRoute(stepOk, goalOk, sx, sy, tx, ty, anchors, 1500, 1500, this.routeCache);
+    } else {
+      const maxIter = isLong ? 8000 : 1500;
+      path = findPath(stepOk, goalOk, sx, sy, tx, ty, maxIter);
+      // 直连失败 → 借火堆锚点分段中转（远距离/隔地形时是唯一可行路径）
+      if (path.length === 0 && !(sx === tx && sy === ty)) {
+        path = planRoute(stepOk, goalOk, sx, sy, tx, ty, anchors, maxIter, 1500, this.routeCache);
+      }
     }
     p.path = path;
-    const ok = path.length > 0 || (Math.round(p.pos.x) === tx && Math.round(p.pos.y) === ty);
+    const ok = path.length > 0 || (sx === tx && sy === ty);
     return ok;
   }
   moveStep(p: PawnState, dt: number): void {
