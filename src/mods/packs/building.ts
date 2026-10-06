@@ -6,7 +6,7 @@
  * 材料不够这卡自然抽不中。木料富余时"大兴土木"的倾向也只是权重钩子，不是规则。
  */
 import type { ModPack } from '../pack';
-import { K_STOCK_WOOD, K_TAG_FIRE, K_TAG_SHELTER, K_TAG_STORAGE } from '../contracts';
+import { K_STOCK_WOOD, K_TAG_FIRE, K_TAG_SHELTER, K_TAG_STORAGE, K_TAG_WAYPOINT } from '../contracts';
 import { SER_BUILD } from '../contracts';
 import type { SimContext } from '../../sim/context';
 import type { PawnState, Pos } from '../../sim/types';
@@ -24,7 +24,7 @@ export const buildingPack: ModPack = {
       name: '篝火',
       cost: { wood: 10 },
       hp: 80,
-      tags: [K_TAG_FIRE],
+      tags: [K_TAG_FIRE, K_TAG_WAYPOINT],
       passable: true,
       fuelSec: 12,
     });

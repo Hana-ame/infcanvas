@@ -184,6 +184,9 @@ function tickCats(ctx: SimContext, dt: number): void {
   const leaving: number[] = [];
   for (const h of ctx.hostiles()) {
     const def = ctx.tuning.enemies[h.kind];
+    // 被动动物（R3-3 hunting）不跑掠食逻辑：它们的游荡/逃跑由 hunting 包自己的系统驱动。
+    // 不跳过会让猫的智能把兔子也变成追猎鼠的猎手——既不是生态位差异，也不是设计。
+    if (def.passive) continue;
     const target = nearestPawn(ctx, h);
     if (target && dist(h.pos, target.pos) <= ctx.tuning.raid.leashRadius) {
       if (dist(h.pos, target.pos) > ctx.tuning.raid.attackRange) {

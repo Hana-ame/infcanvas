@@ -56,6 +56,26 @@ export interface EnemyTuningEntry {
   atkCd: number; // 攻击间隔秒
   /** 攀爬：可跨越的高度差（缺省 1）。猫会爬岩层追猎 */
   climb?: number;
+  /**
+   * 掉落表（R3-3 狩猎，2026-10-07）：`<资源键, 份数>`，死亡时写入 `ctx.stockpile`。
+   *
+   * 为什么进内核而不是 hunting 包自己记账：掉落是**世界事实**（随档、进协议、
+   * 离线也成立），不是行为规则——把它做成"拾取卡"需要尸体实体系统，成本远高于收益。
+   * 缺省 undefined = 不掉落，**行为与改动前完全一致**（golden 基线不动）。
+   * 键必须是 contracts.ts 的 K_STOCK_* 常量（跨包词汇）。
+   */
+  drops?: Record<string, number>;
+  /**
+   * 被动动物（R3-3）：不主动追猎鼠，受击才反应（hunting 包自己的系统驱动其逃跑）。
+   * raid 包的 tickCats 会跳过 `passive` 敌人——否则猫的追猎逻辑会把兔子也变成猎手。
+   * 缺省 undefined = false = 掠食者（原有行为）。
+   */
+  passive?: boolean;
+  /**
+   * 主动索敌半径倍率（R3-3，缺省 1）：raid/hunting 包按 `leashRadius × aggro` 判索敌。
+   * >1 = 更主动（狼群），<1 = 更迟钝（石壳兽）。数值语义归调用方，内核只存数。
+   */
+  aggro?: number;
 }
 
 export interface Tuning {

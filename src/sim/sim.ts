@@ -18,6 +18,7 @@ import { behaviorCtor, commit, type GameSystem } from './systems';
 import type { BuildingState, Eid, FeatureHit, Hostile, LogEvent, PawnState, Pos } from './types';
 import type { SaveData } from './sim-save';
 import type { ModRegistry } from '../mods/registry';
+import { K_TAG_WAYPOINT } from '../mods/contracts';
 
 export interface SimConfig {
   seed?: number;
@@ -213,8 +214,19 @@ export class Sim implements SimContext {
     if (!h) return;
     h.hp -= dmg;
     if (h.hp <= 0) {
+      const def = this.tuning.enemies[h.kind];
+      // 掉落（R3-3 起支持）：把 drops 表写进营地库存。这是**世界事实**（随档/进协议），
+      // 不是行为规则，所以进内核而不是 hunting 包——做成"拾取卡"需要尸体实体系统，
+      // 成本远高于收益。缺省 undefined = 不掉落，日志与改动前逐字一致（golden 基线不动）。
+      const drops = def.drops ?? {};
+      const dropTxt = Object.entries(drops)
+        .map(([k, v]) => `+${v} ${k}`)
+        .join(' ');
+      for (const [k, v] of Object.entries(drops)) {
+        this.stockpile[k] = (this.stockpile[k] ?? 0) + v;
+      }
       this.despawnHostile(id);
-      this.log(`${this.tuning.enemies[h.kind].name} 被击退了`);
+      this.log(dropTxt ? `${def.name} 被击退了（${dropTxt}）` : `${def.name} 被击退了`);
     }
   }
 
@@ -322,7 +334,28 @@ export class Sim implements SimContext {
   private fireAnchorsList(): readonly Pos[] {
     const v = this.world.tagVersionNow();
     if (v !== this.fireAnchorsVersion) {
-      this.fireAnchors = this.world.buildingsByTag('fire').map((b) => ({ x: b.pos.x, y: b.pos.y }));
+      // 航点 = fire 桶 ∪ waypoint 桶（K_TAG_WAYPOINT，见 contracts.ts 注释）。
+      // 顺序刻意固定为「fire 先、waypoint 后」，各自保持插入序：planRoute 内部按到
+      // 起点/终点的距离排序，等距时 Array.sort 稳定保留输入序 ⇒ 输入序必须确定。
+      // fire 排在前面保证**无 waypoint 建筑时与改动前逐位相同**（golden 基线不动）。
+      // 去重：篝火同时挂两个标签，会在两个桶各出现一次。
+      const out: Pos[] = [];
+      const seen = new Set<string>();
+      for (const b of this.world.buildingsByTag('fire')) {
+        const k = `${b.pos.x},${b.pos.y}`;
+        if (!seen.has(k)) {
+          seen.add(k);
+          out.push({ x: b.pos.x, y: b.pos.y });
+        }
+      }
+      for (const b of this.world.buildingsByTag(K_TAG_WAYPOINT)) {
+        const k = `${b.pos.x},${b.pos.y}`;
+        if (!seen.has(k)) {
+          seen.add(k);
+          out.push({ x: b.pos.x, y: b.pos.y });
+        }
+      }
+      this.fireAnchors = out;
       this.fireAnchorsVersion = v;
     }
     return this.fireAnchors;
