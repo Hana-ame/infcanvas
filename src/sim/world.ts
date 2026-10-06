@@ -571,15 +571,15 @@ export class World {
     // 不能只对新增项 pushIndex：表被清空了，残留的旧桶会指向已不存在的建筑
     // （真实踩坑类：增量维护漏了"清空"这一路 = 索引里留着幽灵建筑）。
     this.tagIndex.clear();
-    for (const st of st.buildings) {
-      const b = structuredClone(st);
+    // ⚠ 循环变量不能叫 st：形参就是 st，会遮蔽出 TDZ 错
+    //   （ReferenceError: Cannot access 'st' before initialization —— 本轮实测踩到，
+    //    连带把 interp/remote-client/save-load 等 16 个用例一起带崩，症状离根因很远）
+    for (const src of st.buildings) {
+      const b = structuredClone(src);
       this.buildings.set(b.id, b);
       // ⚠ 必须索引**存进表的那一个对象**（clone 后的 b），不能索引入参 st：
       //   两处若不是同一对象引用，nearestBuildingByTag 返回的就不是 buildings
-      //   表里那一座 —— 身份不一致会让"改 pos 后重新查询"读到旧坐标。
-      //   （本轮实测抓到：首版写成 pushIndex(st)，倒排返回的是入参那份。
-      //    现实里 importState 的入参来自 save 文件，每次都是新对象，所以症状
-      //    是"读档后建筑查询返回的对象与 buildings 表不是同一个"。）
+      //   表里那一座 —— 身份不一致会让"按对象身份比较"时读到不同对象。
       this.pushIndex(b);
       const def = this.tuning.buildings[b.defId];
       if (def && !def.passable) {
