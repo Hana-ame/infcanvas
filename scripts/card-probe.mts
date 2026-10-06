@@ -1,7 +1,12 @@
 /**
- * scripts/_probe.mts —— 临时探针：逐卡量化「condition 失败率」与「子谓词失败构成」。
+ * scripts/card-probe.mts —— 正式诊断工具：逐卡量化「condition 失败率」与「子谓词失败构成」。
  *
- * 用法：npx tsx scripts/_probe.mts [seed...] （默认 42/7/2026/8888，dt 固定 1，900 tick）
+ * 用法：npx tsx scripts/card-probe.mts [seed...] （默认 42/7/2026/8888，dt 固定 1，900 tick）
+ *
+ * 来历：2026-10-06 从 line/cards 的临时探针 _probe.mts 转正。它是「死卡审计」方法论
+ * 的唯一可复用工具——死卡探测器（src/__tests__/card-liveness.test.ts）回答"有没有死卡"，
+ * 本工具回答"为什么死"（哪个子谓词拦住的、失败构成的分布）。
+ * 转正原因：chat/sow/harvest/sleep/cook 五张死卡都是靠它定位的，下一个内容线还会用到。
  *
  * 为什么用 .mts：本文件有 top-level await，.ts 在部分 node/tsx 配置下会报错。
  *
