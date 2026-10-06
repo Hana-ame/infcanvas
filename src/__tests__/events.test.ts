@@ -1,0 +1,336 @@
+/**
+ * events.test.ts —— events 事件包验收（"事件 = 谓词 + 效果表，无脚本线"）。
+ *
+ * 覆盖验收清单：
+ *  1. 丰收：库存 food 低 + 浆果丛存在 → 触发后 food 增加；
+ *  2. 寒潮：无火堆 → 触发后 env.temp 下降（需预设 scratch["env.temp"] 模拟 env 包）；
+ *  3. 瘟疫：6 只鼠 → 全体 hp 下降；
+ *  4. 流浪者：food 充足 + 有棚屋 → 鼠数 +1；
+ *  5. 丰收节：food > 80 → food 再 +15；
+ *  6. 冷却去重：同一事件在冷却期内不重复触发（触发次数 ≤ 1）；
+ *  7. 卸载 events 后世界照跑且无事件触发；
+ *  8. 卸载 events 但挂 env：无 tempShift 发生（env.temp 不变）；
+ *  9. 存读档：冷却计时随档，读档续跑不立刻重触发；
+ *  10. EventSeedDef 向后兼容：只有 { log } 的 seed 注册并触发不报错。
+ *
+ * 测试风格：最小装配 + 手动架设局面 + run() 步进（照 tech-pool.test.ts 范式）。
+ * 调参：checkSec=1 / cooldownSec=3 加速测试（overrideTuning）。
+ * 卸载 behavior 系统防鼠自主行为干扰局面（disableSystem('behavior')）。
+ */
+import { describe, expect, it } from 'vitest';
+import { Sim, snapshotOf, loadSim } from '../sim';
+import { ModRegistry, type ModPack } from '../mods';
+import type { EventSeedDef } from '../mods/registry';
+import { K_STOCK_FOOD, K_STOCK_WOOD } from '../mods/contracts';
+import { eventsPack } from '../mods/packs/events';
+import { buildingPack } from '../mods/packs/building';
+import { needsPack } from '../mods/packs/needs';
+import { gatheringPack } from '../mods/packs/gathering';
+import { socialPack } from '../mods/packs/social';
+import { raidPack } from '../mods/packs/raid';
+import { bootstrapPack } from '../mods/packs/bootstrap';
+import { techPoolPack } from '../mods/packs/tech-pool';
+import { farmingPack } from '../mods/packs/farming';
+import { cookingPack } from '../mods/packs/cooking';
+
+// ---- 测试调参常量（加速检查节奏与冷却）----
+const CHECK_SEC = 1;
+const COOLDOWN_SEC = 3;
+
+/** 事件 log 特征文本（用于断言事件是否触发） */
+const EVT_TEXTS = {
+  harvest: '丰收之年',
+  coldsnap: '寒潮来袭',
+  plague: '瘟疫',
+  stranger: '流浪者加入',
+  festival: '丰收节',
+} as const;
+
+/** 创建测试用 Sim：events 包 + 可调场景参数 */
+function eventSim(opts: {
+  seed: number;
+  pawnCount: number;
+  withBuilding?: boolean;
+  food?: number;
+  wood?: number;
+  coldsnapMinPawns?: number;
+  envTemp?: number;
+  addCampfire?: boolean;
+  addHut?: boolean;
+  harvestFoodBelow?: number;
+  plagueMinPawns?: number;
+  strangerFoodAbove?: number;
+  festivalFoodAbove?: number;
+}): Sim {
+  const packs: ModPack[] = opts.withBuilding ? [buildingPack, eventsPack] : [eventsPack];
+  const reg = ModRegistry.mountPacks(packs);
+  // 卸载 behavior 系统：防止鼠自主抽卡行为干扰局面（测试要精确控制局面）
+  reg.disableSystem('behavior');
+  reg.overrideTuning((t) => {
+    t.events.checkSec = CHECK_SEC;
+    t.events.cooldownSec = COOLDOWN_SEC;
+    if (opts.coldsnapMinPawns !== undefined) t.events.thresholds.coldsnapMinPawns = opts.coldsnapMinPawns;
+    if (opts.harvestFoodBelow !== undefined) t.events.thresholds.harvestFoodBelow = opts.harvestFoodBelow;
+    if (opts.plagueMinPawns !== undefined) t.events.thresholds.plagueMinPawns = opts.plagueMinPawns;
+    if (opts.strangerFoodAbove !== undefined) t.events.thresholds.strangerFoodAbove = opts.strangerFoodAbove;
+    if (opts.festivalFoodAbove !== undefined) t.events.thresholds.festivalFoodAbove = opts.festivalFoodAbove;
+  });
+  const s = new Sim({ seed: opts.seed, registry: reg, pawnCount: opts.pawnCount });
+  if (opts.food !== undefined) s.stockpile[K_STOCK_FOOD] = opts.food;
+  if (opts.wood !== undefined) s.stockpile[K_STOCK_WOOD] = opts.wood;
+  if (opts.envTemp !== undefined) s.scratch['env.temp'] = opts.envTemp;
+  if (opts.addCampfire && opts.withBuilding) s.addBuilding('campfire', 0, 0);
+  if (opts.addHut && opts.withBuilding) s.addBuilding('hut', 5, 5);
+  return s;
+}
+
+/** 找到原点 60 格内有浆果丛的 seed（berryRate=0.03 × 3600 格，几乎所有 seed 都有） */
+function findSeedWithBerry(): number {
+  for (let seed = 1; seed <= 20; seed++) {
+    const reg = ModRegistry.mountPacks([eventsPack]);
+    reg.disableSystem('behavior');
+    const s = new Sim({ seed, registry: reg, pawnCount: 0 });
+    if (s.nearestFeature('berry', 0, 0, 60)) return seed;
+  }
+  return 1; // fallback
+}
+
+/** 统计某事件 log 的出现次数 */
+function countEvents(s: Sim, text: string): number {
+  return s.events.filter((e) => e.text.includes(text)).length;
+}
+
+describe('events 事件包 —— 局面触发', () => {
+  it('丰收 harvest-blessing：food 低 + 浆果丛 → 触发后 food 增加', () => {
+    const seed = findSeedWithBerry();
+    const s = eventSim({
+      seed,
+      pawnCount: 2,
+      withBuilding: true,
+      food: 5,
+      wood: 100,
+      addCampfire: true, // 避免 coldsnap（有火 + pawns < 6）
+      coldsnapMinPawns: 999, // 双保险
+    });
+    // 前提验证：浆果丛存在
+    expect(s.nearestFeature('berry', 0, 0, 60)).not.toBeNull();
+    const food0 = s.stockpile[K_STOCK_FOOD] ?? 0;
+    expect(food0).toBeLessThan(s.tuning.events.thresholds.harvestFoodBelow);
+    s.run(3);
+    expect(s.stockpile[K_STOCK_FOOD]).toBeGreaterThan(food0);
+    expect(countEvents(s, EVT_TEXTS.harvest)).toBeGreaterThan(0);
+  });
+
+  it('寒潮 coldsnap：无火堆 → env.temp 下降（预设 scratch 模拟 env 包）', () => {
+    const s = eventSim({
+      seed: 7,
+      pawnCount: 2,
+      food: 35, // ≥30 避免 harvest
+      envTemp: 20, // 模拟 env 包挂载
+      coldsnapMinPawns: 999, // 防 plague 联动（虽然 pawns<6 已挡，但双保险）
+    });
+    expect(s.scratch['env.temp']).toBe(20);
+    s.run(3);
+    // 寒潮 tempShift=-12 → env.temp 应降至 8
+    expect(s.scratch['env.temp']).toBeCloseTo(8, 0);
+    expect(countEvents(s, EVT_TEXTS.coldsnap)).toBeGreaterThan(0);
+  });
+
+  it('瘟疫 plague：6 只鼠 → 全体 hp 下降', () => {
+    const s = eventSim({
+      seed: 11,
+      pawnCount: 6,
+      withBuilding: true,
+      food: 35, // ≥30 避免 harvest
+      wood: 100,
+      addCampfire: true, // 有火避免 coldsnap
+      coldsnapMinPawns: 999, // 双保险
+    });
+    const pawns = [...s.pawns()];
+    expect(pawns.length).toBe(6);
+    const hp0 = new Map(pawns.map((p) => [p.eid, p.hp]));
+    s.run(3);
+    // 瘟疫 hpDelta=-10 → 全体鼠 hp 应下降（damagePawn 单点出口）
+    for (const p of s.pawns()) {
+      const before = hp0.get(p.eid);
+      if (before !== undefined) expect(p.hp).toBeLessThan(before);
+    }
+    expect(countEvents(s, EVT_TEXTS.plague)).toBeGreaterThan(0);
+  });
+
+  it('流浪者 stranger：food 充足 + 有棚屋 → 鼠数 +1', () => {
+    const s = eventSim({
+      seed: 13,
+      pawnCount: 2,
+      withBuilding: true,
+      food: 50, // >40 触发 stranger，<80 避免 festival
+      wood: 100,
+      addCampfire: true, // 有火避免 coldsnap
+      addHut: true, // 有棚屋
+      coldsnapMinPawns: 999,
+    });
+    const pawns0 = [...s.pawns()].length;
+    s.run(3);
+    expect([...s.pawns()].length).toBe(pawns0 + 1);
+    expect(countEvents(s, EVT_TEXTS.stranger)).toBeGreaterThan(0);
+  });
+
+  it('丰收节 festival：food > 80 → food 再 +15', () => {
+    const s = eventSim({
+      seed: 17,
+      pawnCount: 2,
+      withBuilding: true,
+      food: 90, // >80 触发 festival，>40 但无棚屋所以 stranger 不触发
+      wood: 100,
+      addCampfire: true, // 有火避免 coldsnap
+      coldsnapMinPawns: 999,
+    });
+    const food0 = s.stockpile[K_STOCK_FOOD] ?? 0;
+    s.run(3);
+    // festival stock: { food: +15 }
+    expect(s.stockpile[K_STOCK_FOOD]).toBe(food0 + 15);
+    expect(countEvents(s, EVT_TEXTS.festival)).toBeGreaterThan(0);
+  });
+
+  it('冷却去重：同一事件在冷却期内不重复触发（≤1 次）', () => {
+    const s = eventSim({
+      seed: 19,
+      pawnCount: 2,
+      withBuilding: true,
+      food: 90, // 持续满足 festival 谓词
+      wood: 100,
+      addCampfire: true,
+      coldsnapMinPawns: 999,
+    });
+    // 跑 cooldownSec 秒：在冷却期内只触发 1 次
+    s.run(COOLDOWN_SEC);
+    const inCooldown = countEvents(s, EVT_TEXTS.festival);
+    expect(inCooldown).toBeLessThanOrEqual(1);
+    // 再跑 checkSec 秒（超过冷却期）：应再次触发
+    s.run(CHECK_SEC);
+    const afterCooldown = countEvents(s, EVT_TEXTS.festival);
+    expect(afterCooldown).toBeGreaterThan(inCooldown);
+  });
+});
+
+describe('卸载不破坏核心（原则④）', () => {
+  /** 默认装配减 events 的包列表（模拟"卸载 events 包"） */
+  const WITHOUT_EVENTS: ModPack[] = [
+    needsPack,
+    gatheringPack,
+    buildingPack,
+    socialPack,
+    raidPack,
+    bootstrapPack,
+    techPoolPack,
+    farmingPack,
+    cookingPack,
+  ];
+
+  it('卸载 events 后世界照跑且无事件触发（无 eventSeeds、无事件 log）', () => {
+    const reg = ModRegistry.mountPacks(WITHOUT_EVENTS);
+    // eventSeeds 为空（events 包未挂载）
+    expect(reg.eventSeeds).toHaveLength(0);
+    const s = new Sim({ seed: 42, registry: reg });
+    expect(() => s.run(200)).not.toThrow();
+    // 世界照跑：有鼠、有火
+    expect([...s.pawns()].length).toBeGreaterThan(0);
+    expect([...s.world.buildings.values()].some((b) => b.defId === 'campfire')).toBe(true);
+    // 无事件 log（所有事件特征文本都不出现）
+    for (const text of Object.values(EVT_TEXTS)) {
+      expect(s.events.some((e) => e.text.includes(text))).toBe(false);
+    }
+  });
+
+  it('卸载 events 但挂 env：无 tempShift 发生（env.temp 不变）', () => {
+    // 只挂 buildingPack（无 events 包），预设 env.temp 模拟 env 包
+    const reg = ModRegistry.mountPacks([buildingPack]);
+    const s = new Sim({ seed: 1, registry: reg, pawnCount: 2 });
+    s.scratch['env.temp'] = 20;
+    // 无 events 系统 → 无谓词检查 → 无 tempShift
+    expect(() => s.run(50)).not.toThrow();
+    expect(s.scratch['env.temp']).toBe(20);
+  });
+
+  it('卸载 events 后 eventSeeds 为空且世界照跑（无事件系统）', () => {
+    const reg = ModRegistry.mountPacks(WITHOUT_EVENTS);
+    expect(reg.eventSeeds).toHaveLength(0);
+    const s = new Sim({ seed: 42, registry: reg });
+    // 无 events 系统
+    expect(s.systems.some((x) => x.id === 'events')).toBe(false);
+    // 世界照跑
+    expect(() => s.run(100)).not.toThrow();
+    expect([...s.pawns()].length).toBeGreaterThan(0);
+  });
+});
+
+describe('存读档', () => {
+  it('冷却计时随档：读档续跑不立刻重触发', () => {
+    const reg = ModRegistry.mountPacks([buildingPack, eventsPack]);
+    reg.disableSystem('behavior');
+    reg.overrideTuning((t) => {
+      t.events.checkSec = CHECK_SEC;
+      t.events.cooldownSec = COOLDOWN_SEC;
+      t.events.thresholds.coldsnapMinPawns = 999;
+    });
+    const s = new Sim({ seed: 23, registry: reg, pawnCount: 2 });
+    s.stockpile[K_STOCK_FOOD] = 90;
+    s.stockpile[K_STOCK_WOOD] = 100;
+    s.addBuilding('campfire', 0, 0);
+    // 跑 1 秒触发 festival
+    s.run(CHECK_SEC);
+    expect(countEvents(s, EVT_TEXTS.festival)).toBe(1);
+    // 快照（含 scratch 冷却计时）
+    const snapshot = snapshotOf(s);
+    const restored = loadSim(JSON.parse(JSON.stringify(snapshot)), reg);
+    // 读档后继续跑（仍在冷却期内）
+    restored.run(COOLDOWN_SEC - 1);
+    // 不应再触发（冷却随档）
+    expect(countEvents(restored, EVT_TEXTS.festival)).toBe(1);
+  });
+});
+
+describe('向后兼容', () => {
+  it('EventSeedDef 向后兼容：只有 { log } 的 seed 注册并触发不报错', () => {
+    // 创建兼容测试包：注册一个只有 { log } 的 seed（旧形状）
+    const compatPack: ModPack = {
+      id: 'compat-test',
+      requires: [],
+      apply(m) {
+        const mySeeds: EventSeedDef[] = [
+          {
+            id: 'compat-event',
+            name: '兼容测试',
+            when: () => true,
+            effects: { log: '🧪 向后兼容测试事件' }, // 只有 log，无其他效果字段
+          },
+        ];
+        m.registerEvent(mySeeds[0]);
+        // 注册系统（与 events 包同款模式：闭包捕获自己的 seeds）
+        m.registerSystemDef({
+          id: 'compat-test',
+          category: 'world',
+          ctor: (ctx) => ({
+            id: 'compat-test',
+            update() {
+              for (const seed of mySeeds) {
+                if (!seed.when(ctx)) continue;
+                const e = seed.effects;
+                ctx.log(e.log);
+                if (e.stock) for (const [k, v] of Object.entries(e.stock)) ctx.stockpile[k] = (ctx.stockpile[k] ?? 0) + v;
+                if (e.stockMul) for (const [k, m2] of Object.entries(e.stockMul)) ctx.stockpile[k] = (ctx.stockpile[k] ?? 0) * m2;
+                if (e.hpDelta !== undefined) for (const p of [...ctx.pawns()]) { if (e.hpDelta < 0) ctx.damagePawn(p.eid, -e.hpDelta, seed.name); else p.hp = Math.min(p.maxHp, p.hp + e.hpDelta); }
+                if (e.spawnPawn) for (let i = 0; i < e.spawnPawn; i++) ctx.spawnPawn();
+                if (e.tempShift !== undefined && ctx.scratch['env.temp'] !== undefined) ctx.scratch['env.temp'] += e.tempShift;
+              }
+            },
+          }),
+        });
+      },
+    };
+    const reg = ModRegistry.mountPacks([compatPack]);
+    const s = new Sim({ seed: 1, registry: reg, pawnCount: 1 });
+    expect(() => s.run(5)).not.toThrow();
+    expect(s.events.some((e) => e.text.includes('向后兼容测试事件'))).toBe(true);
+  });
+});

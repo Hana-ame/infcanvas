@@ -36,8 +36,32 @@ export interface EventSeedDef {
   name: string;
   /** 局面触发谓词（事件从局面来，不是脚本线） */
   when: (ctx: SimContext) => boolean;
-  /** 命中后的效果表（声明式，非流程） */
-  effects: { log: string };
+  /**
+   * 命中后的效果表（声明式，非流程；事件 = 谓词 + 效果表，禁止脚本线/分支）。
+   *
+   * 向后兼容：旧形状 `{ log }` 仍能工作——所有新字段全部可选。events 系统遍历
+   * 效果表逐项应用，缺字段的分支自然跳过（原则④卸载不破坏核心同款手法：
+   * 空真不误伤）。stock 键必须用 contracts 的 K_STOCK_* 常量（跨包契约）。
+   *
+   * 各效果语义（全部读 tuning.events.thresholds 阈值，禁止硬编码魔法数）：
+   *  - stock：库存增减（正=加、负=扣），钳制 ≥0（不能出现负库存）；
+   *  - stockMul：库存乘数（如丰收到 ×1.5），同样钳制 ≥0；
+   *  - hpDelta：全体鼠 hp 增减（正=回血、负=扣血）；负值走 ctx.damagePawn 单点出口；
+   *  - spawnPawn：新增鼠数（流浪者事件）；
+   *  - tempShift：环境温度偏移——**仅当 env 包在场时生效**（读 ctx.scratch["env.temp"]，
+   *    键不存在则静默跳过，不报错）；卸载纪律见 events.ts 文件头。
+   *  - durationSec：效果持续时间（0/缺省=瞬时）；>0 的持续效果到点时做**反向效果**
+   *    （简化实现：把持续效果建模成"到点时再做一次反向"）。
+   */
+  effects: {
+    log: string;
+    stock?: Record<string, number>;
+    stockMul?: Record<string, number>;
+    hpDelta?: number;
+    spawnPawn?: number;
+    tempShift?: number;
+    durationSec?: number;
+  };
 }
 
 type TuningOverride = (t: Tuning) => void;

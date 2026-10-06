@@ -324,6 +324,36 @@ export interface Tuning {
   };
   events: {
     maxLog: number; // 事件环缓冲上限（防长局内存膨胀）
+    /**
+     * 事件检查节奏（秒）：events 系统每隔这么久遍历一次 eventSeeds 判谓词。
+     * 取 12 ≈ 与行为卡 duration 同量级，让事件"看得见地发生"而非"背景噪声"。
+     * 调参依据：太小 = 事件刷屏（每个 checkSec 可能刷一条 log），太大 = 事件稀薄
+     * 到看不见（种子要求"故事从局面抽出"，玩家必须能看到）。
+     */
+    checkSec: number;
+    /**
+     * 事件冷却（秒）：同一事件触发后，在冷却期内不再触发（谓词命中但被冷却挡住）。
+     * 取 60 = 冷却期 ≈ 5 个检查周期，防"每 checkSec 触发一次"的刷屏。
+     * 与 checkSec 的取舍：cooldownSec 应明显大于 checkSec，否则冷却形同虚设。
+     */
+    cooldownSec: number;
+    /**
+     * 各事件阈值（谓词全部读这里，禁止在事件种子内硬编码数字）。
+     * 命名语义：<名><比较方向>——Below = 低于此值触发，Above = 高于此值触发，
+     * Min = 至少多少只鼠。
+     */
+    thresholds: {
+      /** 丰收：food < 此值 且有浆果丛 → 触发（荒年才显丰收的恩泽） */
+      harvestFoodBelow: number;
+      /** 寒潮：火堆数为 0 或 鼠数 ≥ 此值 → 触发（人多才扛不住冷） */
+      coldsnapMinPawns: number;
+      /** 瘟疫：鼠数 ≥ 此值 → 触发（人多才传得开） */
+      plagueMinPawns: number;
+      /** 流浪者：food > 此值 且有棚屋 → 触发（富余才招得来） */
+      strangerFoodAbove: number;
+      /** 丰收节：food > 此值 → 触发（奢侈才庆祝） */
+      festivalFoodAbove: number;
+    };
   };
   tiles: Record<string, TileTuningEntry>;
   /** 建筑/敌人定义不在出厂表里——它们是玩法包的种子数据（registerBuilding/registerEnemy）。
@@ -563,7 +593,18 @@ export const DEFAULT_TUNING: Tuning = {
     chance: 1.0,
   },
   bootstrap: { pawnCount: 4 },
-  events: { maxLog: 200 },
+  events: {
+    maxLog: 200,
+    checkSec: 12,        // 每 12s 扫一次事件谓词（与行为卡 duration 同量级）
+    cooldownSec: 60,     // 同事件 60s 冷却（≈ 5 个检查周期，防刷屏）
+    thresholds: {
+      harvestFoodBelow: 30,   // 荒年（food < 30）才显丰收
+      coldsnapMinPawns: 6,    // 人多（≥6）才扛不住冷
+      plagueMinPawns: 6,      // 人多（≥6）才传得开
+      strangerFoodAbove: 40,  // 富余（>40）才招得来流浪者
+      festivalFoodAbove: 80,  // 奢侈（>80）才庆祝
+    },
+  },
   tiles: {
     // z 不在这里——每格独立 z 由分形海拔场量化（world.maxZ 控制上限）
     grass: { name: '草地' },
