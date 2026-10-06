@@ -32,10 +32,10 @@ export const techPoolPack: ModPack = {
     // order 0/1/2/3 = 抽卡权重递减位（权重 = TECH_ORDER.length - rank）。
     // 为什么 hut/store 有门控而 campfire 没有：篝火是 bootstrap 开局引导的落脚点，
     // 加科技门控会让"新营地连火都生不起来" = 死锁开局（世界模型里没有地牢传送）。
-    m.registerTech({ id: 'craft:tool', name: '简易工具', fragments: 3, order: 0, unlocks: [] });
+    m.registerTech({ id: 'craft:tool', name: '简易工具', fragments: 3, order: 0, unlocks: [], cardSeriesMul: { gather: 1.3 } });
     m.registerTech({ id: 'storage:store', name: '仓储术', fragments: 4, order: 1, unlocks: ['store'] });
-    m.registerTech({ id: 'fire:ring', name: '火塘改良', fragments: 4, order: 2, unlocks: [] });
-    m.registerTech({ id: 'craft:toolkit', name: '精工工具', fragments: 5, order: 3, unlocks: [] });
+    m.registerTech({ id: 'fire:ring', name: '火塘改良', fragments: 4, order: 2, unlocks: [], cardSeriesMul: { build: 1.2 } });
+    m.registerTech({ id: 'craft:toolkit', name: '精工工具', fragments: 5, order: 3, unlocks: [], cardSeriesMul: { fight: 1.25 } });
 
     // ---- 系统：科技抽卡池（类别 world：进度类，与战斗无关但也不是社会行为）----
     m.registerSystemDef({
@@ -59,6 +59,18 @@ export const techPoolPack: ModPack = {
           drawTechFragment(ctx, order);
         },
       }),
+    });
+
+    // ---- 权重钩子：解锁科技 = 技能提升，让相关系列卡更常抽中 ----
+    // 与 traits.seriesMul 同构：每个已解锁科技对其 cardSeriesMul 中的系列施加乘数。
+    // 不填 cardSeriesMul 的科技（如 storage:store）不参与权重调制——它们的效应是
+    // 解锁建筑门控（unlocks），不是行为倾向。
+    m.registerHook('cardWeight', (p, card, ctx) => {
+      let mul = 1;
+      for (const techId of ctx.techUnlocked()) {
+        mul *= ctx.tuning.techs[techId]?.cardSeriesMul?.[card.series] ?? 1;
+      }
+      return mul;
     });
   },
 };

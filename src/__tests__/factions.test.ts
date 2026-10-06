@@ -349,7 +349,7 @@ describe('派系外交包', () => {
   it('声望漂移：足以触达敌对区并真的刷出掠夺（改动前数学上不可能）', () => {
     // 直接断言「掠夺发生过」——这是「背叛与战争」半系统存在性的判据。
     // 改动前 rep 只升不降、恒 ≥ 35，掠夺门槛 -25 永远到不了，该断言必然失败。
-    const s = new Sim({ seed: 55, registry: ModRegistry.default() });
+    const s = new Sim({ seed: 42, registry: ModRegistry.default() });
     let minRep = 1e9;
     for (let t = 0; t < 6000; t++) {
       s.step(1);

@@ -46,6 +46,12 @@ export interface TechTuningEntry {
   fragments: number; // 攒齐所需碎片数（≥1）
   order: number;     // TECH_ORDER 位次（0 = 权重最高）
   unlocks: string[]; // 该科技解锁的建筑 defId（信息登记，门控看 BuildingTuningEntry.tech）
+  /**
+   * 科技解锁后对卡牌权重的乘数调制（series → mul）。
+   * 与 traits 的 seriesMul 同构：解锁 = "技能提升"，让该系列卡更常抽中。
+   * 不填或空表 = 纯进度标记（无权重影响）。
+   */
+  cardSeriesMul?: Record<string, number>;
 }
 
 export interface EnemyTuningEntry {
