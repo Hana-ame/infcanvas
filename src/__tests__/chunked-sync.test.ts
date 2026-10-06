@@ -242,7 +242,7 @@ describe('区块化合入：scope 内替换、scope 外卸载', () => {
 });
 
 describe('interest 上行', () => {
-  it('setInterest 上行 {t:'interest', d:{x,y,r}} 且未变不重复发', () => {
+  it('setInterest 上行 interest 信封（{t,d:{x,y,r}}）且未变不重复发', () => {
     const remote = new RemoteSim();
     const sent: string[] = [];
     (remote as unknown as { ws: { send(d: string): void } | null }).ws = {
