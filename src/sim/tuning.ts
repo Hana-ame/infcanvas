@@ -154,6 +154,11 @@ export interface Tuning {
   };
   social: {
     chatRadius: number;
+    /** 磁铁半径：同伴在此半径内**看得见**，闲聊卡才可能被抽上。
+     *  与 chatRadius 的区别是语义：chatRadius = 开口说话的贴身距离，
+     *  approachRadius = 愿意为之走过去看一眼的距离。**两者必须同时作用于同一张卡**，
+     *  否则会出现「看得见却永远到不了」的空转——这正是本轮修掉的缺陷，见 social.ts 头部。 */
+    approachRadius: number;
     chatMoodGain: number;
     chatRelGain: number;      // 关系值增量（-100..100）
     quarrelChance: number;    // 口角概率（低心情时闲聊翻脸——事件从局面触发）
@@ -277,6 +282,10 @@ export const DEFAULT_TUNING: Tuning = {
   },
   social: {
     chatRadius: 2.5,
+    // 磁铁半径 26：实测鼠群两两距离平均 46.4 / 中位 40.2 格，≤2.5 的只有 1.1%，
+    // ⇒ 闲聊卡 condition 常年 false（失败率 97.0%），社交事实上是死代码。
+    // 取 26 = 略低于中位距离的一半，保证「总有一只同伴在磁铁圈内」但不遍地搭话。
+    approachRadius: 26,
     chatMoodGain: 8,
     chatRelGain: 2,
     quarrelChance: 0.08,
