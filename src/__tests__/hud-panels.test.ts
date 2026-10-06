@@ -220,8 +220,13 @@ describe('PanelHost 每帧差分：零 DOM 重建是硬契约（R3-HUD 性能）
 
     p.cur = { key: 'k1', html: 'x' };
     expect(host.refresh(fakeView(), false, 1050)).toBe(0); // 距上次 50ms < 100ms → 节流
-    expect(host.refresh(fakeView(), false, 1100)).toBe(0); // 距上次 100ms，仍在窗内（严格小于判断）
-    expect(host.refresh(fakeView(), false, 1200)).toBe(1); // 超过窗内 → 写
+    // 边界：恰好 100ms 时 `now - lastAt < minInterval` 为假 → **放行**。
+    // 这正是我们要的语义："数据变了最迟 minIntervalMs 内显示"，含等于那一帧。
+    expect(host.refresh(fakeView(), false, 1100)).toBe(1);
+    // 放行后 lastAt 推到 1100，接下来 50ms 内又该被节流（证明 lastAt 确实被更新了）
+    p.cur = { key: 'k2', html: 'y' };
+    expect(host.refresh(fakeView(), false, 1150)).toBe(0);
+    expect(host.refresh(fakeView(), false, 1300)).toBe(1); // 超过窗内 → 写
   });
 
   it('force=true 跳过节流（玩家交互后必须立刻有反馈）', () => {
