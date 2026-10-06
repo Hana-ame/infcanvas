@@ -522,6 +522,35 @@ export interface Tuning {
     spawnRadius: number;
   };
   /**
+   * fortify —— 防御建筑包数值（围墙/哨塔/陷阱，line/fort）。
+   *
+   * 三建筑的**定义**（造价/hp/tags/passable/w/h）在 fortify 包各自的 registerBuilding
+   * 里（数据种子）；这里只放**行为参数**：陷阱的伤害与寿命、墙的选址间距偏好。
+   *
+   * towerBuildWeightNote（建造权重说明）：build_tower 基础权重 4 刻意**高于**
+   * build_wall(3) 与 build_trap(2)——哨塔 15 木一次性投入换"航点 + 庇护 + 可站立据点"
+   * 三重收益，是 SER_BUILD 里唯一值得反复抽的主项；墙/陷阱是消耗品（墙会被拆、
+   * 陷阱踩爆即毁），低权重让木料优先流向塔。
+   * 本包**不再额外挂 cardWeight 钩子**：building 包已对全部 SER_BUILD 做木料富余抬权，
+   * 同一系列上叠两层钩子会让权重语义不可解释（哪一层在起作用读不出来）。
+   */
+  fortify: {
+    /** 陷阱对踩中敌人的伤害（点/秒）：按 dt 连续结算，不是一次性跳变 */
+    trapDmgPerSec: number;
+    /** 踩中判定半径（格）：敌人到陷阱格心的距离 ≤ 此值算"踩中"。
+     *  0.6 格 ≈ 半格多一点：同一格或其正交邻格中心都会命中，
+     *  对角邻格（距离 √2 ≈ 1.41）不会——避免"擦边误伤"。 */
+    trapHitRadius: number;
+    /** 墙与墙的包内选址最小间距（格）：build_wall 选位时跳过距已有墙太近的候选。
+     *  真正的密度下限是内核 world.addBuilding 的同类间距（build.minSpacing=5）；
+     *  本字段以 max(本值, build.minSpacing) 作包内预筛阈值，想铺更稀疏的墙带就上调它。 */
+    wallMinGap: number;
+    /** 陷阱被踩多久后引爆（秒）：累积接触时长 ≥ 此值 → removeBuilding（一次性消耗品）。
+     *  刻意**短于** trap.hp / trapDmgPerSec（30/6 = 5s）——陷阱踩上来就该尽快引爆，
+     *  而不是赖在地上把 30 点结构血全漏光。 */
+    trapDurabilitySec: number;
+  };
+  /**
    * techs —— 科技抽卡池数据表（R2-1，2026-08-21 追加：ROADMAP「科技 = 独立抽卡池，碎片制」）。
    *
    * 为什么进表而不是硬编码（原则③）：科技条目既是抽卡池的**候选集合**，又是建筑门控的
@@ -834,6 +863,15 @@ export const DEFAULT_TUNING: Tuning = {
     maxRaiderWave: 2,
     raidCooldownSec: 90,  // 一对派系 90s 内只打一次：防刷屏，也给"战事平息"的窗口
     spawnRadius: 26,      // 刷在受害方营地外：贴脸是刺杀不是突袭
+  },
+  // 防御建筑行为参数（定义见 fortify 包 registerBuilding）。
+  // 权重说明见 Tuning.fortify 接口的 towerBuildWeightNote 注释：
+  // 塔 4 > 墙 3 > 陷阱 2，木料优先流向塔；本包不另挂 cardWeight 钩子。
+  fortify: {
+    trapDmgPerSec: 6,     // 踩中陷阱按 6 点/秒扣血（猫 hp 24 ≈ 4s 被磨死）
+    trapHitRadius: 0.6,   // 踩中判定半径：同格与正交邻格命中，对角擦边不算
+    wallMinGap: 1,        // 包内选址间距偏好；实际密度下限由 build.minSpacing(5) 决定
+    trapDurabilitySec: 3, // 被踩 3s 后引爆（刻意短于 30hp/6dps=5s，一次性消耗品）
   },
   // 科技表**出厂为空**：科技是玩法包种子（同 buildings/enemies 的纪律——内核零玩法内容）。
   // tech-pool 包挂载时 registerTech 注入条目。

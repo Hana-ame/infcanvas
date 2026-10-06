@@ -23,6 +23,7 @@ import { huntingPack } from './hunting';
 import { medicinePack } from './medicine';
 import { envPack } from './env';
 import { factionsPack } from './factions';
+import { fortifyPack } from './fortify';
 
 export const DEFAULT_PLAYSTYLE_PACKS: ModPack[] = [
   needsPack, // 需求衰减 + 吃/睡 + 饥饿权重调制
@@ -40,4 +41,5 @@ export const DEFAULT_PLAYSTYLE_PACKS: ModPack[] = [
   medicinePack, // 医疗（R3 瘟疫/饥荒）：病榻建筑 + 照料卡（耗草药）+ 自然恢复（requires building）
   envPack, // 环境：昼夜/温度/天气 + 冻伤中暑（无新卡，只走权重钩子与掉血）
   factionsPack, // 派系外交：贸易卡 + 掠夺（raider）+ 传闻（requires building/raid/bootstrap）
+  fortifyPack, // 防御（line/fort）：围墙/哨塔/陷阱三张建造卡 + 陷阱触发系统（requires building）
 ];

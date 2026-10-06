@@ -410,7 +410,11 @@ export class Sim implements SimContext {
         path = planRoute(stepOk, goalOk, sx, sy, tx, ty, anchors, maxIter, 1500, this.routeCache);
       }
     }
-    p.path = path;
+    // p.path **绝不能**直接引用 planRoute 返回的缓存数组：moveStep 靠 shift() 推进
+    // （见下），会把 routeCache 里同一条路线掏空——同起终点下一次命中缓存拿到空数组，
+    // 可达路线被判"不可达"，小人原地空转；存档/读档后缓存重建，同一局"直跑"与
+    // "续跑"从此分叉。故这里取副本，缓存本体永不共享。（golden 真实踩坑 2026-10-06）
+    p.path = path.length > 0 ? path.slice() : path;
     const ok = path.length > 0 || (sx === tx && sy === ty);
     return ok;
   }
