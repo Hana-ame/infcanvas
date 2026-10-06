@@ -83,7 +83,6 @@ const asJson = parsed.json;
 //   ② 4 鼠不是这个游戏的目标场景（RimWorld-like 的读点是" colonies 越跑越大"）。
 // 所以基准要能拉到玩家真的会遇到的规模，否则优化的是"一个没人在玩的配置"。
 // --pawns 走 overrideTuning 改 bootstrap.pawnCount（数据驱动原则③：数值进表不改内核）。
-const pawns = num(/^\d+$/, 0);
 const registry = ModRegistry.default();
 if (pawns > 0) {
   const n = pawns;
