@@ -156,6 +156,24 @@ describe('性能线 · 记忆化缓存正确性', () => {
     expect(other.nearestBuildingByTag('fire', 40, 40)).toBeUndefined(); // 旧档那座已不在
   });
 
+  it('③b importState 后索引里的对象就是 buildings 表里的那一个（身份一致）', () => {
+    // 这条锁的是本轮实测抓到的真 bug：importState 里曾写成
+    //   `buildings.set(b.id, structuredClone(b)); pushIndex(b)`
+    // 索引指向入参、buildings 表指向 clone —— 两者不是同一对象。
+    // 症状不会立刻报错，只在"按对象身份/改坐标后重查"这类地方出偏差，
+    // 属于"静默到很难查"的那一类，所以必须有专门的回归锁住。
+    const w = mkWorld();
+    const spot = findFree(w, 0, 0);
+    w.addBuilding('campfire', spot.x, spot.y);
+    const saved = w.exportState();
+    const restored = mkWorld();
+    restored.importState(saved);
+    const hit = restored.nearestBuildingByTag('fire', spot.x, spot.y);
+    expect(hit).toBeTruthy();
+    // 同一座建筑必须能从表和索引两侧拿到**同一个对象引用**
+    expect(hit).toBe(restored.buildings.get(hit!.id));
+  });
+
   it('④ tagVersion 随建筑增删递增（Sim 侧锚点表靠它判过期）', () => {
     const w = mkWorld();
     const v0 = w.tagVersionNow();
