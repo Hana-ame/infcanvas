@@ -69,12 +69,17 @@ function statusBar(getSel: () => SelectionCtx): PanelDef {
       const c = view.colony();
       const food = view.stockpile['food'] ?? 0;
       const wood = view.stockpile['wood'] ?? 0;
+      // 熟食（R3-4 K_STOCK_MEAL）：并列的第二种食物，eat 卡优先吃它。
+      // 为什么必须显示：R3-4 的机制是"熟食更划算"，玩家要能看到自己攒了多少
+      // 熟食才能判断"要不要花时间烤"——它是 R3-4 唯一的可观测反馈。
+      const meal = view.stockpile['meal'] ?? 0;
       // key 用定长标量：任一变化才重画；纯读取无 DOM
       const key = keyOf(
         Math.floor(s.time),
         c.pawnCount,
         food,
         wood,
+        meal,
         c.hostileCount,
         s.pawns.size,
       );
@@ -83,6 +88,7 @@ function statusBar(getSel: () => SelectionCtx): PanelDef {
         `<b>⏱ ${Math.floor(s.time)}s</b>` +
         `<span>🐭 ${c.pawnCount}</span>` +
         `<span>🍎 ${food}</span>` +
+        `<span>🍖 ${meal}</span>` +
         `<span>🪵 ${wood}</span>` +
         `<span>🔥🏚 ${view.buildings().length}</span>` +
         `<span>🐱 ${c.hostileCount}</span>` +
