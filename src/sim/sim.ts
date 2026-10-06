@@ -60,6 +60,30 @@ export class Sim implements SimContext {
   /** 锚点对段缓存（篝火航点中转）：键=起终点，值=拼好的路径或 null(不可达)。
    *  建筑增删即清空——火堆网络变了旧段作废。 */
   private routeCache = new Map<string, Pos[] | null>();
+  /**
+   * 火堆锚点列表缓存（2026-10-06 性能线新增）+ 它对应的 world.tagVersion。
+   *
+   * 原缺陷（现象/根因）：setPath **每次调用**都重新遍历整个建筑表重建锚点数组：
+   *   `for (const b of this.world.buildings.values()) if (tags.includes('fire')) anchors.push({...})`
+   *   而 setPath 是行为系统里最热的入口（采/砍/走/跑/睡五类卡动作都会调它），
+   *   每只鼠每 tick 可达 1 次。建筑数随局增长（实测 900s 局里 7~14 座），
+   *   于是"为了取 1~3 个火堆坐标"每次都付一次全表扫描 + N 次 tags.includes
+   *   + 每座一个新对象分配。
+   *
+   * 优化思路：锚点列表**只依赖建筑表**，而建筑表变更频率极低
+   *   （建造卡才增删，实测 900 tick 里 7~14 次），天敌是"高频读 / 低频写"。
+   *   所以缓存一份 + 用 world.tagVersion()（每次建筑增删 +1）判过期，
+   *   变了才重建。读侧 O(1)，写侧 O(建筑数) 但极少发生。
+   *
+   * 为什么不是"每次都重建"就够用：旧项目回退空间索引的原因正是
+   * 「索引构建开销 > 节省」。这里的差别是**构建频率**：空间索引每 tick 重建
+   * （×900 = 900 次），这份锚点表 900 tick 只重建 ~10 次，相差两个数量级。
+   *
+   * 与 routeCache 的分工：routeCache 缓存的是"起终点对 → 路径"，
+   * 本缓存是"锚点列表"本身。前者建筑增删就清空，后者跟着 tagVersion 走。
+   */
+  private fireAnchors: Pos[] = [];
+  private fireAnchorsVersion = -1;
 
   constructor(cfg: SimConfig) {
     this.reg = cfg.registry;
@@ -283,6 +307,27 @@ export class Sim implements SimContext {
   }
 
   // ---- 移动服务 ----
+  /**
+   * 火堆航点锚点列表（性能线缓存版）。
+   *
+   * 走 world 的 tag 倒排桶而不是重扫全表 —— 语义与原实现逐字一致：
+   * 原代码 `for (b of buildings.values()) if (tags.includes('fire')) push({x,y})`，
+   * 现在 `buildingsByTag('fire')` 的桶就是同一个集合（桶序 = 插入序 = 原迭代序），
+   * 只是把"过滤"提前到建筑增删时做了一次。planRoute 对锚点做 sort+slice(0,2)
+   * 取最近两个，**并列时的胜出者依赖迭代序** —— 桶序与原序一致，所以结果不变。
+   *
+   * 返回的是缓存数组本体（不给副本）：planRoute 只读它
+   * （`[...anchors].sort()` 自己会拷），给副本等于把这次优化又抵消掉。
+   */
+  private fireAnchorsList(): readonly Pos[] {
+    const v = this.world.tagVersionNow();
+    if (v !== this.fireAnchorsVersion) {
+      this.fireAnchors = this.world.buildingsByTag('fire').map((b) => ({ x: b.pos.x, y: b.pos.y }));
+      this.fireAnchorsVersion = v;
+    }
+    return this.fireAnchors;
+  }
+
   setPath(p: PawnState, txRaw: number, tyRaw: number): boolean {
     // 双档迭代上限：近距离低预算快速失败，远距离高预算。两档是搜索预算（实现参数）
     // 不是玩法数值，故内联于此；玩法数值一律进 tuning。
@@ -298,10 +343,7 @@ export class Sim implements SimContext {
     const goalOk = (ax: number, ay: number): boolean => this.world.canStand(ax, ay);
 
     // 直连 → 失败则借火堆锚点分段中转（远距离/隔地形时是唯一可行路径）
-    const anchors: Pos[] = [];
-    for (const b of this.world.buildings.values()) {
-      if (this.tuning.buildings[b.defId].tags.includes('fire')) anchors.push({ x: b.pos.x, y: b.pos.y });
-    }
+    const anchors = this.fireAnchorsList();
     let path = findPath(stepOk, goalOk, p.pos.x, p.pos.y, tx, ty, maxIter);
     if (path.length === 0 && !(Math.round(p.pos.x) === tx && Math.round(p.pos.y) === ty)) {
       path = planRoute(stepOk, goalOk, p.pos.x, p.pos.y, tx, ty, anchors, maxIter, 1500, this.routeCache);
