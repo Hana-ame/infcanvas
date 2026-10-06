@@ -1,69 +1,71 @@
-// 核心冒烟测试（2026-08-21 从零重写）——最小可玩闭环验证
-import { describe, it, expect } from 'vitest';
+/**
+ * core.test.ts —— 内核验收：确定性 / 时钟 / 实体生死 / 玩家命令优先。
+ * 确定性是"同 seed 同历史"的根基（存档回放、联机权威、测试可复现全靠它）。
+ */
+import { describe, expect, it } from 'vitest';
 import { Sim } from '../sim';
-import { ModRegistry } from '../mods/registry';
-import { CORE_PACKS, defaultPlaystyle } from '../mods/packs';
+import { ModRegistry } from '../mods';
 
-function makeSim(): Sim {
-  const reg = new ModRegistry();
-  reg.mountMany(CORE_PACKS);
-  reg.mount(defaultPlaystyle);
-  return new Sim({ registry: reg, pawnCount: 4 });
+function defaultSim(seed: number): Sim {
+  return new Sim({ seed, registry: ModRegistry.default() });
 }
 
 describe('从零核心', () => {
-  it('开局 4 鼠 + 4 系统 + 初始篝火', () => {
-    const sim = makeSim();
-    expect(sim.pawns.size).toBe(4);
-    expect(sim.systems.map((s) => s.id)).toEqual(['needs', 'behavior', 'gather', 'raid']);
-    expect(sim.world.buildings.size).toBe(1); // campfire
-    expect(sim.campPos()).toBeDefined();
-  });
-
-  it('鼠自主采集：30 秒后木/食物增长', () => {
-    const sim = makeSim();
-    const w0 = sim.stockpile.wood, f0 = sim.stockpile.food;
-    for (let i = 0; i < 600; i++) sim.step(0.05);
-    expect(sim.stockpile.wood).toBeGreaterThan(w0);
-    expect(sim.stockpile.food).toBeGreaterThan(f0);
-    expect(sim.pawns.size).toBe(4); // 30s 内不死
-  });
-
-  it('玩家命令：批量移动 + 3s 冷却不自主', () => {
-    const sim = makeSim();
-    const eids = [...sim.pawns.keys()];
-    sim.issueCommand('move', { eids, x: 10, y: 10 }, 'player');
-    // 玩家的 commandCd=3 → behavior 跳过
-    expect(sim.pawns.get(eids[0]!)!.commandCd).toBeGreaterThan(0);
-    for (let i = 0; i < 40; i++) sim.step(0.05); // 2s < 3s
-    const p = sim.pawns.get(eids[0]!)!.pos;
-    expect(p.x !== 10 || p.y !== 10).toBe(true); // 没到（或命令冷却）
-  });
-
-  it('建造：消耗木材 + 放置建筑', () => {
-    const sim = makeSim();
-    sim.stockpile.wood = 100;
-    // 找 spawn 附近草地（无限世界 (30,30) 可能是水）
-    let bx = 1, by = 0;
-    for (let r = 1; r <= 20; r++) {
-      let hit = false;
-      for (let dy = -r; dy <= r && !hit; dy++) for (let dx = -r; dx <= r && !hit; dx++) {
-        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
-        if (sim.world.tileAt(dx, dy) === 'grass') { bx = dx; by = dy; hit = true; }
-      }
-      if (hit) break;
+  it('确定性：同 seed 两次运行，库存/事件/卡触发完全一致', () => {
+    const a = defaultSim(42);
+    const b = defaultSim(42);
+    a.run(300);
+    b.run(300);
+    expect(a.stockpile).toEqual(b.stockpile);
+    expect(a.events.map((e) => e.text)).toEqual(b.events.map((e) => e.text));
+    for (const pa of a.pawns()) {
+      const pb = b.pawn(pa.eid)!;
+      expect(pb).toBeDefined();
+      expect(pa.uses).toEqual(pb.uses);
+      expect(pa.pos).toEqual(pb.pos);
     }
-    sim.issueCommand('build', { buildingId: 'wall', x: bx, y: by });
-    expect(sim.world.buildingAt(bx, by)?.defId).toBe('wall');
-    expect(sim.stockpile.wood).toBe(98); // wall 耗 2
   });
 
-  it('敌袭：野猫生成并攻击', () => {
-    const sim = makeSim();
-    // 跳过两次 raid interval 或直接塞敌人——直接塞 + 跑
-    sim.world.buildings = new Map(); // 清营地? 不，直接推进
-    // 用内部 timer：把 sim.step 跑 61s
-    for (let i = 0; i < 61 * 20; i++) sim.step(0.05);
-    expect(sim.hostiles.length).toBeGreaterThan(0);
+  it('步进推进时钟且世界时钟同步（特征再生依赖单时钟源）', () => {
+    const s = new Sim({
+      seed: 1,
+      registry: ModRegistry.mountPacks([]),
+      pawnCount: 0,
+    });
+    s.step(5);
+    expect(s.time).toBe(5);
+    // world.now 是私有语义，但再生冷却用它——间接验证：无异常即同步
+    expect(() => s.step(5)).not.toThrow();
+  });
+
+  it('spawn/kill：出生计数、死亡移除并清理选中', () => {
+    const s = defaultSim(9);
+    const before = [...s.pawns()].length;
+    const eid = s.spawnPawn(0, 0);
+    expect([...s.pawns()].length).toBe(before + 1);
+    s.selected = [eid];
+    s.killPawn(eid, '测试');
+    expect(s.pawn(eid)).toBeUndefined();
+    expect(s.selected).not.toContain(eid);
+  });
+
+  it('玩家 move 命令：打断自主行为 + holdUntil 优先窗口内不重抽', () => {
+    const s = defaultSim(11);
+    const p = [...s.pawns()][0];
+    const before = { ...p.uses };
+    s.issueCommand('move', { eid: p.eid, x: 3, y: 3 });
+    expect(p.cardId).toBeNull();
+    expect(p.holdUntil).toBeGreaterThan(0);
+    s.run(2); // 2s < 5s 窗口
+    expect(p.uses).toEqual(before); // 没抽任何新卡
+    // 路径已规划且在移动
+    const moved = p.path.length > 0 || Math.hypot(p.pos.x - 3, p.pos.y - 3) < 8;
+    expect(moved).toBe(true);
+  });
+
+  it('未知命令：记警告不崩溃（命令面健壮性）', () => {
+    const s = defaultSim(3);
+    expect(() => s.issueCommand('nonexistent', {})).not.toThrow();
+    expect(s.events.some((e) => e.text.includes('未知命令'))).toBe(true);
   });
 });

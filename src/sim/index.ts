@@ -1,6 +1,20 @@
-// sim 层导出（2026-08-21 从零重写）
-export { Sim } from './sim';
-export { World } from './world';
+/**
+ * sim/index.ts —— 权威核心公共出口（零 DOM / 零 Node API）。
+ * 客户端/服务端/CLI/测试统一从这里 import，禁止深路径穿透。
+ */
+export * from './types';
+export * from './tuning';
+export { mulberry32, hash2, type Rng } from './rng';
+export { World, type TileKind } from './world';
 export { findPath } from './pathfinding';
-export type { GameSystem } from './systems';
-export type { Eid, Pawn, Pos, Needs, Health, Hostile } from './types';
+export type { SimContext, CardWeightHook } from './context';
+export { cardWeight, drawCard, effectiveMastery, touchMastery, type CardDef } from './cards';
+export {
+  behaviorCtor,
+  CATEGORY_ORDER,
+  type Category,
+  type GameSystem,
+  type SystemDef,
+} from './systems';
+export { Sim, type SimConfig } from './sim';
+export { SAVE_VERSION, SAVE_MIGRATIONS, loadSim, snapshotOf, migrate, type SaveData } from './sim-save';

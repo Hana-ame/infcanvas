@@ -4,25 +4,24 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>infcanvas</title>
-    <style>
-      html, body {
-        margin: 0;
-        padding: 0;
-        width: 100%;
-        height: 100%;
-        overflow: hidden;
-        background: #000;
-        font-family: system-ui, sans-serif;
-      }
-      #app {
-        width: 100%;
-        height: 100%;
-        position: relative;
-      }
-    </style>
   </head>
   <body>
     <div id="app"></div>
+    <!-- HUD 叠层（渲染 canvas 由 Pixi 注入 #app；DOM 层样式见 src/client/style.css） -->
+    <div id="hud-top"></div>
+    <div id="hud-feed"></div>
+    <div id="hud-sel"></div>
+    <div id="hud-btns">
+      <button id="btn-pause">⏸ 暂停</button>
+      <button id="btn-speed">⏩ 速度 ×3</button>
+      <button id="btn-follow">🎯 跟随鼠群：开</button>
+      <button id="btn-save">💾 存档</button>
+      <button id="btn-load">⤴️ 读档</button>
+      <button id="btn-new">🎲 新世界</button>
+      <button id="btn-tip">📋 地块信息：开</button>
+    </div>
+    <div id="hud-tip"></div>
+    <div id="hud-hint">左键点鼠选中 → 点地面/右键指挥移动｜拖拽平移·滚轮缩放｜空格暂停｜悬停查看地形</div>
     <script type="module" src="/src/client/main.ts"></script>
   </body>
 </html>

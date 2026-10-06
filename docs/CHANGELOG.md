@@ -453,3 +453,15 @@
 
 - `tuning.combat.predatorReactionMul = 0.25`：非征召鼠对捕食者（predator 标记）的近身反击伤害倍率（自动反击只拖不杀——90hp 捕食者被非征召反击击杀需 45s，玩家有充足窗口驯化/指挥）；征召鼠（K_DRAFTED）恒全伤（1.0）。语义 = 自动防御只拖延、玩家指挥才能高效击杀——给战场指挥（征召/冲锋）与驯兽守卫（重伤窗口）真实介入价值。
 - 适用点：仅 raidSystem 捕食者分支的近身反击（nearestPawnInRange 自动选取，非玩家操作）；carried 逃跑途中被追砍保持全伤（叼着鼠的猫本该被全力截杀）。
+
+## 文档滞后修正：README/PLAYING 当前态与代码对齐（2026-08-23）
+
+> 背景：2026-08-21 删"××令"轮曾记录"README/PLAYING v3/DESIGN v3/DATA_DRIVEN v3/AGENTS v3 快照全部剥离相关描述"，核对发现 README 有漏网之鱼；本轮逐项与代码对齐并留痕。历史段落一律未动。
+
+| 滞后点 | 事实核对 | 修正 |
+| --- | --- | --- |
+| README「玩法包 ×7：…/ oracle / …」 | `src/mods/packs/` 仅 6 玩法包 + playstyle 聚合清单，无 oracle.ts，全 src 无 oracle 引用（DESIGN v3 节"默认玩法包 6 个"本就正确） | ×7→×6、删 oracle |
+| README 标语「自主生存 + 神谕引导」 | 神谕已随 2026-08-21 用户裁定整体废除 | 改「0 操作自主生存」 |
+| README「vitest 55 用例」 | 实测 56 用例 / 12 文件全绿（阶段④ review 曾记 55→56） | 55→56 |
+| PLAYING v3「move 命令**框选**」 | 客户端 onSelect 为单击单选（clear+add 单 eid），HINT 即「左键点鼠选中」，无框选（2026-08-20 review 已裁定改"点选"，此处漏改） | 框选→点选 |
+| PLAYING v3「阶段④尚未开工」「42 用例」「临时调试查看器 src/debug/viewer.ts」 | 阶段④已落地（src/client 正式客户端/存档/WSS），基线 56 用例 | 不改历史行，节末追加 dated 更正段说明当前态 |

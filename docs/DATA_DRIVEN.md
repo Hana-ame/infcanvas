@@ -116,7 +116,7 @@ interface BuildingDef {
 | `needs` | 饥饿/精力/心情衰减、紧急阈值、SAN 自然恢复、**auraScanRadius（光环扫描半径，生效距离由 def.aura.radius）** | foodDecay/restDecay/hungerAt/sleepyAt/starvationDmg/foodMoodLow-High/moodDrift/sanRecover/sanTrauma |
 | `san` | 狂乱阈值、目睹死亡、黑夜流失、篝火恢复 | crazyAt/witnessRadius/deathShock/nightDrain/fireRecover/crazyCooldown |
 | `gather` | 采集加成 | toolBonus/strBonusPerPoint/strBase |
-| `faith` | 祈祷/疗伤/矿洞/神谕（半径/时长/心情/信仰/信任门槛） | prayTime/healPerSec/caveWorkDuration/oracle* |
+| `faith` | 祈祷/疗伤/矿洞/旧版系统（半径/时长/心情/信仰/信任门槛） | prayTime/healPerSec/caveWorkDuration/oracle* |
 | `combat` | 袭击节奏/压力/近战/打建筑/DEX 闪避 + **raidEnemy/unitRaidEnemy（敌人种类 id，查 enemies 表）** | baseInterval/pressureScale/pawnDmg/buildingDmg/dodge* |
 | `social` | 微互动冷却/亲密敌对阈值/动手/传教/delta | friendAt/hostileAt/punch*/mood*/preach* |
 | `desire` | 七宗罪检查/衰减/匮乏/恶意槽/偷窃 | checkInterval/decayPerSec/scarceAt/criticalAt/malintent*/steal* |
@@ -200,7 +200,7 @@ overrideTuning(patch: DeepPartial<TuningConfig>): this  // 覆盖平衡参数（
 8. ✅ **每 tick 介入**：registerHook('step:before'/'step:after') 计数 + 改 sim 状态生效
 9. ✅ **新工作满足欲望**：卡 `satisfies` 声明 → 欲望正向反馈（不用文案匹配）
 10. ✅ **新发光建筑**：`emitsLight` 声明 → 参与光照图
-11. ✅ **新神谕建筑**：`capabilities:['oracle']` 声明 → 可降下神谕
+11. ✅ **新旧版系统建筑**：`capabilities` 声明 声明 → 可降下旧版系统
 12. ✅ **craft 用自己配方**：`recipe` 声明 → 每座加工建筑各产各的，不写死 workbench
 13. ✅ **派系优先级数据表**：`tuning.card.priority` rules，overrideTuning 改阈值生效
 14. ✅ **敌对种类数据化**：`registerEnemy` 新增 + `overrideTuning({combat:{raidEnemy:'boar'}})` 切换袭击类型；wolf 的 hp/speed/dmg/loot 全进 `defs/enemies.ts`
@@ -214,7 +214,7 @@ overrideTuning(patch: DeepPartial<TuningConfig>): this  // 覆盖平衡参数（
 > - `Sim.tuning` 由字段改为 getter → `this.mods.tuning`，否则 mods 回调对 tuning 的覆盖在构造后对 `this.tuning` 快照不可见（最初 2 个 mod 测试因此失败）。
 > - **registerCard 曾是真 bug**：`initSlots` 把 mod 卡排在 9 张基础卡之后，而 `maxSlots` 仅 2~4，mod 卡永远进不了卡池。第一次修"去重后优先"，仍被 **trait 卡**挤掉（占满 maxSlots）。最终：mod 卡**无条件全部进池**（去重基础卡），容量不再挤出 mod 玩法。
 > - `registerHook` 原为死 API（零调用点），已接线 `sim.step()` 的 step:before/after。
-> - `craftSystem`/发光/升级/神谕：从按 defId/campfire/church 特判改为 BuildingDef `emitsLight`/`upgradesTo`/`capabilities` 数据声明。
+> - `craftSystem`/发光/升级/旧版系统：从按 defId/campfire/church 特判改为 BuildingDef `emitsLight`/`upgradesTo`/`capabilities` 数据声明。
 > - 干掉了 desireSystem 按 `job.includes('伐木')` 文案匹配满足欲望的脆断点。
 > - **save/load JSON-safe**：slots 原来直接存含函数的卡数组，JSON 往返后 `decide` 为 undefined 必崩 → 改存卡 id，load 按 id 从 mod→基础→天赋卡重取；load 曾边遍历 `_pawnList` 边 killPawn（splice 跳过隔一个）→ 拷贝列表；load 后补 `assignPawn` 重填成员的 bug（否则首轮 step 误判团灭附身）。
 > - **AI 建造成本曾与手动不一致**：autonomousBuildSystem 入队写死 `{wood:1}`，手动队列读 def.costWood（教堂 8 木）——统一读 def；"自主建造教堂"测试原 100 木在真实成本下不够，备料调整。
@@ -340,10 +340,10 @@ overrideTuning(patch: DeepPartial<TuningConfig>): this  // 覆盖平衡参数（
 
 - **内核 = 0 系统**：用户裁决「内核真的只是一个引擎」后再拆——behavior/socialUnit 两个"引擎系统"也迁出为玩法包（`behavior.ts` / `social-unit.ts`），另抽出 Sim 类体内残留的两段玩法：经济账本（`economy.ts`）与出生引导（`bootstrap.ts`）。`BASE_SYSTEM_ORDER` 扩为 **24 系统、无任何内联 ctor**（KERNEL_SYSTEM_IDS = []）；纯引擎 Sim（卸全部玩法包）= 0 系统可装配可步进。执行序新增两条语义：**economy 在 behavior 前**（派系优先级当帧评估，behavior 抽卡权重立即生效——还原原 Sim.step 里 updateFactionPriority 先于 registry.updateAll 的顺序）；**bootstrap 表尾**（出生刷人在全部系统 init 完成后执行，spawnPawn 副作用不早于系统订阅）
 - **能力让渡（provide/getCap）**：Sim 持有 `caps` Map + `provide(cap, impl)`（SimContext 同步新增）；玩法包系统构造时自报能力——behavior 包 `provide('behavior', sys)`、social-unit 包 `provide('socialUnits', sys)`、economy 包 `provide('economy', {recordEarn, recordSpend})`、bootstrap 包 `provide('bootstrap', {respawn, ensureCamp})`。`sim.socialUnits` 变 getter（无包回落 NOOP_SOCIAL_UNITS）、`sim.behavior` 变 getter（intents/works 回填走能力，无包跳过）。**替换行为系统的契约升级**：禁用原系统 + 自建新 id 系统 + 构造时 provide 同名能力（同 id 再注册会冲突）
-- **命令路由（registerCommand）**：`Sim.issueCommand` = 路由器——`move` 引擎内建（实体移动）；`build`/`mine`/`assign`/`oracle` 由玩法包 `registerCommand(type, handler)` 提供（handler 签名 `(ctx: SimContext, cmd: Command) => void`）：build 包接 `build`（原 queueBuild 拒建反馈）、gathering 包接 `mine`（原 mineAt，用 ctx.getPath 能力）、behavior 包接 `assign`/`oracle`（原 oracleInfluence）。未知命令 → logEvent 反馈
+- **命令路由（registerCommand）**：`Sim.issueCommand` = 路由器——`move` 引擎内建（实体移动）；`build`/`mine`/`assign`/`oracle` 由玩法包 `registerCommand(type, handler)` 提供（handler 签名 `(ctx: SimContext, cmd: Command) => void`）：build 包接 `build`（原 queueBuild 拒建反馈）、gathering 包接 `mine`（原 mineAt，用 ctx.getPath 能力）、behavior 包接 `assign`（原指派逻辑）。未知命令 → logEvent 反馈
 - **economy 包**：记账规则（alpha 平滑个人预期 + 情绪反馈 + 全局资源流）+ 派系优先级评估（原 updateFactionPriority/priorityStock/flowAdd）从 Sim 迁入；`recordEarn/recordSpend` 经能力委托（纯引擎装配静默无操作）；`flow` 共享状态仍归引擎持有（SimContext.flow），`flowRatio` 为引擎纯查询
 - **bootstrap 包**：出生刷人（原构造 spawnPawns，位置 = 世界中心 3×3）+ 初始营地（ensureInitialCamp）+ `building_built→onCampfireBuilt` 归属回调 + `respawn/ensureCamp`（空世界重开，Sim 委托能力，纯引擎兜底 kill-all）
-- **Sim 保留（引擎面）**：ECS/world/rng/bus/history、实体操作（spawn/kill/move/findNearest）、getPath（改 public 入 SimContext）、读写组件、COC/lean、historyQuery/logEvent、buildingDef/recipe、techs、oracleGoal、stockpile/flow/factionPriority 共享状态、adjustMood、printCard（LLM 扩展 API）
+- **Sim 保留（引擎面）**：ECS/world/rng/bus/history、实体操作（spawn/kill/move/findNearest）、getPath（改 public 入 SimContext）、读写组件、COC/lean、historyQuery/logEvent、buildingDef/recipe、techs、stockpile/flow/factionPriority 共享状态、adjustMood、
 - **playstyle 清单扩为 23 包**：新增 economy/behavior/socialUnit/bootstrap 4 包（needs 前插入 economy，social 前插入 behavior/socialUnit，表尾追加 bootstrap——apply 序；执行序仍由 BASE_SYSTEM_ORDER 定）
 
 
@@ -584,3 +584,70 @@ boot(1)       bootstrap（恒表尾——出生刷人晚于全体系统）
 ### 运行时热挂载（DLC 里加 DLC）
 - `ModPack.subpacks`：父 DLC 声明子 DLC，mount 时自动先挂（requires 解析 + 幂等去重）。
 - `Sim.mountPack(pack)`：运行中热挂载——mods.mount（def + 系统 def）+ assemblePendingSystems 增量装配 + World.registerBuildingDef 同步新建筑 + 新命令进 cmdValidate。
+---
+
+## 从零重来 v3 数据面（2026-08-21 追加：当前态）
+
+> 上文描述旧版实现（归档 test/，历史保留）。本节为当前数据模型。
+
+### 数值表（src/sim/tuning.ts · DEFAULT_TUNING）
+
+| 表 | 键示例 | 消费方 | 说明 |
+| --- | --- | --- | --- |
+| world | elevCells/elevWeights + waterLevel/shoreBand/hillLevel/stoneLevel（分形海拔切带）；treeRate/groveBoost/moistCell（林地密度场）；dirtChance/berryAmount*/spawnClearRadius/harvestRegenSec | World | 一张海拔图切出 水/滩涂/草/丘陵(z1)/岩层(z2)；森林成片；阈值按实测分位数校准 |
+| pawn | speed/defaultCardSec/masteryGain/masteryDecayPerSec/atkCd/dmg/traitDmgMul | 决策引擎/卡 | 卡持续缺省 4s；熟练度演化参数 |
+| needs | foodDecay…sleepSanNearFire | needs 包 | 衰减与恢复全在此 |
+| build | minSpacing/searchRadius | building 包+World | 同类间距=涌现疏散（非数量上限） |
+| social | chatRadius/quarrelChance/lowMoodQuarrelAt… | social 包 | 口角=概率×局面谓词 |
+| raid | pressurePerSec/pressureThreshold/spawnDist*/leashRadius/senseRadius/fleeHpRatio | raid 包 | 叙事压力规则；战或逃的感知/恐惧线 |
+| bootstrap/events | pawnCount / maxLog | 内核+bootstrap | 出生数、事件环上限 |
+| tiles | grass(0)/dirt(0)/**hill(1)**/stone(2)/water(liquid) | World+移动判定 | **z 海拔模型**：|Δz|≤climb 才可跨；丘陵是鼠可翻越的岩层绕行鞍点；水面不可立足 |
+| buildings/enemies | ——出厂为空—— | World | **玩法包种子**（registerBuilding/registerEnemy 注入），内核零玩法内容 |
+| traits | strong/lazy/owl/workaholic/cheerful（seriesMul） | 权重管线 | 特质=权重倾向数据 |
+
+覆盖方式：`ModRegistry.overrideTuning(fn)` 注册期写覆盖链，`effectiveTuning()` 在 Sim 构造时
+一次性生效并缓存（运行期改表不生效是刻意语义——确定性优先）。
+
+### 注册内容速查（当前默认装配）
+
+- **系统 4**：needs(needs) → behavior(ai·内核) → raid(raid) → bootstrap(boot·恒表尾)
+- **卡 10**：gather_berry / chop_tree / eat / sleep / wander / chat / fight / flee /
+  build_campfire / build_hut（系列见 contracts SER_*）
+- **建筑 3**：campfire{wood×10,1×1,tag fire,不阻挡,**fuelSec=12**} / hut{wood×12,2×2,tag shelter,阻挡,**刚需门**=shelters<ceil(pawns×0.5)；旁边睡回心情}
+- **建筑 3**：store{wood×8,2×2,tag storage,阻挡,**刚需门**=stores<ceil(pawns×0.25)}
+- **敌人 1**：cat{hp24,dmg3,speed4.0<鼠4.5,atkCd1.5,**climb2>鼠1**}（网格调参终版：平均存活 3.6/4；速度低于鼠=逃跑有意义，能上岩层=生态位差异）
+- **命令 1**：move（引擎内建，唯一玩家干预面）
+
+### 契约登记（contracts.ts）
+
+`SER_GATHER/SER_WOOD/SER_BUILD/SER_EAT/SER_REST/SER_SOCIAL/SER_WANDER/SER_FIGHT/SER_FLEE` +
+`K_STOCK_FOOD/K_STOCK_WOOD` + `K_TAG_FIRE/K_TAG_SHELTER`。新跨包键必须进此表；
+validateContracts 校验卡的系列已登记。
+
+
+## 从零重来 v3·阶段④数据面（2026-08-21 追加）
+
+### 存档格式（SaveData v1，纯 JSON）
+
+| 字段 | 说明 |
+| --- | --- |
+| saveVersion | 版本号；SAVE_MIGRATIONS[i] 把 i 版迁到 i+1；>当前版本拒载 |
+| seed / time / rngState | 世界哈希种子、时钟、rng 内部状态（无符号规范化） |
+| nextEid / nextHostileId | 实体 id 自增游标 |
+| pawns[] / hostiles[] | 全字段结构化克隆 |
+| stockpile / relations / events / scratch | 资源池、关系对、事件环、玩法包运行态（键"<包>.<名>"） |
+| world | buildings 实体 + featureLeft/harvestCd 增量 + 建筑自增（occupied 由派生重建） |
+
+入口：`snapshotOf(sim)` / `loadSim(raw, registry)`（内部 migrate）。客户端本地模式存 localStorage。
+
+### 远程协议（shared/protocol.ts，JSON over WSS）
+
+| 方向 | 消息 | 内容 |
+| --- | --- | --- |
+| S→C | welcome（新连接） | seed + tuning 全表 + FullState |
+| S→C | full（~5s 对账） | FullState（含特征运行态 world 段） |
+| S→C | delta（~500ms） | time/stockpile + 变更 pawn（逐连接 JSON 基线比对）+ removedPawns + hostiles/buildings 全发 + newEvents |
+| C→S | cmd | `{type, args}`；服务端白名单 SERVER_COMMANDS（现仅 move）+ validMoveArgs 校验 → issueCommand |
+
+地形不下发：客户端以 seed+tuning 本地 `new World` 推导 tile（纯函数零流量）；
+特征余量/冷却随 full.world 同步并 importState（含时钟对齐）。

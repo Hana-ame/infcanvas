@@ -1,0 +1,175 @@
+/* client/style.css —— HUD 样式（阶段④正式客户端；与调试查看器同风格） */
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #101410;
+}
+canvas {
+  display: block;
+}
+
+#hud-top {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 10;
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 8px 14px;
+  background: rgba(10, 12, 10, 0.82);
+  color: #ddd;
+  font: 13px/1.4 system-ui, sans-serif;
+  border-bottom: 1px solid #2a332a;
+}
+#hud-top b {
+  color: #fff;
+}
+
+#hud-btns {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 10;
+  display: flex;
+  gap: 8px;
+  padding: 8px 14px;
+  flex-wrap: wrap;
+  background: rgba(10, 12, 10, 0.82);
+  border-top: 1px solid #2a332a;
+}
+button {
+  background: #26332a;
+  color: #dde;
+  border: 1px solid #3f5545;
+  border-radius: 6px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font: 13px system-ui, sans-serif;
+}
+button:hover {
+  background: #33453a;
+}
+
+#hud-feed {
+  position: fixed;
+  top: 44px;
+  right: 0;
+  width: 340px;
+  max-height: 42vh;
+  overflow-y: auto;
+  z-index: 9;
+  pointer-events: none;
+  background: rgba(10, 12, 10, 0.72);
+  color: #cde;
+  padding: 8px 10px;
+  font: 12px/1.6 ui-monospace, monospace;
+  border-left: 1px solid #2a332a;
+  border-bottom: 1px solid #2a332a;
+}
+
+#hud-sel {
+  position: fixed;
+  left: 14px;
+  top: 52px;
+  z-index: 9;
+  width: 190px;
+  padding: 10px 12px;
+  display: none;
+  background: rgba(10, 12, 10, 0.8);
+  border: 1px solid #2a332a;
+  border-radius: 8px;
+  color: #eee;
+  font: 13px system-ui, sans-serif;
+}
+#hud-sel .muted {
+  color: #9ab;
+  font-size: 12px;
+  margin: 4px 0;
+}
+#hud-sel .bar {
+  height: 5px;
+  background: #222;
+  border-radius: 2px;
+  margin: 5px 0;
+  overflow: hidden;
+}
+#hud-sel .bar i {
+  display: block;
+  height: 100%;
+}
+
+#hud-hint {
+  position: fixed;
+  bottom: 52px;
+  left: 14px;
+  z-index: 9;
+  color: #9ab;
+  font: 12px system-ui;
+  opacity: 0.85;
+}
+
+#hud-tip {
+  position: fixed;
+  bottom: 48px;
+  right: 14px;
+  z-index: 20;
+  pointer-events: none;
+  display: none;
+  min-width: 130px;
+  padding: 7px 10px;
+  background: rgba(8, 10, 8, 0.92);
+  border: 1px solid #3f5545;
+  border-radius: 6px;
+  color: #dde;
+  font: 12px/1.55 system-ui, sans-serif;
+  white-space: nowrap;
+}
+#hud-tip .t-name {
+  font-weight: 700;
+  color: #fff;
+}
+#hud-tip .muted {
+  color: #9ab;
+}
+#hud-tip .bad {
+  color: #e08a8a;
+}
+#hud-tip .ok {
+  color: #9cc98a;
+}
+
+#hud-sel .row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 5px 0;
+}
+#hud-sel .row .k {
+  width: 26px;
+  flex: none;
+  font-size: 12px;
+}
+#hud-sel .row .bar {
+  flex: 1;
+  height: 6px;
+  background: #222;
+  border-radius: 2px;
+  overflow: hidden;
+}
+#hud-sel .row .bar i {
+  display: block;
+  height: 100%;
+}
+#hud-sel .row .v {
+  width: 30px;
+  flex: none;
+  text-align: right;
+  color: #cde;
+  font-size: 12px;
+}

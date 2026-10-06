@@ -1,25 +1,43 @@
 # infcanvas
 
-RimWorld-like 殖民地游戏 · web / infinite canvas · 可联机 · 支持 LLM 与插件 mod。
+RimWorld-like 鼠鼠殖民地模拟 · **一切皆抽卡**的 0 操作自主生存。
 
-- **sim**：纯逻辑仿真核心，零渲染依赖，双端（server/client）共用（Node 直跑已验证）
-- **client**：Pixi 渲染 + DOM UI（本地单机 / `?remote=` 连 server 两种模式）
-- **server**：WSS + 权威模拟 + tick 循环（P1 骨架已落地，tick delta/断线重连/可选鉴权已提前落地，见 docs/DESIGN.md §9）
+> **2026-08-21 从零重来 v3**：旧全量实现（632 测试/66 包）已归档 `test/`（仅作历史参考）。
+> 当前代码按 `docs/REIMPLEMENT_PROMPT.md` 的 8 条原则重建，完成阶段①+②；
+> 架构详见 [docs/DESIGN.md](docs/DESIGN.md) 文末「从零重来 v3 架构」章节。
 
-**文档导航**：[docs/INDEX.md](docs/INDEX.md) 是总索引；核心设计见 [docs/DESIGN.md](docs/DESIGN.md)，玩家手册见 [docs/PLAYING.md](docs/PLAYING.md)，历史演进见 [docs/CHANGELOG.md](docs/CHANGELOG.md)。
+## 当前状态（阶段①②④ ✅ / ③ ⬜）
 
-**快速体验**
+- **sim 内核**：零 DOM 权威模拟——抽卡决策引擎（无行为树/任务队列）、无限确定性地图、
+  A* 寻路、命令路由、事件 feed。浏览器/Node 双端同一份代码。
+- **玩法包 ×6**：needs / gathering / building / social / raid / bootstrap，
+  ModPack 显式依赖 + 拓扑挂载，可单独装卸、单独测试；卸载不破坏核心。
+- **0 操作生存闭环**：4 鼠出生 → 采集/吃饭/睡觉/建造/社交 → 敌袭战或逃，全程自主。
+- **玩家干预只有基础指挥**：move 命令移动鼠鼠；没有任何"××令"/全局干预机制。
+- **PixiJS 客户端 + 存档**：正交俯视渲染、点选指挥、localStorage 存读档（版本化 JSON，确定性续跑）。
+- **WSS 联机**：服务器权威模拟，增量快照同步，多端同观一局。
+
+## 快速体验
 
 ```bash
-npm install
-npm run server -- 8080        # 权威模拟 server（可加参数: 端口 [seed] [pawn数]）
-npm run dev                    # 客户端 dev server
+npm test                                   # vitest 56 用例（内核/各包独立/装配卸载/契约/存档续跑/协议）
+npm run typecheck                          # tsc --noEmit
+npm run build                              # 生产构建（PixiJS 分包）
+
+# 本地游玩（PixiJS 渲染 + 存档读档）
+npm run dev                                # → http://localhost:5173 （?seed=42 开局；?save=1 读最近存档）
+
+# 联机（WSS 权威模拟 + 增量同步）
+npm run server -- 8080 42                  # 权威服务器
+#   浏览器开 http://localhost:5173/?remote=ws://127.0.0.1:8080
+
+npx tsx scripts/play.ts 600 42            # 纯逻辑 CLI：600s 生存循环统计报告
 ```
 
-- 单机模式：打开 dev server 首页
-- 联机观察模式：打开 `http://localhost:5173/?remote=ws://127.0.0.1:8080`（server 权威，本页只读观察 + 下命令；**断线自动重连**，server 重启后页面自行恢复）
-- **LLM 事件导演**（可选）：设 `LLM_ENDPOINT`（OpenAI 兼容）/ `LLM_API_KEY` / `LLM_MODEL` 环境变量再启动 server，世界事件改由 LLM 生成（预取+白名单效果+失败自动降级确定性）；不设则纯确定性
+## 文档导航
 
-**测试**：`npm test`（vitest 625 例全过（当前系统 50 / 默认包 62），含插件化装配/卸载、玩法包依赖图/远程加载、无限地图双图层）+ e2e：`node scripts/e2e/run-e2e.mjs scripts/e2e/remote-viewer.mjs`（9 断言：连接/快照/命令上行/build 回显/时间流动/move 指挥）、`scripts/e2e/remote-delta.mjs`（tick delta 增量帧构成）、`scripts/e2e/remote-interp.mjs`（渲染插值平滑）、`scripts/e2e/reconnect.mjs`（断线重连，自起 vite+server）
-
-**想玩/看效果**：[docs/PLAYING.md](docs/PLAYING.md)（当前版本玩法说明，面向玩家）。
+- [docs/DESIGN.md](docs/DESIGN.md) —— 设计灵魂与架构（文末 v3 章节为当前态）
+- [docs/DATA_DRIVEN.md](docs/DATA_DRIVEN.md) —— 数值表/注册面/契约（文末 v3 章节）
+- [docs/PLAYING.md](docs/PLAYING.md) —— 玩法说明（文末 v3 节为当前可玩内容）
+- [docs/PROGRESS.md](docs/PROGRESS.md) —— 进度与演进史（append-only）
+- [docs/REIMPLEMENT_PROMPT.md](docs/REIMPLEMENT_PROMPT.md) —— 从零实现规格书（本轮蓝本）
