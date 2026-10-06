@@ -27,6 +27,8 @@ function fullStateOf(sim: Sim): FullState {
     // 插值测试不关心科技，但 FullState 是必填字段，缺了 tsc 就红。
     techs: [...sim.techUnlocked()],
     techFragments: { ...sim.techFragments },
+    // R3-HUD 新增：HUD 面板依赖的 scratch 白名单子集。插值测试不关心，给空即可。
+    hudScratch: {},
   };
 }
 

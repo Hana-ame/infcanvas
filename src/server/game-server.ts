@@ -16,7 +16,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { Sim } from '../sim';
 import type { ModRegistry } from '../mods';
 import type { FullState, ServerMsg } from '../shared/protocol';
-import { PING_MS, SERVER_COMMANDS, validateAdminArgs, validMoveArgs } from '../shared/protocol';
+import { PING_MS, SERVER_COMMANDS, validateAdminArgs, validMoveArgs, HUD_SCRATCH_KEYS } from '../shared/protocol';
 import { authorizeAdmin, authorizeHandshake } from './auth';
 import { SaveStore, timestampName } from './save-store';
 import { loadSim, snapshotOf, type SaveData } from '../sim/sim-save';
@@ -112,7 +112,21 @@ export function createGameServer(opts: GameServerOptions): Promise<GameServerHan
       world: sim.world.exportState(),
       techs: [...sim.techUnlocked()], // 科技抽卡池状态（R2-1；只随 full/welcome 走，delta 不带）
       techFragments: { ...sim.techFragments },
+      hudScratch: hudScratchOf(sim),
     };
+  }
+
+  /**
+   * HUD 面板需要的 scratch 子集（R3-HUD）：按白名单挑选，不外推整个 scratch。
+   * 键不存在 = 该包没挂（值为 undefined → 不落键，客户端回落到"未知"而非假 0）。
+   */
+  function hudScratchOf(sim: Sim): Record<string, number> {
+    const out: Record<string, number> = {};
+    for (const k of HUD_SCRATCH_KEYS) {
+      const v = sim.scratch[k];
+      if (v !== undefined) out[k] = v;
+    }
+    return out;
   }
 
   function send(ctx: ClientCtx, msg: ServerMsg): void {

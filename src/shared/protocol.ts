@@ -33,7 +33,25 @@ export interface FullState {
    */
   techs: string[];
   techFragments: Record<string, number>;
+  /**
+   * 玩法包运行态子集（R3-HUD，2026-10-06）：**只带 HUD 面板要显示的那几个键**，
+   * 不是把整个 scratch 推下去。
+   *
+   * 为什么需要它：敌袭叙事压力存在 raid 包的 scratch 键 'raid.pressure' 里，
+   * HUD 威胁面板要显示它（玩家此前完全看不到"下一波还有多久"）。
+   * 但 scratch 是 Record<string, number>——整份外推等于把**所有包的内部实现细节**
+   * 变成网络契约（将来某个包加个内部累加器就会悄悄变成协议字段）。
+   * 所以服务端在出口白名单挑选：键集变化成为**有意识的契约变更**，不会被顺带捎进来。
+   *
+   * 只随 full/welcome 走、不进 delta：压力是分钟级低频量（默认约每 180s 一波），
+   * 放进 500ms 增量帧纯属浪费带宽；玩家最迟 5s 看到，与抽卡节奏同一量级，不可见。
+   */
+  hudScratch: Record<string, number>;
 }
+
+/** HUD 面板依赖的 scratch 键白名单（R3-HUD）。
+ *  为什么写死在这里而不是让实现方遍历：这是协议契约的一部分，改这里 = 改网络契约。 */
+export const HUD_SCRATCH_KEYS: readonly string[] = ['raid.pressure'];
 
 export interface WelcomeMsg {
   t: 'welcome';

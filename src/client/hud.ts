@@ -1,31 +1,43 @@
 /**
- * client/hud.ts —— DOM HUD 层：顶栏资源 / 事件 feed / 选中面板 / 控制按钮。
- * 只读 WorldView 快照 + 发出交互意图（回调），不持任何模拟状态。
+ * client/hud.ts —— DOM HUD 层：**薄编排器**（R3-HUD，2026-10-06 重构）。
+ *
+ * 本文件现在只做三件事：
+ *  1. 绑定控制按钮 → 发意图回调（玩家输入 → HudCallbacks；HUD 不自己改模拟）。
+ *  2. 挂载内建面板到 PanelHost（分区 + 差分渲染，见 hud/panels.ts）。
+ *  3. 每帧把「选中交互态 + 世界快照」交给面板刷新（交互后 force 一帧跳过节流）。
+ *
+ * 旧实现（顶栏/科技/feed/选中各自每帧手写 innerHTML）挪进了 hud/default-panels.ts 的
+ * 声明式面板里，并升级为 key 差分 + 刷新节流。重构前后 HUD 的行为契约不变：
+ * 只读 WorldView + 发意图回调，**不持任何模拟状态**。
  */
-import { cardLabel, TRAIT_COLOR, type WorldView } from './view';
+import type { HudCallbacks } from './hud-callbacks';
+import type { WorldView } from './view';
+import { PanelHost } from './hud/panels';
+import { defaultPanels, selCtx, techPanelHtml, type SelectionCtx } from './hud/default-panels';
 
-export interface HudCallbacks {
-  onPauseToggle(): boolean; // 返回暂停后的状态
-  onSpeedCycle(): number; // 返回新速度
-  onFollowToggle(): boolean;
-  onNewWorld(): void;
-  onSave(): void;
-  onLoad(): void;
-}
+export type { HudCallbacks } from './hud-callbacks';
 
 export class Hud {
-  private feedCache = '';
-  /** 科技面板内容缓存（R2-1）：只在碎片进度/解锁状态真的变化时重排 DOM */
+  private host: PanelHost;
+  /** 科技面板内容指纹（与 PanelHost 的 key 差分同一套机制） */
   private techCache = '';
+  /** 选中交互态（玩家的，不是模拟的）：每帧由 main.ts 的交互结果喂进来 */
+  private sel: SelectionCtx = selCtx(new Set(), null, null, 0);
+  /** 交互后置位：下一帧强制跳过节流窗（点击/选中必须立刻有反馈） */
+  private pendingForce = false;
+
   constructor(
     private view: WorldView,
     private cb: HudCallbacks,
   ) {
-    document.getElementById('btn-pause')!.onclick = () => {
+    // 控制按钮：全部只发意图回调，HUD 不直接改模拟（原则④：玩家输入 = 命令面）。
+    const pauseBtn = document.getElementById('btn-pause')!;
+    pauseBtn.onclick = () => {
       const paused = this.cb.onPauseToggle();
-      (document.getElementById('btn-pause')!).textContent = paused ? '▶ 继续' : '⏸ 暂停';
+      pauseBtn.textContent = paused ? '▶ 继续' : '⏸ 暂停';
     };
-    document.getElementById('btn-speed')!.onclick = (ev) => {
+    const speedBtn = document.getElementById('btn-speed')!;
+    speedBtn.onclick = (ev) => {
       const v = this.cb.onSpeedCycle();
       (ev.target as HTMLElement).textContent = `⏩ 速度 ×${v}`;
     };
@@ -39,96 +51,71 @@ export class Hud {
     if (save) save.onclick = () => this.cb.onSave();
     const load = document.getElementById('btn-load');
     if (load) load.onclick = () => this.cb.onLoad();
-  }
 
-  frame(paused: boolean, selected: Set<number>): void {
-    const v = this.view;
-    let alive = 0;
-    for (const _ of v.pawns()) alive++;
-    const top = document.getElementById('hud-top')!;
-    const selTxt = selected.size ? `｜已选 ${selected.size} 鼠` : '';
-    if (top.dataset.k !== `${Math.floor(v.time)}|${alive}|${selTxt}|${v.stockpile['food'] ?? 0}|${v.stockpile['wood'] ?? 0}`) {
-      top.dataset.k = `${Math.floor(v.time)}|${alive}|${selTxt}|${v.stockpile['food'] ?? 0}|${v.stockpile['wood'] ?? 0}`;
-      top.innerHTML =
-        `<b>⏱ ${Math.floor(v.time)}s</b>` +
-        `<span>🐭 ${alive}</span>` +
-        `<span>🍎 ${v.stockpile['food'] ?? 0}</span>` +
-        `<span>🪵 ${v.stockpile['wood'] ?? 0}</span>` +
-        `<span>🔥🏚 ${v.buildings().length}</span>` +
-        `<span>🐱 ${v.hostiles().length}</span>` +
-        `<span>${selTxt}</span>`;
-    }
-    this.frameTech();
+    // 面板宿主：分区容器由 PanelHost 按需创建（#hud-panels 是它们的根）。
+    const root = document.getElementById('hud-panels') ?? createFallbackRoot();
+    this.host = new PanelHost(root, HUD_REFRESH_MS);
+    for (const p of defaultPanels(() => this.sel)) this.host.register(p);
 
-    // feed
-    const recent = v.events().map((e) => `[${String(Math.floor(e.time)).padStart(4)}s] ${e.text}`);
-    const html = recent.join('<br>');
-    if (html !== this.feedCache) {
-      this.feedCache = html;
-      const el = document.getElementById('hud-feed')!;
-      el.innerHTML = html || '<span style="color:#667">（事件会出现在这里……）</span>';
-      el.scrollTop = el.scrollHeight;
-    }
-    // 选中面板
-    const panel = document.getElementById('hud-sel');
-    if (panel) {
-      const first = [...selected][0];
-      let inner = '';
-      for (const p of v.pawns()) {
-        if (p.eid !== first) continue;
-        const n = p.needs;
-        // 每个值都带名称+数字（2026-08-21 用户反馈：裸 bar 看不懂是什么）
-        const row = (k: string, val: number, color: string) =>
-          `<div class="row"><span class="k" style="color:${color}">${k}</span>` +
-          `<div class="bar"><i style="width:${val}%;background:${color}"></i></div>` +
-          `<span class="v">${Math.round(val)}</span></div>`;
-        inner =
-          `<b style="color:${TRAIT_COLOR[p.trait] ?? '#fff'}">${p.name}·${v.traitName(p.trait)}</b>` +
-          `<div class="muted">当前卡：${cardLabel(p.cardId)}</div>` +
-          row('食欲', n.food, '#d98a3a') +
-          row('睡眠', n.rest, '#4a7dc9') +
-          row('心情', n.mood, '#c96f9c') +
-          row('理智', n.san, '#8a6fc9') +
-          row('生命', (p.hp / p.maxHp) * 100, '#7ec97e');
-      }
-      panel.innerHTML = inner;
-      panel.style.display = inner ? 'block' : 'none';
-    }
+    // 构造时先画一帧：否则页面加载后 HUD 要等第一次 ticker 才出现内容（空白闪一下）
+    this.renderTech(true);
   }
 
   /**
-   * 科技抽卡池面板（R2-1）：🔩 have/need 碎片进度 + 已解锁态。
+   * 每帧调用（main.ts 的 app.ticker）。
    *
-   * 为什么面板在 HUD 而不在 renderer：科技是 DOM 层信息（文字+进度），
-   * Pixi 层画它要自己搓字形布局，纯属重复劳动。
-   *
-   * 空表（tech-pool 包未挂）→ 显示"无科技池"而不是空白面板：
-   * 空白面板会让玩家怀疑界面坏了；显式说明 = 卸载语义对玩家可见。
+   * 性能契约（这轮重构的核心）：
+   *  - **key 差分**：每个面板只产出 key + html，key 不变 → 一个字节的 DOM 都不写。
+   *    旧实现里事件 feed 每帧 `map+join` 重建、选中面板每帧无条件重写 innerHTML，
+   *    这两处的每帧 DOM 重建已消除。
+   *  - **节流**：数据变了也最多每 100ms 写一次（内容是人类阅读速率信息）；
+   *    交互后的那一帧强制刷新（forceNow），保证点击立刻有反馈。
    */
-  private frameTech(): void {
+  frame(paused: boolean, selected: Set<number>, buildingId: string | null = null, hostileId: number | null = null): void {
+    this.sel = selCtx(selected, buildingId, hostileId, this.view.time);
+    const force = this.pendingForce;
+    this.pendingForce = false;
+    this.host.refresh(this.view, force);
+    this.renderTech(force);
+  }
+
+  /** 玩家交互后调用：下一帧立即刷新（跳过节流窗）。选中/点击变化是低频事件。 */
+  forceNow(): void {
+    this.pendingForce = true;
+  }
+
+  /**
+   * 科技抽卡池面板（R2-1 保留）：折叠 <details>，低频信息。
+   * 与 PanelHost 同样走 key 差分 + 100ms 节流，不引入第二套刷新策略。
+   */
+  private renderTech(force = false): void {
     const body = document.getElementById('hud-tech-body');
     if (!body) return;
-    const rows = this.view.techProgress();
-    const key = rows.map((r) => `${r.id}:${r.have}/${r.need}:${r.unlocked ? 1 : 0}`).join('|');
-    if (key === this.techCache) return;
+    const { key, html } = techPanelHtml(this.view);
+    if (!force && key === this.techCache) return;
     this.techCache = key;
-    if (rows.length === 0) {
-      body.innerHTML = '<div class="empty">（无科技池）</div>';
-      return;
-    }
-    body.innerHTML = rows
-      .map(
-        (r) =>
-          `<div class="tech${r.unlocked ? ' done' : ''}">` +
-          `<span>${escapeHtml(r.name)}</span>` +
-          `<span class="fr">${r.unlocked ? '已解锁' : `🔩 ${r.have}/${r.need}`}</span>` +
-          `</div>`,
-      )
-      .join('');
+    body.innerHTML = html;
+  }
+
+  /** 供测试/诊断：本帧实际 DOM 写入次数（0 = 全部命中缓存）。 */
+  writesLastFrame(): number {
+    return this.host.lastWrites;
   }
 }
 
-/** HUD 文案转义：mod 内容（科技名/事件文本）可能带尖括号，直接进 innerHTML 会破版 */
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+/**
+ * HUD 刷新节流（ms）。
+ * 为什么 100ms：HUD 内容（人口/建筑/事件/均值）全是**人类阅读速率**信息，
+ * 10fps 已绰绰有余；60fps 重写 innerHTML 是纯浪费的 CPU 与无意义的重排。
+ * 注意这不影响正确性：key 每帧都在比对，数据真变了最迟 100ms 内一定显示出来；
+ * 且 force 路径（玩家交互）完全跳过节流。
+ */
+const HUD_REFRESH_MS = 100;
+
+/** #hud-panels 缺失时的兜底根（防 index.html 与代码版本不匹配导致面板无处挂载）。 */
+function createFallbackRoot(): HTMLElement {
+  const el = document.createElement('div');
+  el.id = 'hud-panels';
+  document.body.appendChild(el);
+  return el;
 }

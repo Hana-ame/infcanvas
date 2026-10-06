@@ -7,6 +7,7 @@ import { RemoteSim } from '../client/remote';
 import { Sim, snapshotOf } from '../sim';
 import { ModRegistry } from '../mods';
 import type { FullState } from '../shared/protocol';
+import { HUD_SCRATCH_KEYS } from '../shared/protocol';
 
 function feed(remote: RemoteSim, msg: Parameters<RemoteSim['handleForTest']>[0]): void {
   remote.handleForTest(msg);
@@ -25,6 +26,11 @@ function fullStateOf(sim: Sim): FullState {
     // 科技抽卡池状态（R2-1）：与 game-server 的 fullState() 同源同字段
     techs: snap.techs,
     techFragments: snap.techFragments,
+    // HUD scratch 白名单子集（R3-HUD）：与 game-server 的 hudScratchOf() 同源。
+    // 这里直接从 snapshot 的 scratch 里挑白名单键，模拟服务端出口行为。
+    hudScratch: Object.fromEntries(
+      HUD_SCRATCH_KEYS.filter((k) => sim.scratch[k] !== undefined).map((k) => [k, sim.scratch[k]]),
+    ),
   };
 }
 

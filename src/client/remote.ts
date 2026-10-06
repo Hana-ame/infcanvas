@@ -14,6 +14,8 @@ import { World } from '../sim/world';
 import type { BuildingState, Eid, Hostile, LogEvent, PawnState, Pos } from '../sim/types';
 import { DEFAULT_TUNING, type Tuning } from '../sim/tuning';
 import { TERRAIN_NAME, type TileInspect, type WorldView } from './view';
+import { buildBuildingDetail, buildColonySummary, buildHostileDetail, buildPawnDetail } from './hud-faces';
+import { K_TAG_FIRE } from '../mods/contracts';
 import type { ClientMsg, ServerMsg } from '../shared/protocol';
 import { WATCHDOG_MS } from '../shared/protocol';
 import { BackoffState, shouldWatchdogTrip } from './reconnect';
@@ -58,6 +60,11 @@ export class RemoteSim implements WorldView {
    */
   private techsUnlocked = new Set<string>();
   private techFrag: Record<string, number> = {};
+  /**
+   * HUD 面板依赖的 scratch 子集（R3-HUD）：服务端按 HUD_SCRATCH_KEYS 白名单下发。
+   * 只随 welcome/full 到达，delta 不更新——与 techFragments 同节奏（低频全局状态）。
+   */
+  private hudScratch: Record<string, number> = {};
   _tuning: Tuning = DEFAULT_TUNING;
   connected = false;
 
@@ -304,6 +311,9 @@ export class RemoteSim implements WorldView {
     // techsUnlocked 会永久残留——客户端不做"科技回退"推理。
     this.techsUnlocked = new Set(d.techs ?? []);
     this.techFrag = { ...(d.techFragments ?? {}) };
+    // HUD scratch 子集整体覆盖（full 是权威快照）；缺字段回落空对象
+    // ——老服务端不带该字段时表现为"威胁面板显示未知"，不是假 0%（R3-HUD 向前兼容）。
+    this.hudScratch = { ...(d.hudScratch ?? {}) };
   }
 
   /**
@@ -415,5 +425,52 @@ export class RemoteSim implements WorldView {
         : null,
       buildingName: b ? this.tuning.buildings[b.defId]?.name ?? b.defId : null,
     };
+  }
+
+  // ---- HUD 汇总面 / 详情面（R3-HUD）：与 LocalView 同算法（hud-faces.ts），只有取数路径不同 ----
+  /**
+   * 最近火堆距离：走本地 World 的建筑表（full 快照已把建筑表合入 importState 之外的
+   * buildingList，且 world.buildings 也由 importState 同步）——与本地模式同一份寻址逻辑，
+   * 不做"联机近似"。
+   */
+  private fireDist(x: number, y: number): number | null {
+    let best: number | null = null;
+    for (const b of this.buildingList) {
+      if (!(this._tuning.buildings[b.defId]?.tags ?? []).includes(K_TAG_FIRE)) continue;
+      const d = Math.hypot(b.pos.x - x, b.pos.y - y);
+      if (best === null || d < best) best = d;
+    }
+    return best;
+  }
+
+  colony(): import('./view').ColonySummary {
+    return buildColonySummary({
+      pawns: this.pawnMap.values(),
+      buildings: this.buildingList,
+      hostiles: this.hostileList,
+      tuning: this._tuning,
+      traitName: (t) => this.traitName(t),
+      nearestFireDist: (x, y) => this.fireDist(x, y),
+      // 压力值来自服务端下发的白名单子集；未挂 raid 包时服务端不下发该键 → null（面板隐藏而非显示假 0%）
+      raidPressureRaw: this.hudScratch['raid.pressure'] ?? null,
+    });
+  }
+
+  inspectPawn(eid: number): import('./view').PawnDetail | null {
+    const p = this.pawnMap.get(eid);
+    if (!p) return null;
+    return buildPawnDetail(p, (t) => this.traitName(t), (x, y) => this.fireDist(x, y));
+  }
+
+  inspectBuilding(id: string): import('./view').BuildingDetail | null {
+    const b = this.buildingList.find((x) => x.id === id);
+    if (!b) return null;
+    return buildBuildingDetail(b, this.buildingList, this._tuning);
+  }
+
+  inspectHostile(id: number): import('./view').HostileDetail | null {
+    const h = this.hostileList.find((x) => x.id === id);
+    if (!h) return null;
+    return buildHostileDetail(h, this.hostileList, this.pawnMap.values(), this._tuning);
   }
 }
