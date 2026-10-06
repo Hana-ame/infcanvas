@@ -22,26 +22,37 @@ import { CHUNK_SIZE, chunkKey, chunksForInterest } from '../src/shared/chunks';
 // ------------------------------------------------------------------
 // 世界规模：把建筑撒在多远的范围里，决定了"全世界 vs 视口"的差距
 // ------------------------------------------------------------------
-/** 撒建筑的区块跨度（3 = 3×3 块；9 = 9×9 块 = 576×576 的中局）。
+/**
+ * 撒建筑的区块跨度（3 = 3×3 块；9 = 9×9 块 = 576×576 的中局）。
  *
- *  ⚠️ 为什么必须**避开出生安全区**（spawnClearRadius 出厂 6，且笼统地避开 (0,0) 邻域）：
- *  首轮 CI 读数是 buildings=0.5、reduction=0.0%，原因不是裁剪无效，
- *  而是撒的建筑**被鼠拆了 + 撒不动**：鼠会 raze 建筑，而放在出生安全区里的
- *  地格又不可通行。于是"全世界 vs 视口"两边都是空集，比值恒 1 —— 测了个寂寞。
- * 教训：**基准作废时，报 0% 比报错更坏**（0% 看着像"优化无效"，实际是场景没搭起来）。
- * 故这里把世界铺在远离出生点的一整片区域，并在测量前断言数量。
+ * ⚠️ 这段被 CI 实测推翻过两次，值得把过程留着：
+ *
+ * **第一版（撒在出生点附近）**：读数 buildings=0.5、reduction=0.0%。
+ * 真因不是裁剪无效，而是撒的建筑**几乎全被拆了** —— `building` 玩法包里有
+ * 「木材耗尽就烧建筑当燃料」的逻辑（packs/building.ts:86-90，取第一个
+ * 带 fuelSec 的建筑拆掉）。世界里篝火越多，鼠越倾向于拆篝火，烧完 30s 只剩 0.5 座。
+ * 报错还指不到真因（"放不下"/"放上了又没了"都像地形问题）。
+ *
+ * **第二版（撒在远处 (12,12) 区块）**：更糟 —— 直接撞上守卫断言
+ * 「建筑被拆过半（3/36）」。远不等于安全：**鼠群会去捡燃料**，而篝火
+ * 在整个世界里都是同一种可烧目标，藏到哪都可能被拆。
+ *
+ * **所以最终版：基准不跑带玩法的世界。**
+ * 分块收益的本质是「实体数 × 同步范围」的乘积，与玩法无关；
+ * 把玩法（拆建筑、采集）掺进基准，测到的就是玩法的时间噪声，不是裁剪率。
+ * 故这里**不调 sim.run()**：只 step 一小段产生 pawn 移动，建筑保持静态。
+ * 这不是"回避现实"——现实里 delta 的 buildings 字段本来就是每帧重发的
+ * **当前**列表，玩法不会让它变小，只会让整份存档在两个跑之间不可比。
  */
 function seedBuildings(sim: Sim, spread: number): number {
   const world = sim.world;
   let n = 0;
-  // 基准原点挪到远离出生点的位置（64*12=768 格外），保证与鼠群活动区不重叠
-  const ox = 12 * CHUNK_SIZE;
-  const oy = 12 * CHUNK_SIZE;
+  // 以出生点为原点向外铺：与真实局地一致（玩家在自己周围盖东西）
   for (let cy = 0; cy < spread; cy++) {
     for (let cx = 0; cx < spread; cx++) {
       let placed = 0;
-      for (let y = oy + cy * CHUNK_SIZE + 2; placed < 4 && y < oy + cy * CHUNK_SIZE + 62; y += 3) {
-        for (let x = ox + cx * CHUNK_SIZE + 2; placed < 4 && x < ox + cx * CHUNK_SIZE + 62; x += 3) {
+      for (let y = cy * CHUNK_SIZE + 2; placed < 4 && y < cy * CHUNK_SIZE + 62; y += 3) {
+        for (let x = cx * CHUNK_SIZE + 2; placed < 4 && x < cx * CHUNK_SIZE + 62; x += 3) {
           if (world.addBuilding('campfire', x, y)) placed++;
         }
       }
@@ -122,9 +133,7 @@ function main(): void {
   const registry = ModRegistry.default();
   console.log('=== bench: 分区块同步（line/net）===');
 
-  // 远端基准区中心（seedBuildings 的同一偏移），用作"客户端视口"
-  const FAR_X = 12 * CHUNK_SIZE + (3 * CHUNK_SIZE) / 2;
-  const FAR_Y = 12 * CHUNK_SIZE + (3 * CHUNK_SIZE) / 2;
+  // 视口中心（出生点），r=192 → 3×3 块
 
   for (const spread of [3, 9]) {
     const sim = new Sim({ seed: 20260821, registry });
@@ -132,21 +141,16 @@ function main(): void {
     // 放不下建筑 = 基准作废。**报 0% 比报错更坏**：0% 看着像"优化无效"，
     // 实际是场景没搭起来（首轮 CI 就是这么骗人的，教训在 seedBuildings 注释里）。
     if (buildings === 0) throw new Error(`spread=${spread} 下没放上任何建筑，读数无意义`);
-    // 让鼠群跑起来（制造真实的 pawn 变动），但不跑长局：跑太久鼠会把建筑拆光。
-    sim.run(30, 1);
-    if (sim.world.buildings.size < buildings * 0.5) {
-      throw new Error(
-        `spread=${spread} 建筑被拆过半（${sim.world.buildings.size}/${buildings}），场景不���续用`,
-      );
-    }
+    // 只 step 不 run：见 seedBuildings 的注释（玩法会拆建筑，掺进来测的是噪声）。
+    // 建筑数此时**必然稳定**，无需再断言存活比例 —— 上一版的存活断言正是因为
+    // 跑错了 sim.run 才需要，它是症状不是防线，删掉免得误导后人。
 
-    // 视口 = 远端基准区中心 r=192（3×3 块），客户端典型订阅
-    const viewScope = new Set(chunksForInterest({ x: FAR_X, y: FAR_Y, r: 192 }));
-    // 远端基准区只占 spread×spread 块；视口 3×3 → 裁剪后只剩 9 块的世界量
+    // 视口 = 中心 r=192（3×3 块），客户端典型订阅
+    const viewScope = new Set(chunksForInterest({ x: 0, y: 0, r: 192 }));
     const remoteAll = new Set<number>();
     for (let cy = 0; cy < spread; cy++) {
       for (let cx = 0; cx < spread; cx++) {
-        remoteAll.add(chunkKey(12 + cx, 12 + cy));
+        remoteAll.add(chunkKey(cx, cy));
       }
     }
 
@@ -171,7 +175,7 @@ function main(): void {
     const fAvg = avg(fullBytes);
     const cAvg = avg(chunkedBytes);
     const reduction = fAvg > 0 ? (1 - cAvg / fAvg) * 100 : 0;
-    console.log(`--- world spread=${spread} (${spread}x${spread} chunks @ origin 12,12), buildings=${buildings}, remote_chunks=${remoteAll.size}, view_chunks=${viewScope.size} ---`);
+    console.log(`--- world spread=${spread} (${spread}x${spread} chunks @ origin), buildings=${buildings}, view_chunks=${viewScope.size} ---`);
     console.log(`bandwidth_delta_bytes.full_avg=${fAvg.toFixed(1)}`);
     console.log(`bandwidth_delta_bytes.chunked_avg=${cAvg.toFixed(1)}`);
     console.log(`bandwidth_delta_bytes.reduction_pct=${reduction.toFixed(1)}`);
@@ -196,23 +200,26 @@ function main(): void {
   {
     const makeSim = (): Sim => {
       const s = new Sim({ seed: 20260821, registry });
-      // 分散 24 只鼠到 3×3 的远端块
-      for (let cy = 0; cy < 3; cy++) {
-        for (let cx = 0; cx < 3; cx++) {
-          for (let k = 0; k < 3; k++) {
-            s.spawnPawn(12 * CHUNK_SIZE + cx * CHUNK_SIZE + 4 + k * 9, 12 * CHUNK_SIZE + cy * CHUNK_SIZE + 4 + k * 9);
+      // 分散 24 只鼠到 3×3 的 9 个块（出生点为心，避开安全区那一块）
+      let n = 0;
+      for (let cy = 1; cy <= 3; cy++) {
+        for (let cx = 1; cx <= 3; cx++) {
+          for (let k = 0; k < 3 && n < 24; k++) {
+            s.spawnPawn(cx * CHUNK_SIZE + 4 + k * 9, cy * CHUNK_SIZE + 4 + k * 9);
+            n++;
           }
         }
       }
-      s.run(20, 1);
+      // 同样不调 run()：分片收益与玩法无关，掺进玩法只会加噪声
+      s.step(0.1);
       return s;
     };
     const base = makeSim();
-    console.log(`--- tick cost: pawns=${[...base.pawns()].length}, chunks_occupied=${base.world.activeChunkKeys().length} ---`);
+    console.log(`--- tick cost: pawns=${[...base.pawns()].length} ---`);
 
     const dense = new Set<number>(); // 全集 = 不跳任何鼠
-    for (let cy = -2; cy <= 16; cy++) for (let cx = -2; cx <= 16; cx++) dense.add(chunkKey(cx, cy));
-    const sparse = new Set(chunksForInterest({ x: FAR_X, y: FAR_Y, r: 32 })); // 只处理中心一块
+    for (let cy = -2; cy <= 6; cy++) for (let cx = -2; cx <= 6; cx++) dense.add(chunkKey(cx, cy));
+    const sparse = new Set(chunksForInterest({ x: 0, y: 0, r: 32 })); // 只处理中心一块
 
     const timeIt = (admitted: Set<number> | null, ticks: number): number => {
       const s = makeSim();
