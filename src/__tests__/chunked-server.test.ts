@@ -15,8 +15,10 @@ function makeClient(url: string) {
   return new Promise<{
     ws: WebSocket;
     next<T>(t: string, timeoutMs?: number): Promise<T>;
-    bytes: number;
-    msgs: number;
+    /** 累计收字节数（带宽读数用；测试里读法是 c.bytes() 而非 c.bytes） */
+    bytes(): number;
+    /** 累计收帧数 */
+    msgs(): number;
     close(): void;
   }>((resolve, reject) => {
     const ws = new WebSocket(url);

@@ -195,7 +195,7 @@ describe('区块化合入：scope 内替换、scope 外卸载', () => {
         stockpile: {},
         pawns: [],
         removedPawns: [],
-        hostiles: sim.hostiles(),
+        hostiles: [...sim.hostiles()],
         buildings: [],
         newEvents: [],
         scope: bothScope,

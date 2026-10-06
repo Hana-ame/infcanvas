@@ -541,8 +541,8 @@ export class World {
     if (this.chunkIndexReady) return;
     this.chunkIndexReady = true;
     for (const id of this.buildings.keys()) this.indexBuilding(id);
-    for (const k of this.featureLeft.keys()) this.bucket(featureChunksKeyOf(k), k, featureChunks);
-    for (const k of this.harvestCd.keys()) this.bucket(harvestChunksKeyOf(k), k, harvestChunks);
+    for (const k of this.featureLeft.keys()) this.bucket(this.featureChunks, featureChunksKeyOf(k), k);
+    for (const k of this.harvestCd.keys()) this.bucket(this.harvestChunks, harvestChunksKeyOf(k), k);
   }
   private chunkIndexReady = false;
 
