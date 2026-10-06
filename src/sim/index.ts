@@ -18,3 +18,6 @@ export {
 } from './systems';
 export { Sim, type SimConfig } from './sim';
 export { SAVE_VERSION, SAVE_MIGRATIONS, loadSim, snapshotOf, migrate, type SaveData } from './sim-save';
+// 权威状态确定性摘要（golden-hash 门禁的"测量"面）：只吃权威态、跨机稳定，
+// 不吃表现层浮点。用途与理由见 fingerprint.ts 文件头。
+export { fingerprint, fingerprintFields } from './fingerprint';

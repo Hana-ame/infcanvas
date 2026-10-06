@@ -54,6 +54,37 @@ jobs:
         run: npx vite build
 
   # ────────────────────────────────────────────────────────────────────
+  # 确定性 golden-hash 门禁（2026-10-06，line/golden）
+  #
+  # 为什么必须是硬门禁（**不能** continue-on-error）：
+  # 确定性的破坏是**静默的** —— 游戏照样能跑、能通关，只是联机 client 重建 /
+  # 回放读档续跑在某个 tick 悄悄分叉。core.test.ts 那类"不变量"单测抓不到它
+  # （分叉的两条路各自都满足不变量，只是不相等）。所以这个 job 是真门禁。
+  #
+  # 门禁对象 = golden.test.ts：固定 seed × 固定 tick 的权威状态指纹，
+  # 与写死的期望常量逐位比对（指纹只吃权威态，不吃表现层浮点 → 跨机稳定）。
+  #
+  # 红了怎么办：要么"故意改了玩法"（在**同一 commit** 更新 golden 常量 +
+  # commit message 写明为什么变），要么"真的确定性回归"（修代码，不更新常量）。
+  # 完整判别流程见 docs/DESIGN.md「golden-hash 门禁」一节。
+  #
+  # 为什么固定 node 22：指纹要求跨进程稳定，与 test 的 node 20/22 矩阵正交；
+  #   基线取 node 22 一份（与 bench 一致），跨 node 版本的确定性由 test 矩阵保证。
+  golden:
+    name: golden (确定性指纹硬门禁)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: golden hash gate
+        run: npx vitest run src/__tests__/golden.test.ts --reporter=verbose
+
+  # ────────────────────────────────────────────────────────────────────
   # 性能基准（R3 性能优化线，2026-10-06 加）
   #
   # 为什么必须有它：旧实现阶段做过 5 轮性能优化，其中「findNearest 空间索引」
