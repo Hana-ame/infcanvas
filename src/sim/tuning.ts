@@ -301,6 +301,61 @@ export interface Tuning {
     threatWorkMul: number;
   };
   /**
+   * factions —— 派系外交包数值（SEED「结盟与贸易 / 突袭与背叛 / 故事活在传闻里」）。
+   *
+   * 语义：
+   *  - 每个 K_TAG_FIRE 篝火 = 一个派系（SocialUnit），派系 id = 该篝火建筑 id；
+   *    派系名由登记序号派生（seq 0 = 「鼠团」，seq n≥1 = 「野营-(n+1)」）。
+   *  - 声望是**有向**的（"a 对 b 的看法"），-100..100；缺省 0 = 中立。
+   *  - 传闻（gossip）0..1：掠夺之后掠夺方 gossip 上升，随时间衰减；
+   *    gossip > 0 时压低该派系成员的 SER_SOCIAL 权重——态度优先于数值。
+   */
+  factions: {
+    /** 新派系对的双向初始声望。
+     *
+     *  **必须 > friendlyThresh**——否则 trade 卡是死代码。推导：声望上升的**唯一**
+     *  来源是 trade（repGainTrade），而 trade 的门槛是 rep > friendlyThresh。
+     *  初值 ≤ friendlyThresh ⇒ trade 抽不中 ⇒ 声望永不涨 ⇒ trade 永远抽不中 = 循环死锁。
+     *  初值取 35 而非 20：20 落在死区 [-25, 30] 内，trade 与 raid 都不触发，
+     *  声望被永久钉死（已用 node 复算确认）。35 > 30，开局贸易即可发生。
+     *  语义上也是"中立偏友好"：鼠见鼠不是天生的敌人。
+     *  ⚠️ 已知设计局限（死区）：声望 ∈ [-25, 30] 时**没有任何机制能移动它**——
+     *  trade 只在上界之上触发、raid 只在下界之下触发。所以和平阵营不会自然滑向
+     *  战争（声望只会靠贸易单调升到 +100）。若要让「背叛」在无人工干预下涌现，
+     *  需要给声望加一个缓慢向 0 漂移的衰减速率（本轮未做，超出给定 tuning 清单）。 */
+    repInit: number;
+    /** 声望高于此值 = 友好（trade 卡的候选门槛；有向：home 对 target） */
+    friendlyThresh: number;
+    /** 声望低于此值 = 敌对（掠夺系统触发门槛） */
+    hostileThresh: number;
+    /** wood→food 折算率：付出 tradeWoodCost 份 wood，换回 round(cost × tradeRatio) 份 food */
+    tradeRatio: number;
+    /** 贸易磁铁半径（格）：友好派系的篝火在此半径内才"值得走过去" */
+    tradeMagnetRadius: number;
+    /** 贸易到位半径（格）：站到对方营地这么近才结算交换（与磁铁是两个量，勿合并） */
+    tradeWorkRadius: number;
+    /** 一次贸易付出的 wood 份数（取整数，保证库存不出现 0.5 份碎屑） */
+    tradeWoodCost: number;
+    /** 掠夺检查周期（秒）：每隔这么久遍历一次全部派系对 */
+    checkSec: number;
+    /** 一次贸易，双方各自 +声望 */
+    repGainTrade: number;
+    /** 一次掠夺，掠夺方对受害方的声望再降（背叛加深仇恨） */
+    repLossRaid: number;
+    /** 传闻每秒衰减率 */
+    gossipDecayPerSec: number;
+    /** 一次掠夺给掠夺方的 +传闻 */
+    gossipPerRaid: number;
+    /** 传闻对 SER_SOCIAL 权重的压制系数：权重 ×(1 - gossip × socialPenalty) */
+    socialPenalty: number;
+    /** 一次掠夺刷出的 raider 上限（实际 1~maxRaiderWave，含端点） */
+    maxRaiderWave: number;
+    /** 每对派系独立的掠夺冷却（秒）：防刷屏 */
+    raidCooldownSec: number;
+    /** 掠夺者刷在受害方营地外的距离（格） */
+    spawnRadius: number;
+  };
+  /**
    * techs —— 科技抽卡池数据表（R2-1，2026-08-21 追加：ROADMAP「科技 = 独立抽卡池，碎片制」）。
    *
    * 为什么进表而不是硬编码（原则③）：科技条目既是抽卡池的**候选集合**，又是建筑门控的
@@ -504,6 +559,24 @@ export const DEFAULT_TUNING: Tuning = {
      * 保留"慌到没反应过来继续干活"的少数情况，战或逃的随机性不被抹平。
      */
     threatWorkMul: 0.35,
+  },
+  factions: {
+    repInit: 35,          // 必须 > friendlyThresh(30)，否则 trade 是死代码（推导见上方 repInit 注释）
+    friendlyThresh: 30,    // 声望 > 30 才算友好；初值 35 已在其上，开局即可贸易
+    hostileThresh: -25,   // 声望 < -25 才敌对；与 friendlyThresh 之间的 [-25,30] 是死区（无机制移动）
+    tradeRatio: 0.5,      // 2 wood → 1 food：贸易有成本，不是白拿口粮
+    tradeMagnetRadius: 28,
+    tradeWorkRadius: 2.5,
+    tradeWoodCost: 2,
+    checkSec: 20,         // 掠夺检查节拍：远慢于 checkSec 的抽卡节奏，战争是"偶发剧情"
+    repGainTrade: 4,
+    repLossRaid: 12,      // 一次掠夺比一次贸易的收益大 3 倍：背叛的代价 > 合作的收益
+    gossipDecayPerSec: 0.01,  // 传闻 0.35 约 35s 消散大半：故事会被讲旧，但不会永久固化
+    gossipPerRaid: 0.35,
+    socialPenalty: 0.5,   // 传闻满(1)时 SER_SOCIAL 权重 ×0.5：谨慎但不是禁止
+    maxRaiderWave: 2,
+    raidCooldownSec: 90,  // 一对派系 90s 内只打一次：防刷屏，也给"战事平息"的窗口
+    spawnRadius: 26,      // 刷在受害方营地外：贴脸是刺杀不是突袭
   },
   // 科技表**出厂为空**：科技是玩法包种子（同 buildings/enemies 的纪律——内核零玩法内容）。
   // tech-pool 包挂载时 registerTech 注入条目。
