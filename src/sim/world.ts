@@ -395,34 +395,51 @@ export class World {
   /**
    * 特征查询（当前快照）。null = 无特征 / 已采空冷却中 / 余量被采到 0 边缘。
    *
-   * ⚠ **已登记的既存缺陷（2026-10-06 性能线审计发现，本轮刻意不修）**：
-   *   本函数用**未取整**的 x,y 拼 `${x},${y}` 去查 featureLeft / harvestCd，
-   *   而 takeOne 用的是**取整后**的 x,y。featureKind 内部会取整，
-   *   所以"这一格是什么特征"是对的，但"这一格的余量/冷却"两张表在
-   *   小人站在非整数坐标时会被记到另一个键上（例：x=3.7 存 "3.7,2"，
-   *   而 takeOne 读写 "4,2"）。
-   *   症状：nearestFeature 从非整数坐标扫描时会对同一丛反复建新键
-   *   （记忆增长，且采过的丛看起来"没被采"）。
+   * ⚠ **已修的既存缺陷（2026-10-06，本轮修；此前登记为"刻意不修"）**：
+   *   本函数原先用**未取整**的 x,y 拼 `${x},${y}` 去查 featureLeft / harvestCd，
+   *   而 takeOne 用的是**取整后**的 x,y（`world.ts` takeOne 首两行）。
    *
-   * 为什么本轮不修：修它会改变 featureLeft/harvestCd 的键集合 →
-   *   改变采收与再生的实际结果 → 改变玩法与平衡。本线的硬约束是
-   *   「优化只能改怎么算得快，不能改算出什么」。这是一个**独立的正确性修复**，
-   *   必须单独立项 + 补对拍回归 + 重新采平衡，不该混进性能 PR 里。
+   *   原订正的判断有两处需要按实测修订：
+   *   1. **"记忆增长"不成立** —— 实测 seed42 × 900s 后 featureLeft / harvestCd
+   *      里非整数键均为 **0** 个。原因是本函数**只读**：只有 takeOne 写这两张表，
+   *      而 takeOne 一定取整。幽灵键没有写入路径，所以长不满也长不出。
+   *   2. **真正的后果是"读到的不是真相"**，比原判断严重：
+   *      - **再生冷却可被绕过**：冷却中的格用整数位查返回 null（正确），
+   *        但用小数位查（x+0.6）会返回 `amount`，实测 900s 后 **36 个冷却格中 2 个
+   *        （5.6%）**能被绕过。卡 condition 正是问"附近有没有可采的浆果"，
+   *        拿到假前提就会抽 harvest 卡，然后 takeOne 拒绝 → 空转一轮。
+   *      - **余量基数口径不一**：fullAmount 用 hash2(x,y)，取整与否在
+   *        **66.6%** 的坐标上给出不同的树余量（实测 1600 组采样）。
+   *
+   * 修法：本函数与 featureKind / takeOne **同样先取整**再查表与算基数。
+   * 为什么这样修才安全（不是"显然应该一致"）：
+   *   - featureKind 本体就取整，所以"这一格是什么特征"一直是对的，
+   *     改动只影响**余量/冷却的键与基数**，不改变特征分布；
+   *   - 键集合从"整数键 + 可能的幽灵键"收敛为"只有整数键"，
+   *     而 takeOne 写的本来就只有整数键 ⇒ 读写口径首次真正对齐；
+   *   - nearestFeature 的**扫描顺序与命中哪一格完全不变**（判定仍逐格同序），
+   *     所以采哪丛不变，只变"那丛还剩多少/能不能采"。
+   * ⚠ 这**会改变玩法与平衡**（采收更快、冷却更可信），所以：
+   *   必须配对拍回归 + 重采多 seed 存活基线，且 golden 指纹会变（按约定同 commit 更新）。
    */
   featureAt(x: number, y: number): FeatureHit | null {
-    const kind = this.featureKind(x, y);
+    // 取整后再查表：与 takeOne / featureKind 的键口径对齐（缺陷根因，见上）
+    const tx = Math.round(x);
+    const ty = Math.round(y);
+    const k = `${tx},${ty}`;
+    const kind = this.featureKind(tx, ty);
     if (!kind) return null;
-    const readyAt = this.harvestCd.get(`${x},${y}`);
+    const readyAt = this.harvestCd.get(k);
     if (readyAt !== undefined) {
       if (this.now < readyAt) return null;
-      this.harvestCd.delete(`${x},${y}`); // 到期惰性清除
+      this.harvestCd.delete(k); // 到期惰性清除
       // 索引同步出桶：不同步的话该块会一直挂着一个空壳成员，
       // 客户端同步 harvestCd 时会收到一条指向已删除 key 的记录（无害但脏，且掩盖真 bug）
-      if (this.chunkIndexReady) this.unbucket(this.harvestChunks, harvestChunksKeyOf(`${x},${y}`), `${x},${y}`);
+      if (this.chunkIndexReady) this.unbucket(this.harvestChunks, harvestChunksKeyOf(k), k);
     }
-    const left = this.featureLeft.get(`${x},${y}`) ?? this.fullAmount(kind, x, y);
+    const left = this.featureLeft.get(k) ?? this.fullAmount(kind, tx, ty);
     if (left <= 0) return null;
-    return { x, y, kind, amount: left };
+    return { x: tx, y: ty, kind, amount: left };
   }
   /** 世界时钟由 Sim 回填（world 不自转，避免双时钟漂移） */
   now = 0;

@@ -81,24 +81,30 @@ function woodGained(s: Sim): number {
  */
 describe('遇敌反应链（战或逃必须能进抽签池）', () => {
   it('鼠被咬时应更多在抽战斗卡，而不是正在伐木', () => {
-    const sim = new Sim({ seed: 8888, registry: ModRegistry.default() });
-    for (let t = 0; t < 900; t++) sim.step(1);
-
-    // 复采：逐 tick 比对血量，统计"被咬那一 tick 鼠正在抽什么卡"
+    // ⚠ **必须多 seed 聚合**（2026-10-06 实测踩坑）：单 seed 的被咬 tick 数波动极大
+    //   ——修复「featureAt 键口径」那轮，单 seed 8888 只有 19 个被咬 tick
+    //   （比修复前的 436 少一个量级，因为采收变高效后鼠群活动范围变了），
+    //   3/19 = 15.8% 直接跌破 25% 门槛 → **误报**，而同期 6 seed 聚合实测是 36.6%。
+    //   小样本比率就是噪声：比率型断言必须先保证分子分母都够大。
+    const seeds = [8888, 7, 42, 31337];
     let bites = 0;
     let combat = 0;
-    for (let t = 0; t < 900; t++) {
-      const hpBefore = new Map([...sim.pawns()].map((p) => [p.eid, p.hp]));
-      sim.step(1);
-      for (const p of sim.pawns()) {
-        const before = hpBefore.get(p.eid);
-        if (before === undefined || p.hp >= before) continue; // 这一刻挨打了
-        bites++;
-        if (p.cardId === 'fight' || p.cardId === 'flee') combat++;
+    for (const seed of seeds) {
+      const sim = new Sim({ seed, registry: ModRegistry.default() });
+      // 复采：逐 tick 比对血量，统计"被咬那一 tick 鼠正在抽什么卡"
+      for (let t = 0; t < 900; t++) {
+        const hpBefore = new Map([...sim.pawns()].map((p) => [p.eid, p.hp]));
+        sim.step(1);
+        for (const p of sim.pawns()) {
+          const before = hpBefore.get(p.eid);
+          if (before === undefined || p.hp >= before) continue; // 这一刻挨打了
+          bites++;
+          if (p.cardId === 'fight' || p.cardId === 'flee') combat++;
+        }
       }
     }
-    expect(bites, '900s 内一次都没被咬到，无法验证遇敌反应').toBeGreaterThan(0);
-    // 修复前是 61/436 ≈ 14%（战斗卡几乎轮不到上台）；修复后 ≈ 37%。
+    expect(bites, `${seeds.length} seed × 900s 内被咬 tick 太少，样本不足`).toBeGreaterThan(150);
+    // 修复前是 61/436 ≈ 14%（战斗卡几乎轮不到上台）；当前 6 seed 聚合 ≈ 37%。
     // 取 25% 作下限：低于它说明"遇敌时仍在干普通活"的老问题回来了。
     expect(combat / bites, `被咬时抽战斗卡的比例 ${combat}/${bites}`).toBeGreaterThan(0.25);
   });
