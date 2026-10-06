@@ -59,9 +59,12 @@ describe('R3-2 农耕包', () => {
   });
 
   it('完整耕收闭环：开垦→播种→冷却→收割→入 food（单块田逐步走通）', () => {
-    // 不挂 raid：等冷却要跑 120s，挂上敌袭会有鼠被打死、鼠一死断言对象就没了。
-    // 本例只回答"耕收闭环本身通不通"，战斗是另一条线（另一用例覆盖）。
-    const reg = ModRegistry.mountPacks([needsPack, buildingPack, farmingPack]);
+    // 极简装配 + 关掉 behavior：等冷却要跨 120s，若让 behavior 跑，鼠在田熟那一刻就
+    // 自己抽到 harvest_field 收走了（ai 类别排在 world 之前）→ 我们要断言的"田还熟着"
+    // 那一瞬间根本不存在。关掉 behavior = 只测系统与卡的语义，不掺小人的自发行为。
+    // （debugForceCard 走的是 Sim.commit 直调，不经 behavior，所以钉卡仍然可用。）
+    const reg = ModRegistry.mountPacks([buildingPack, farmingPack]);
+    reg.disableSystem('behavior');
     const s = new Sim({ seed: 2, registry: reg, pawnCount: 1 });
     const p = [...s.pawns()][0];
     // 造一块田（不用 build_field 卡，直接 addBuilding 架设测试夹具——闭环本身在后面验）
@@ -81,11 +84,8 @@ describe('R3-2 农耕包', () => {
     const harvestCard = s.cardById('harvest_field')!;
     expect(harvestCard.condition!(p, s)).toBe(false);
 
-    // ③ 等冷却过：跑够 growSec 再把鼠挪回田边（run 期间它会 wander 走远，
-    //     而"找田"有 senseRadius 上限——这一步要验的是**冷却到期**，不是寻路）
+    // ③ 等冷却过：跑够 growSec（behavior 已关，鼠不会自己收，田一定还熟着、也走不动）
     s.run(s.tuning.farming.growSec + 1);
-    p.pos = { x: 0, y: 0 };
-    p.path = [];
     expect(harvestCard.condition!(p, s)).toBe(true); // 到点即可收
 
     // ④ 收割：入 food + 田回空地（可再种）
@@ -130,15 +130,36 @@ describe('R3-2 农耕包', () => {
     // 不挂 raid：敌袭会随机打死鼠，鼠数掉下来 → 田数比例门跟着掉 → 闭环是否跑通变得
     // 依赖战斗胜负，与"农耕闭环本身能不能自转"无关。去掉这层噪声后，本例只回答一个问题：
     // 在真实卡池竞争下（开垦 vs 采集 vs 建火 vs 盖棚），田**能不能**被自然抽出来并收成。
+    //
+    // 统计口径不能只看最终的 events（maxLog=200，1800s 跑下来开垦/收割的记录早被裁掉了）。
+    // 改成**边跑边数**：每 20s 扫一次当窗事件流累计命中数——这正是 tech-pool.test.ts
+    // 踩过的坑（注释已写在那里：不可逆事件用集合差分/累计计数，不用末尾快照）。
     const reg = ModRegistry.mountPacks([needsPack, gatheringPack, buildingPack, bootstrapPack, farmingPack]);
     const s = new Sim({ seed: 42, registry: reg });
     s.stockpile[K_STOCK_WOOD] = 300; // 备足木料，让 build_field 的成本门不是瓶颈
-    s.run(1800);
-    // 事件流里出现过开垦与收割（自然抽卡把"种→收"跑通了）
-    expect(s.events.some((e) => e.text.includes('开垦'))).toBe(true);
-    expect(s.events.some((e) => e.text.includes('收获农田'))).toBe(true);
+    let till = 0;
+    let reap = 0;
+    let foodPeak = 0;
+    let seen = 0; // 已扫过的事件条数（游标，避免重复计数被保留窗口里的旧事件）
+    while (s.time < 1800) {
+      s.step(20);
+      const ev = s.events;
+      // 事件被裁剪时游标要跟着回退：窗口左移了多少就从新的左端继续扫
+      if (seen > ev.length) seen = 0;
+      for (let i = seen; i < ev.length; i++) {
+        if (ev[i].text.includes('开垦')) till++;
+        if (ev[i].text.includes('收获农田')) reap++;
+      }
+      seen = ev.length;
+      foodPeak = Math.max(foodPeak, s.stockpile[K_STOCK_FOOD] ?? 0);
+    }
+    // 自然抽卡把"开垦 → 播种 → 等冷却 → 收割"整条链跑通了（累计计数，不被裁剪影响）
+    expect(till).toBeGreaterThan(0);
+    expect(reap).toBeGreaterThan(0);
     // 田是留存实体：世界里确实有田（涌现不该被数量钉死，只断言 >0）
     expect(fieldsOf(s).length).toBeGreaterThan(0);
+    // 耕收真的把食物搬进了仓库（不只是开了田没收成）
+    expect(foodPeak).toBeGreaterThan(0);
   });
 
   it('存读档：作物状态随档，读档后田仍在原冷却进度上', () => {
@@ -175,11 +196,13 @@ describe('卸载不破坏核心（原则④）', () => {
 
   it('卸载 farming：长跑零产出——田在、状态在，但没人读（不产出也不报错）', () => {
     // 极简装配 + 0 鼠：把"世界时钟催熟"与"小人去收割"彻底分开。
-    // 造好田并种上（负值编码：成熟时刻 = now+growSec），跑一拍让成熟播报系统走过一次。
+    // 先在带 farming 的装配下种好田并跑一拍，让成熟播报系统走过一次。
     const s = new Sim({ seed: 6, registry: ModRegistry.mountPacks([buildingPack, farmingPack]), pawnCount: 0 });
     const b = s.addBuilding('field', 0, 0)!;
     const key = `farming.${b.id}`;
-    s.scratch[key] = -(s.time + s.tuning.farming.growSec); // 立刻就是熟的
+    // 负值编码：-v = 成熟时刻。v = now+1 = 下一秒就熟（不真等满 growSec，
+    // 本例只验「卸载后有没有人读这个状态」，不关心生长本身要多久）
+    s.scratch[key] = -(s.time + 1);
     expect(s.events.some((e) => e.text.includes('庄稼熟了'))).toBe(false); // 还没跑 tick
     s.step(1);
     expect(s.events.some((e) => e.text.includes('庄稼熟了'))).toBe(true); // 报过了
