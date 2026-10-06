@@ -272,6 +272,54 @@ export interface Tuning {
      *  hungryWeightMul 是同一条手法："局面合适 → 相关系列权重抬高"，不是新发明的机制）。 */
     cookWeightNearFire: number;
   };
+  /**
+   * medicine —— 医疗包数值（R3 瘟疫/饥荒）。
+   *
+   * 【机制立论】医疗不是「血包」，是**照料行为**：有人重伤（hp < woundedBelow × maxHp）
+   * 时 SER_HEAL 卡权重被抬高，鼠走到伤员身边消耗草药（K_STOCK_HERB）逐 tick 回血。
+   * 病榻（bed 建筑，K_TAG_BED）是倍率加成：病人身边有床时照料效率 ×bedBonus。
+   *
+   * 【为什么必须有 naturalHealPerSec】缺它会导致「重伤且无人照料 = 永久停血」的
+   * **死状态**（不是故事）——那只能靠下次受伤推进，而伤员不会自己再受伤。
+   * 0.05/s ≈ 每 100s 回 5 点：慢到不掩盖医疗的价值，但保证「无医疗时也能慢慢活」，
+   * 不形成恒真空转的死循环。
+   *
+   * 【草药链】herb 的**来源不是本包**：hunting 包让 deer 掉 herb（drops {meat:2, herb:1}）。
+   * 本包只**消费** K_STOCK_HERB。hunting 未挂载时 herb 恒 0，heal 卡 action 里
+   * 「没草药就 return 等下一 tick」自然成立、不报错——「卸载不破坏核心」的活例证。
+   */
+  medicine: {
+    /** 受伤线：hp < woundedBelow × maxHp 算"受伤"（照料对象的门槛）。
+     *  默认 0.7 是实测值——见 DEFAULT_TUNING 里 medicine 块的详细依据。 */
+    woundedBelow: number;
+    /** 照料每秒回血量（无病榻时）。2.0 × duration 8s ≈ 一次满卡回 16 点 */
+    healPerSec: number;
+    /** 病榻旁照料倍率：病人身边有床时回血速率 ×bedBonus */
+    bedBonus: number;
+    /** 「在病榻旁」的判定半径：病人距病榻这么近就算有床位加成（以病人位置为锚点） */
+    bedWorkRadius: number;
+    /** 每次照料 tick 消耗的草药数（份/次照料，不是每秒——每 tick 动手一次就扣一次） */
+    herbCost: number;
+    /** 照料到位半径（「伸手可及」）：走到伤员这么近才真的开始照料。
+     *  与 healMagnetRadius 是**两个量**，不可复用同一个数——
+     *  硬闸半径被当成贴身距离是本项目已踩 5 次的根因（chat/sow/harvest/sleep/cook）。 */
+    healWorkRadius: number;
+    /** 照料磁铁半径（「看得见值得走过去」）：伤员在此半径内才可能抽到 heal 卡。
+     *  取 24 与 needs.sleepMagnetRadius / build.newFireRadius 同锚点（「营地的势力范围」）。 */
+    healMagnetRadius: number;
+    /** 自然恢复速率（hp/s）：不消耗任何资源，慢但不停（理由见区块头注释） */
+    naturalHealPerSec: number;
+    /** 磁铁半径内有重伤同伴时 SER_HEAL 系列的权重乘数（"为什么去照料"的唯一实现处） */
+    healWeightWounded: number;
+    /** 自己重伤时 SER_REST 系列的权重乘数（想躺下歇着，不是去送死）。
+     *  为什么进 tuning 而不是写死包内：它是权重乘数（可 A/B 的玩法量），
+     *  与卡基础权重（registerCard 期拿不到 ctx，必须写死）不同层。 */
+    restWeightWounded: number;
+    /** 病榻建造搜索半径：必须 > build.minSpacing(5)——2×2 占地 + minSpacing 5
+     *  意味着第二张床必须落在第一张的 5 格外（"脚下第一格"几乎必然被间距拒），
+     *  半径太小就永远只搭得出第一张床。 */
+    bedSearchRadius: number;
+  };
   social: {
     chatRadius: number;
     /** 磁铁半径：同伴在此半径内**看得见**，闲聊卡才可能被抽上。
@@ -452,6 +500,33 @@ export const DEFAULT_TUNING: Tuning = {
     //  A/B 实测（10 seed × 900tick）：磁铁 6 时 hook 2.5→3.0，
     //  campfire 0.204%→0.233%（**余量更大**）、熟食 110→132 份；
     //  再往上（配合更长的磁铁）会把 campfire 压回红线以下。
+  },
+  medicine: {
+    /**
+     * 受伤线：hp < woundedBelow × maxHp 算"受伤"（照料对象门槛）。
+     *
+     * 为什么是 0.7 而不是更低的"重伤线"——这是实测出来的，不是拍脑袋：
+     * 16 seed × 900 tick 自然局（含 raid 猫）里，hp 的最低观测比例是
+     * 0.598~0.855，**任何 < 0.6 的门槛在 14400 个 tick 里一次都碰不到**。
+     * 原因是 fleeHpRatio=0.6：鼠在 60% 血量就开始往低权重逃，加上自然恢复，
+     * 它几乎不可能再往下掉。门槛设低了 = heal 卡永远抽不到 = 死代码
+     *（card-liveness 实测 build_bed/heal 在 10 seed×900 tick 里 0 活跃，就是这条根因）。
+     *
+     * 0.7 的实测活跃度：946/14400 tick（6.6%）有"有同伴在 magnet 半径内且受伤"，
+     * 足够让 heal 在自然局里被反复抽中，又不至于让"受伤"变成常态（hp<70 需要
+     * 挨约 10 下猫咬）。比例而非绝对值：maxHp 可被 mod 改，比例判据不会跟着失真。
+     */
+    woundedBelow: 0.7,
+    healPerSec: 2.0,         // 无病榻时每秒回 2 点；×duration 8s ≈ 满卡回 16 点
+    bedBonus: 2.0,           // 病榻旁照料效率翻倍：4 hp/s
+    bedWorkRadius: 4,        // 病人距病榻 ≤4 格算"在病榻旁"
+    herbCost: 1,             // 每次照料 tick 扣 1 份草药
+    healWorkRadius: 2.5,     // 到位半径（伸手可及），与 needs 的 FIRE_SIDE_R 同量
+    healMagnetRadius: 24,    // 磁铁半径：与 sleepMagnetRadius / newFireRadius 同锚点
+    naturalHealPerSec: 0.05, // 自然恢复：每 100s 回 5 点，慢但不停（防"永久停血"死状态）
+    healWeightWounded: 3.0,  // 有重伤同伴时 SER_HEAL ×3.0
+    restWeightWounded: 1.6,  // 自己重伤时 SER_REST ×1.6（想躺下）
+    bedSearchRadius: 12,     // 必须 > minSpacing(5)：2×2 床 + 间距 5 ⇒ 第二张床至少 6 格外
   },
   social: {
     chatRadius: 2.5,
