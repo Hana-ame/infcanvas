@@ -24,15 +24,33 @@ import { Sim } from '../src/sim';
 import { ModRegistry } from '../src/mods';
 
 const args = process.argv.slice(2);
-const seconds = Number(args.find((a) => /^\d+$/.test(a)) ?? 900);
-const seed = Number(args.filter((a) => /^-?\d+$/.test(a))[1] ?? 42);
+const num = (re: RegExp, dflt: number): number => {
+  const hit = args.find((a) => re.test(a));
+  return hit === undefined ? dflt : Number(hit);
+};
+const seconds = num(/^\d+$/, 900);
+const seed = num(/^-?\d+$/, 42);
 const asJson = args.includes('--json');
+// ---- 规模档位（为什么需要它，2026-10-06 实测教训）：
+// 出厂 4 鼠 × 900 tick 整局只要 123ms（0.137ms/tick）。那个量级下：
+//   ① GC 抖动与计时器粒度占比过大，"改一处"淹没在噪声里 → 测不出收益；
+//   ② 4 鼠不是这个游戏的目标场景（RimWorld-like 的读点是" colonies 越跑越大"）。
+// 所以基准要能拉到玩家真的会遇到的规模，否则优化的是"一个没人在玩的配置"。
+// --pawns 走 overrideTuning 改 bootstrap.pawnCount（数据驱动原则③：数值进表不改内核）。
+const pawns = num(/^\d+$/, 0);
+const registry = ModRegistry.default();
+if (pawns > 0) {
+  const n = pawns;
+  registry.overrideTuning((t) => {
+    t.bootstrap.pawnCount = n;
+  });
+}
 
 // ---- 热身后再计时：JIT 未预热的前几十个 tick 含编译/内联缓存冷启动，
 //      把它们算进均值会让"改一行代码"看起来像 ±30% 的波动（假信号 = 假优化）。
 const WARMUP = Math.min(120, Math.floor(seconds / 4));
 
-const sim = new Sim({ seed, registry: ModRegistry.default() });
+const sim = new Sim({ seed, registry });
 const initialPawns = [...sim.pawns()].length;
 
 for (let t = 0; t < WARMUP; t++) sim.step(1);
@@ -83,6 +101,7 @@ for (const p of sim.pawns()) for (const n of Object.values(p.uses)) usesTotal +=
 
 const metrics = {
   seed,
+  pawns,
   seconds,
   tickCount: seconds,
   warmupTicks: WARMUP,
@@ -107,7 +126,7 @@ const metrics = {
 if (asJson) {
   console.log(JSON.stringify(metrics));
 } else {
-  console.log(`=== infcanvas 性能基准（seed=${seed} ${seconds} tick，预热 ${WARMUP}）===`);
+  console.log(`=== infcanvas 性能基准（seed=${seed} ${seconds} tick，预热 ${WARMUP}，出生鼠 ${metrics.initialPawns}）===`);
   console.log(`模拟耗时  总 ${metrics.totalMs}ms | 均 ${metrics.avgMsPerTick}ms/tick | p95 ${metrics.p95TickMs} | 峰 ${metrics.maxTickMs}`);
   console.log(`内存      RSS ${metrics.rssMb}MB`);
   console.log(`规模      鼠 ${metrics.alivePawns}/${metrics.initialPawns} | 猫 ${metrics.hostiles} | 建筑 ${metrics.buildings} | 事件 ${metrics.events}`);
