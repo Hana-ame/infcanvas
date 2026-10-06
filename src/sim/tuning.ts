@@ -169,6 +169,7 @@ export interface Tuning {
     spreadMice: number;
     hutRatio: number; // 棚屋/人口刚需比例（不够住才盖，不是有木就盖）
     storeRatio: number; // 仓库/人口比例
+    storeFoodDecayMul: number; // 仓库食物保鲜乘数（<1 = 更慢）
     maxForageDist: number; // 采集射程
   };
   gathering: {
@@ -732,6 +733,10 @@ export const DEFAULT_TUNING: Tuning = {
     /** 棚屋刚需比例：shelters < ceil(pawns × hutRatio) 才允许盖（不然 4 只鼠狂盖 28 座） */
     hutRatio: 0.5,
     storeRatio: 0.25,
+    /** 仓库食物保鲜乘数：有仓库时食物衰减速率 × 此值（<1 = 更慢）。
+     *  0.7 = 衰减降 30%：仓库是"锦上添花"不是"救命稻草"——
+     *  没有仓库依然能活（衰减速率 × 1），有仓库延缓饥荒但不逆转。 */
+    storeFoodDecayMul: 0.85,
     maxForageDist: 30,
     /** 采集射程（格）：离最近火堆超过此距离的特征不作为采集目标。
      *  防止鼠群无限扩散——火堆是活动范围的锚点，新火堆=扩展边疆 */

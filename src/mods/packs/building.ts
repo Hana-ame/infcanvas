@@ -6,7 +6,7 @@
  * 材料不够这卡自然抽不中。木料富余时"大兴土木"的倾向也只是权重钩子，不是规则。
  */
 import type { ModPack } from '../pack';
-import { K_STOCK_WOOD, K_TAG_FIRE, K_TAG_SHELTER, K_TAG_STORAGE, K_TAG_WAYPOINT } from '../contracts';
+import { K_STOCK_WOOD, K_TAG_FIRE, K_TAG_SHELTER, K_TAG_STORAGE, K_TAG_WAYPOINT, K_STORE_FOOD_DECAY_MUL } from '../contracts';
 import { SER_BUILD } from '../contracts';
 import type { SimContext } from '../../sim/context';
 import type { PawnState, Pos } from '../../sim/types';
@@ -91,6 +91,25 @@ export const buildingPack: ModPack = {
               ctx.log(`💨 ${ctx.tuning.buildings[victim.defId]?.name ?? '篝火'}断了燃料，熄灭了`);
             }
           }
+        },
+      }),
+    });
+
+    // ---- 系统：仓库食物保鲜（production 组）。有仓库 → 食物衰减更慢。
+    //      语义与 env.foodDecayMul 并列——env 管天气，building 管设施，needs 两者相乘。
+    //      每 tick 扫一遍建筑（仓库数量少，<10 座，O(n) 可接受）。
+    m.registerSystemDef({
+      id: 'store-preservation',
+      category: 'production',
+      ctor: (ctx: SimContext) => ({
+        id: 'store-preservation',
+        update(dt) {
+          const cfg = ctx.tuning.build;
+          let hasStore = false;
+          for (const b of ctx.buildingsAll()) {
+            if (b.defId === 'store') { hasStore = true; break; }
+          }
+          ctx.scratch[K_STORE_FOOD_DECAY_MUL] = hasStore ? (cfg.storeFoodDecayMul ?? 0.7) : 1;
         },
       }),
     });

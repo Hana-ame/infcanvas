@@ -8,6 +8,7 @@ import type { ModPack } from '../pack';
 import { K_STOCK_FOOD, K_STOCK_MEAL, K_STOCK_MEAT } from '../contracts';
 import { SER_EAT, SER_REST, SER_GATHER, SER_SOCIAL, SER_WANDER, SER_FIGHT } from '../contracts';
 import { K_ENV_FOOD_DECAY_MUL } from './env';
+import { K_STORE_FOOD_DECAY_MUL } from '../contracts';
 import type { SimContext } from '../../sim/context';
 
 export const needsPack: ModPack = {
@@ -27,8 +28,9 @@ export const needsPack: ModPack = {
           // 'needs' 早于 env 的 'world'）时静默退化为「无衰减修正」，不报错、不破坏核心。
           // env 只提供这个**事实**，不代 needs 改衰减逻辑——单向数据流，互不越权。
           const foodDecayMul = ctx.scratch[K_ENV_FOOD_DECAY_MUL] ?? 1;
+          const storeFoodDecayMul = ctx.scratch[K_STORE_FOOD_DECAY_MUL] ?? 1;
           for (const p of ctx.pawns()) {
-            p.needs.food = clamp(p.needs.food - n.foodDecay * foodDecayMul * dt);
+            p.needs.food = clamp(p.needs.food - n.foodDecay * foodDecayMul * storeFoodDecayMul * dt);
             p.needs.rest = clamp(p.needs.rest - n.restDecay * dt);
             p.needs.mood = clamp(p.needs.mood - n.moodDecay * dt);
             p.needs.san = clamp(p.needs.san - n.sanDecay * dt);

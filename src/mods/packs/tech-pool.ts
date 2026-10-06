@@ -35,7 +35,7 @@ export const techPoolPack: ModPack = {
     m.registerTech({ id: 'craft:tool', name: '简易工具', fragments: 3, order: 0, unlocks: [], cardSeriesMul: { gather: 1.3 } });
     m.registerTech({ id: 'storage:store', name: '仓储术', fragments: 4, order: 1, unlocks: ['store'] });
     m.registerTech({ id: 'fire:ring', name: '火塘改良', fragments: 4, order: 2, unlocks: [], cardSeriesMul: { build: 1.2 } });
-    m.registerTech({ id: 'craft:toolkit', name: '精工工具', fragments: 5, order: 3, unlocks: [], cardSeriesMul: { fight: 1.25 } });
+    m.registerTech({ id: 'craft:toolkit', name: '精工工具', fragments: 5, order: 3, unlocks: [] });
 
     // ---- 系统：科技抽卡池（类别 world：进度类，与战斗无关但也不是社会行为）----
     m.registerSystemDef({

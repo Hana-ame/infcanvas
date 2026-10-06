@@ -29,6 +29,9 @@ export const K_STOCK_HERB = 'herb';
 export const K_TAG_FIRE = 'fire';
 export const K_TAG_SHELTER = 'shelter';
 export const K_TAG_STORAGE = 'storage';
+/** 仓库食物保鲜乘数（building 包写 / needs 读）：有仓库时食物衰减更慢。
+ *  与 env.foodDecayMul 并列——env 管天气，building 管设施，needs 两者相乘。 */
+export const K_STORE_FOOD_DECAY_MUL = 'build.storeFoodDecayMul';
 /** 农田（farming 包写 / farming 包自读）：与上面三个的区别是它**可通行**——
  *  小人要能站进/走出自家田地才谈得上播种收割。跨包语义＝"这是可耕种的地块"。 */
 export const K_TAG_FIELD = 'field';
