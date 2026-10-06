@@ -133,7 +133,14 @@ function main(): void {
   const registry = ModRegistry.default();
   console.log('=== bench: 分区块同步（line/net）===');
 
-  // 视口中心（出生点），r=192 → 3×3 块
+  // 视口中心 = 出生点。r=192 是**半径（tile）**，换算成块是 ceil(192/64)=3 格半径
+  // → 实测覆盖 7×7=49 块。
+  //
+  // ⚠️ 坑记在这里：第一版注释写"r=192 → 3×3 块"，**是我算错了**。
+  // 读数里 view_chunks=49 当场把它纠正。后果：小世界（3×3=9 块）整个落在
+  // 视口内，裁剪率必然 0% —— 那个 0.0% 不是"裁剪无效"，而是**视口比世界还大，
+  // 本来就无可裁**。这个 0.0% 保留下来作为读数（它正好说明了收益取决于
+  // 视口/世界之比），但必须在读数旁写清楚，否则会被误读成"优化没用"。
 
   for (const spread of [3, 9]) {
     const sim = new Sim({ seed: 20260821, registry });
@@ -145,7 +152,7 @@ function main(): void {
     // 建筑数此时**必然稳定**，无需再断言存活比例 —— 上一版的存活断言正是因为
     // 跑错了 sim.run 才需要，它是症状不是防线，删掉免得误导后人。
 
-    // 视口 = 中心 r=192（3×3 块），客户端典型订阅
+    // 视口 r=192（实测 7×7=49 块，见上方换算坑记）
     const viewScope = new Set(chunksForInterest({ x: 0, y: 0, r: 192 }));
     const remoteAll = new Set<number>();
     for (let cy = 0; cy < spread; cy++) {
@@ -181,9 +188,17 @@ function main(): void {
     console.log(`bandwidth_delta_bytes.reduction_pct=${reduction.toFixed(1)}`);
     console.log(`bandwidth_delta_buildings.full_avg=${avg(fullBld).toFixed(1)}`);
     console.log(`bandwidth_delta_buildings.chunked_avg=${avg(chunkBld).toFixed(1)}`);
-    // 基准自检：若 chunked 侧几乎没裁掉东西，数字不可信（宁可报错也不要假读数）
-    if (avg(chunkBld) >= avg(fullBld) && avg(fullBld) > 0) {
-      console.log(`WARN spread=${spread}: 裁剪侧建筑数(${avg(chunkBld).toFixed(1)}) 未低于全量侧(${avg(fullBld).toFixed(1)})，读数存疑`);
+    // 可解释性检查：裁剪侧不小于全量侧，只有在**视口覆盖了整个世界**时才正常。
+    // 分开报而不是笼统 WARN，因为这两种情况含义完全相反：
+    //  · 视口 ⊇ 世界 → 0% 是**正确读数**（无可裁），不是缺陷；
+    //  · 视口 ⊂ 世界仍 0% → 基准失真（要么 scope 没生效，要么两边都空）。
+    const coversAll = viewScope.size >= remoteAll.size;
+    console.log(`bandwidth_view_covers_world=${coversAll ? 1 : 0}`);
+    if (!coversAll && avg(chunkBld) >= avg(fullBld) && avg(fullBld) > 0) {
+      console.log(
+        `WARN spread=${spread}: 视口未覆盖全世界(${viewScope.size}<${remoteAll.size}) 但裁剪侧建筑数` +
+          `(${avg(chunkBld).toFixed(1)}) 未低于全量侧(${avg(fullBld).toFixed(1)}) —— 基准失真，读数不可信`,
+      );
     }
   }
 
