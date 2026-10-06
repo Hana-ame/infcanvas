@@ -9,6 +9,12 @@
  * R1 追加（2026-10-05）：
  *  - R1-1 断线重连 + 心跳看门狗：onclose 走指数退避重连；15s 没有任何消息判定假死。
  *  - R1-3 远程渲染插值：渲染位置来自独立的 interpSlots 表，pawnMap 保持权威快照原样。
+ *
+ * line/net 追加（2026-10-06）——分区块同步：
+ *  - setInterest 上报视口区块集合，服务端据此裁剪快照（见 shared/chunks.ts）。
+ *  - 收到带 scope 的 full/delta 时只合入 scope 内数据，并**卸载** droppedChunks
+ *    的远端区块（否则"服务端没提到"会被误读为"还留着"→ 走回去看到幽灵建筑）。
+ *  - 地形仍然零流量自推：区块化只裁剪**实体状态**，hash 推导的地形不在此列。
  */
 import { World } from '../sim/world';
 import type { BuildingState, Eid, Hostile, LogEvent, PawnState, Pos } from '../sim/types';
@@ -16,8 +22,14 @@ import { DEFAULT_TUNING, type Tuning } from '../sim/tuning';
 import { TERRAIN_NAME, type TileInspect, type WorldView } from './view';
 import { buildBuildingDetail, buildColonySummary, buildHostileDetail, buildPawnDetail } from './hud-faces';
 import { K_TAG_FIRE } from '../mods/contracts';
-import type { ClientMsg, ServerMsg } from '../shared/protocol';
+import type { ClientMsg, FullState, ServerMsg } from '../shared/protocol';
 import { WATCHDOG_MS } from '../shared/protocol';
+import {
+  chunksForInterest,
+  fromChunkCoords,
+  tileChunkKey,
+  type ChunkCoord,
+} from '../shared/chunks';
 import { BackoffState, shouldWatchdogTrip } from './reconnect';
 import { InterpSlot } from './interp';
 
@@ -52,6 +64,15 @@ export class RemoteSim implements WorldView {
   private hostileList: Hostile[] = [];
   private buildingList: BuildingState[] = [];
   eventsList: LogEvent[] = [];
+  /**
+   * 当前已加载区块键集合（line/net）。null = 未启用裁剪（全量投影，v1 行为）。
+   *
+   * 为什么单独一张表而不是靠 buildingList 反推：卸载要按区块批量做，
+   * 而 buildingList 是扁平数组；每帧为卸载扫描全表是 O(建筑数) 的无谓开销。
+   */
+  private loadedChunks: Set<number> | null = null;
+  /** 已上报的视口兴趣区（去重用：同一块不重复上行） */
+  private lastInterestKey = '';
   /** 本地地形推导器（seed+tuning 与服务器一致；余量随 full 快照同步） */
   world!: World;
   /**
@@ -266,11 +287,22 @@ export class RemoteSim implements WorldView {
         this.pawnMap.delete(eid);
         this.interpSlots.delete(eid); // 渲染槽必须同步清理，否则渲染会画出已死的鼠
       }
-      this.hostileList = d.hostiles;
-      this.buildingList = d.buildings;
       this.eventsList.push(...d.newEvents);
       // 客户端事件列表封顶：服务器环缓冲 200，但 delta 是增量追加——不封顶长局必泄漏
       if (this.eventsList.length > 400) this.eventsList = this.eventsList.slice(-200);
+
+      // 区块化：delta 的 scope 只说明"变化可能发生在哪些块"，**不能用来卸载**；
+      // 卸载只认 droppedChunks。两者分开是协议里刻意区分的语义。
+      if (d.scope || d.droppedChunks) {
+        this.applyChunkScope(d.scope, d.droppedChunks, () => {
+          // scope 内 = 本帧的权威值，整体替换（裁剪后 hostiles/buildings 就是 scope 内的全集）
+          this.hostileList = d.hostiles;
+          this.buildingList = d.buildings;
+        });
+      } else {
+        this.hostileList = d.hostiles;
+        this.buildingList = d.buildings;
+      }
     }
   }
 
@@ -292,11 +324,34 @@ export class RemoteSim implements WorldView {
     slot.advance(pos, deltaSec);
   }
 
-  private applyFull(d: import('../shared/protocol').FullState): void {
+  private applyFull(d: FullState): void {
+    // 带 scope 的 full = "本 scope 的权威对账"：scope 外必须卸载。
+    // 缺省 scope（旧服务端/未开裁剪）= 保持全量投影，与 v1 行为逐位相同。
+    if (d.scope) {
+      this.applyChunkScope(d.scope, undefined, (inScope) => {
+        this.applyFullInner(d, inScope);
+      });
+      return;
+    }
+    this.applyFullInner(d, null);
+  }
+
+  /** full 的真正实现；inScope = null 表示"不裁剪，全部保留"。 */
+  private applyFullInner(d: FullState, inScope: ReadonlySet<number> | null): void {
     this.time = d.time;
     this.stockpile = d.stockpile;
-    this.pawnMap.clear();
-    this.interpSlots.clear();
+    // 先只清 scope 内的 pawn（裁剪时），避免把别的区块的也清掉
+    if (inScope === null) {
+      this.pawnMap.clear();
+      this.interpSlots.clear();
+    } else {
+      for (const [eid, p] of [...this.pawnMap]) {
+        if (inScope.has(tileChunkKey(p.pos.x, p.pos.y).key)) {
+          this.pawnMap.delete(eid);
+          this.interpSlots.delete(eid);
+        }
+      }
+    }
     for (const p of d.pawns) {
       this.pawnMap.set(p.eid, structuredClone(p));
       // full = 权威对账，直接吸附不插值（R1-3）：插值对账只会渲染出错误的中间态
@@ -335,6 +390,78 @@ export class RemoteSim implements WorldView {
     const msg: ClientMsg = { t: 'cmd', c: { type, args } };
     this.onCmdUp?.({ type, args });
     this.ws?.send(JSON.stringify(msg));
+  }
+
+  /**
+   * 上报视口兴趣区（line/net）：服务端据此裁剪快照。
+   *
+   * **节流到"区块集合真的变了"才上行**：渲染层每帧都会调（相机平滑移动），
+   * 若照单全收就是 60Hz 上行（比 2Hz 下行还贵，净亏）。
+   * 判据用区块键集合的**长度+首末键**做指纹——这不是严格哈希，但漏判的代价
+   * 只是"这一帧没上报"（下一帧补上），而错判的代价（上报了没变的）
+   * 只是多一条小消息，所以偏向保守（宁可多发）。精确去重留待实测出现带宽问题再做。
+   *
+   * 半径默认 192 tile（3 个 chunk 跨度）：覆盖 1080p 全屏 22px/格的视野约 40 格，
+   * 留出 4.8 倍余量应对镜头惯性移动。调小的收益是带宽，调大的是"走回去不用等刷新"。
+   */
+  setInterest(x: number, y: number, r = 192): void {
+    if (!Number.isFinite(x) || !Number.isFinite(y) || r <= 0) return;
+    const keys = chunksForInterest({ x, y, r });
+    const fp = `${keys.length}:${keys[0] ?? ''}:${keys[keys.length - 1] ?? ''}`;
+    if (fp === this.lastInterestKey) return;
+    this.lastInterestKey = fp;
+    const msg: ClientMsg = { t: 'interest', d: { x, y, r } };
+    this.ws?.send(JSON.stringify(msg));
+  }
+
+  /** 当前已加载区块数（测试/调试用：观察"走远后卸载"是否真的发生） */
+  get loadedChunkCount(): number {
+    return this.loadedChunks === null ? -1 : this.loadedChunks.size;
+  }
+
+  /**
+   * 合入带 scope 的快照（line/net）。
+   *
+   * 三件事，顺序不能换：
+   *  1. 先**卸载** droppedChunks（走远时清掉远端投影）；
+   *  2. 再**整体替换**本帧 scope 内的数据（full 语义 = 权威对账）；
+   *  3. 最后登记 loadedChunks。
+   *
+   * 卸载必须在替换之前吗？不必须，但**同一次调用里完成**才行：
+   * 若把卸载推迟到下一帧，会出现"同一区块先被 dropped 标记、又在本帧 full 里
+   * 出现"的顺序，客户端若按顺序处理就会先删后加（多一次重建开销）；
+   * 反序则是先加后删（当帧丢失刚收到的数据，表现为"走回来时建筑闪一下才出现"）。
+   * 同调用内做完 + 作用域内先删后加，两个方向都不闪。
+   */
+  private applyChunkScope(
+    scope: ChunkCoord[] | undefined,
+    dropped: ChunkCoord[] | undefined,
+    replace: (inScope: ReadonlySet<number> | null) => void,
+  ): void {
+    const scopeKeys = scope ? new Set(fromChunkCoords(scope)) : null;
+    if (dropped && dropped.length > 0) {
+      for (const c of dropped) {
+        // 用 chunkKey 而不是"伪造坐标再反解"：这里做的就是编码，直接调
+        // chunks.ts 的唯一入口 fromChunkCoords，**不在客户端另写一份解码**。
+        const key = fromChunkCoords([c])[0];
+        this.loadedChunks?.delete(key);
+        this.unloadChunk(key);
+      }
+    }
+    if (scopeKeys) {
+      if (this.loadedChunks === null) this.loadedChunks = new Set();
+      for (const k of scopeKeys) this.loadedChunks.add(k);
+    }
+    replace(scopeKeys);
+  }
+
+  /** 卸载一个区块的本地投影：建筑/敌袭按区块过滤掉。
+   *  pawnMap **不**卸载——鼠是玩家直接指挥的对象，且数量少；
+   *  卸载它们会让"走出视野再走回来"时选中状态与插值槽全部失效（更糟的体验）。
+   *  建筑才是带宽与内存的大头，也是"幽灵建筑"的主要来源。 */
+  private unloadChunk(key: number): void {
+    this.buildingList = this.buildingList.filter((b) => tileChunkKey(b.pos.x, b.pos.y).key !== key);
+    this.hostileList = this.hostileList.filter((h) => tileChunkKey(h.pos.x, h.pos.y).key !== key);
   }
 
   // ---- WorldView ----

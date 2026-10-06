@@ -389,6 +389,38 @@ export class Sim implements SimContext {
     this.world.now = this.time; // 单时钟源：world 特征再生跟随 sim 时钟
     for (const sys of this.systems) sys.update?.(dt);
   }
+
+  /**
+   * 按区块分片步进（line/net 2026-10-06）：只推进 activeChunks 覆盖到的区块里的实体。
+   *
+   * ## 与 step 的关系：**它是 step 的子集，不是替代**
+   *
+   * `activeChunks === null` 时行为与 step 逐位相同（所有区块都被 admit）——
+   * 这是设计上的关键：服务器可以按"有客户端订阅 + 有实体"的并集决定要不要分片，
+   * 单机本地模式永远走 null 路径，**零行为变化**。
+   *
+   * ## 确定性保证（本方法能存在的前提）
+   *
+   * 分片只做"跳过"，不重排：admitted 全集时，各系统 updateChunked 的遍历顺序
+   * 与 update 完全相同 → rng 消费序列相同 → 抽卡序列相同 → 整局相同。
+   * 推论（也是本方法的限制）：**admitted ≠ 全集时，被跳过的鼠在那一 tick 完全不动**
+   * （不抽卡、不推进、不消耗 rng）。这是"分片"的本质代价，不是 bug。
+   * 于是它只适合"跳过的区块里没有玩家关心的实体"——服务器据此只 admit
+   * 有客户端订阅的区块，而**玩家的鼠必然在自己订阅的区块里**，所以玩家的鼠永不被跳过。
+   *
+   * ⚠️ 换来的代价是真实的：视口外的鼠（AI 独自在远方劳作）会被跳过分片 tick。
+   * 它们的状态不变，玩家看不见；但如果玩家把镜头移过去，它们会"从暂停中醒来"。
+   * 这与"客户端只是不显示远处实体"是同一个语义，服务器仍在权威推进自己那部分。
+   */
+  stepChunked(dt: number, activeChunks: ReadonlySet<number> | null): void {
+    this.time += dt;
+    this.world.now = this.time;
+    for (const sys of this.systems) {
+      if (activeChunks === null) sys.update?.(dt);
+      else if (sys.updateChunked) sys.updateChunked(dt, activeChunks);
+      else sys.update?.(dt); // 没实现分片的面照常全量（正确性优先于收益）
+    }
+  }
   run(seconds: number, dt = 1): void {
     for (let t = 0; t < seconds; t++) this.step(dt);
   }

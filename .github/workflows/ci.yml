@@ -53,6 +53,32 @@ jobs:
       - name: vite build
         run: npx vite build
 
+  # 分区块同步基准（line/net 2026-10-06）：带宽与 tick 耗时的实测读数。
+  #
+  # 为什么单独一个 job 而不是塞进 test：
+  #  1. **不占本地 CPU**：本轮硬约束是本地不能跑长基准（CPU 被别的任务占用），
+  #     读数只能来自远端 runner。放在这里 = 每次 push 都免费得到一份。
+  #  2. **不阻断**：基准是"读数"不是"门槛"。runner 性能有噪声，用它当门禁会随机红。
+  #     所以 continue-on-error：读数照出，问题照查。
+  #  门禁仍只认 test + typecheck-build（见 balance job 的同款注释）。
+  #
+  # 为什么固定 node 22 而不跟 test 矩阵一致：基准要的是"一份稳定的读数"，
+  # 跑两份反而让人分不清哪份当基线。node 20/22 的一致性由 test job 负责。
+  bench-chunks:
+    name: bench chunks (带宽/tick 读数) [报告, 不阻断]
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: run chunked-sync benchmark
+        run: npx tsx scripts/bench-chunks.ts
+
   # 平衡复采：与 ROADMAP「完成定义」一致——seed42/7/99/2026 存活 ≥3/4。
   # 这是纯逻辑入口（scripts/play.ts），不需要浏览器，放远端跑最划算。
   #
