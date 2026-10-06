@@ -96,11 +96,27 @@ const SCENARIOS = [
  *     解锁了任何科技**，其中 3 个跑到 1800s 仍零解锁 ⇒ 整棵科技树在一整局里基本不存在，
  *     `build_store` 卡 condition 失败率 **100.0%**（它被 storage:store 门控）。
  *     改后：900s 内 4 seed 平均解锁 **0.25 → 0.75 项**，存活 6 seed 全部 ≥3（CI 门槛安全）。
+ *
+ * - 2026-10-06 第 6 次换血 —— 农耕与睡眠的**磁铁半径**修复（`line/cards` 0f82b7e）：
+ *     ① `farming.senseRadius=12` 被 condition（进候选池）与到位判定**共用**，而实测
+ *        「到最近熟田距离」中位 31.0 格、≤12 的只有 18.2% ⇒ 熟田**烂在地里**。
+ *        拆成 `workRadius=1.5`（到位）+ `magnetRadius=30`（候选池）。
+ *     ② `needs` 的 sleep 写死 `nearestBuildingByTag('fire',…, 8)`：火在 8格外时
+ *        fire=null ⇒ 走 else「野外打盹」且**永不尝试走过去**。Lead 独立实测
+ *        （4 seed×900 tick，不采信提交里的数字）：睡眠 600 tick 里
+ *        **火在 8 格内 8.8%、贴到火边 8.5%、睡时到最近火中位 16.6 格**
+ *        ⇒ `sleepRestNearFire`/`sleepSanNearFire`/棚屋回心情三条常年享受不到。
+ *        新增 `needs.sleepMagnetRadius=24`。
+ *     ③ 顺带修了 `sow()`/`harvest()` **忽略 setPath 返回值**导致磁铁圈内恒定空转。
+ *     **注意**：sleep 的 **condition（rest<70）没有动**——rest 悬在 70 上下是衰减率与
+ *     恢复率调出的平衡点，失败率 82% 是正确行为。变的是"睡的时候到底在不在火边"。
+ *     实测：10 seed 存活 39/40 → **40/40**；stockFood 698 → 733（+5.0%，多收熟田的
+ *     收益盖过赶路成本）；候选池 5.40 → 5.19（门禁下限 3.5 有大量余量）。
  */
 const GOLDEN: Record<string, string> = {
-  '42@900': 'fp_76ccec21',
-  '7@900': 'fp_1fbd6300',
-  '2026@900': 'fp_71ab7703',
+  '42@900': 'fp_7012eb0d',
+  '7@900': 'fp_a9b20054',
+  '2026@900': 'fp_7e4ef8c8',
 };
 
 /** 跑一个场景：固定 seed 跑固定 tick 数，返回指纹（不存档直跑）。 */
