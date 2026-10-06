@@ -783,3 +783,142 @@ needs.food < 45  →  SER_FARM 系列权重 × 2.2
 |---|---|---|
 | `chunked` | `true` | 关掉即回到 v1 全量下发（基准对照用） |
 | `defaultInterestRadius` | `192` | 未上报 interest 的客户端的默认视口半径（tile） |
+
+---
+
+## 文档漂移订正（2026-10-06 · line/docs-audit 审计轮）：文首「开局你就该看到」「基本操作」「关键玩法点」描述的是 v3 之前的版本
+
+> **本节只追加，不改上文任何一行。** 上文 L1–L62（尤其 L12–L14、L45–L48、L53、L62）是
+> 2026-08-14 那个**旧全量实现**（已归档 `test/`）的玩法描述，在当前 v3 代码里**大部分无对应实现**。
+> 本节逐条给出 v3 的真实情况与源码依据（`file:line`，基线 commit `59f8c7f`）。
+> 审计方法：窄范围 grep 限定到 `src/sim/*.ts`、`src/mods/**/*.ts`、`src/client/*.ts`、
+> `src/shared/*.ts`、`src/server/*.ts`（未全库扫描）；逐条读文件确认，不靠文档口径反推。
+
+### 一、逐条核实结论表
+
+| 文档声称（文首） | v3 真实情况 | 源码依据 |
+|---|---|---|
+| L13 顶部资源条含 **🪨矿** | **不存在**。v3 资源池只有两种：`food` 与 `wood` | `src/mods/contracts.ts:12-13`（`K_STOCK_FOOD` / `K_STOCK_WOOD`，全表仅此两键） |
+| L13 顶部资源条含 **🛠️工具** | **不存在**。工具不是可堆放资源，`stockpile` 里没有 `tool` 键 | `src/mods/contracts.ts:12-13`；HUD 只读 `view.stockpile['food'] / ['wood']`：`src/client/hud/default-panels.ts:70-71` |
+| L13 顶部资源条含 **☀️/🌙昼夜** | **不存在**。世界时间只是一个连续递增的秒数 | `src/sim/sim.ts:36`（`time = 0`）、`src/sim/sim.ts:432-436`（`step()` 只做 `this.time += dt`）；HUD 显示为 `⏱ ${Math.floor(s.time)}s`：`src/client/hud/default-panels.ts:83` |
+| L13 顶部资源条含 **天气** | **不存在**。src/ 里唯一的「天气」是**测试里的假面板名** | `src/__tests__/hud-panels.test.ts:153`（`host.register({ id: 'mod:weather', …title: '天气' })`——用于验证面板扩展性，与模拟无关） |
+| L14 **缺粮建农田** | **存在**（v3 已实现），但触发条件不是「缺粮」而是「**木料够 + 田数未超人口比例**」；饥饿顶上来的是**播种/收割**卡，不是开垦卡 | `src/mods/packs/farming.ts:92-99`（注册农田建筑）、`:135-145`（`build_field` 卡）、`:176-186`（`wantNewField`：木料 ≥6 且 `fields < ceil(pawns × fieldRatio)`） |
+| L14 **缺工具建工作台** | **不存在**。没有工作台建筑、没有配方系统产出工具 | `src/mods/packs/building.ts:22-58` 只注册 `campfire`/`hut`/`store`；`registerRecipe` 全项目仅在 `src/mods/registry.ts:28-33` 有类型定义，无任何包调用 |
+| L14 **没矿建矿洞** | **不存在**。v3 完全没有矿石资源与矿洞建筑 | 资源键只有 food/wood（同上 contracts.ts:12-13）；建筑表见 `src/mods/packs/building.ts:22-58` + `src/mods/packs/farming.ts:92-99` |
+| L14 **信仰高了建教堂** | **不存在**。v3 没有信仰字段、没有教堂建筑、没有祈祷卡 | `src/sim/types.ts:18-23`（`Needs` 只有 food/rest/mood/san）、`src/sim/tuning.ts:318-325`（`traits` 只有 5 个性格项，无信仰项） |
+| L7/L12 小人「采矿」「祈祷」 | **不存在**。采集只有采野果与砍树两种 | `src/mods/packs/gathering.ts:44-65`（`gather_berry` / `chop_tree`，仅此两张采集卡） |
+| L37 面板点「伐木工/矿工/农民/工匠」指派职业 | **不存在**。v3 无职业/指派面 | v3 唯一内建命令是 `move`：`src/sim/sim.ts:407-425`；注册面有 `registerCommand`（`src/mods/registry.ts:67-70`）但**默认 8 个玩法包无一注册命令**（`src/mods/packs/*.ts` 全域无 `registerCommand` 调用） |
+| L45-48 **教堂与旧版决策层**整节 | **整节不存在** | 教堂：同 L14。旧版决策层：见下节「二、旧版决策层是什么」。此外 L47 的「发布旧版决策层」按钮在 UI 上也不存在，`index.html:44-51` 的按钮只有 暂停/速度/跟随/存档/读档/新世界/地块信息 |
+| L53 团灭后旧版决策层「附身」其他派系 | **不存在**，且 v3 无派系实体 | `src/sim/sim.ts:143-149`（`killPawn` 只删实体并记事件，无附身路径）；v3 无派系类型（`src/sim/types.ts` 全文只有 `PawnState`/`Hostile`/`BuildingState`/`FeatureHit`/`LogEvent`） |
+| L62 「派系战争 + 旧版决策层影响」 | **不存在**。派系与决策层双双没有 | 同上。v3 唯一有社会性的系统是 `social` 包的闲聊/口角 + 关系值：`src/mods/packs/social.ts:17-42` |
+| L66-68 暂停/变速「⏸ / 1x / 2x / 3x」 | **名字变了**。v3 是 `⏸ 暂停` 单按钮 + `⏩ 速度 ×3` 单按钮循环 ×1→×3→×8 | `index.html:45-46`；循环逻辑 `src/client/main.ts:171-172` |
+| L24/L27 缩放按钮「＋－」与「2D ↔ 2.5D 视角切换」 | **不存在**。缩放只有滚轮，无 2.5D 切换按钮 | `index.html:44-51` 无该按钮；滚轮处理在 `src/client/render.ts:320` |
+| L28 顶部「❓ 操作帮助」 | **不存在** | `index.html:44-51` 无该按钮 |
+
+### 二、「旧版决策层」到底是什么：v3 里**一个都不对应**
+
+文档中「旧版决策层」出现 16 次，其含义在旧版经历过三次演化（L45-48 发布祝福 → L82 定时降旨/抽到指令卡 → L289-295
+已更名为「旧版指令卡（卡池影响项）」）。按 v3 源码逐个比对，**五个候选入口全部不存在**：
+
+| 候选入口 | v3 是否有对应物 | 依据 |
+|---|---|---|
+| **卡池**（"×N 工作系列权重"） | ❌ 不存在 | v3 无「玩家侧卡池」这层。权重钩子 `registerHook('cardWeight')` 只由**玩法包**注册（needs 饥饿/休息/心情/理智 4 个钩子 `src/mods/packs/needs.ts:35-58`、building 木料富余 `src/mods/packs/building.ts:99-106`、raid 恐惧 `src/mods/packs/raid.ts:28-35`、farming 饥饿 `src/mods/packs/farming.ts:128-132`）。**玩家触发权重为 0 条路径** |
+| **权重**（"目标期内某系列 ×3"） | ❌ 不存在 | 同上；`cardWeight` 管线 `src/sim/cards.ts:43-52` 的因子只有 base × hooks × 特质 seriesMul × 熟练度，**没有 oracleMul / directiveMul 之类的玩家因子** |
+| **目标层**（"降旨后鼠仍自主抽卡"） | ❌ 不存在 | 「目标层」是旧版的概念名。v3 的对应物是 `PawnState.holdUntil`（玩家命令优先窗口），但它**不是降旨**而是**直接命令**：`src/sim/sim.ts:415-423`（`move` 直接清 `cardId`/`busyUntil` 并置 `holdUntil = time + 5`）。语义是「服从命令」不是「引导方向」 |
+| **插卡**（"给选中鼠插一张目标卡/习惯卡"） | ❌ 不存在 | v3 唯一与「随身卡」沾边的是 `mastery`（熟练度，权重 ×(0.5+m/100)），但它是**卡被抽中后自动演化**的（`src/sim/systems.ts:116` `touchMastery`），玩家无法插卡 |
+| **神谕目标**（`setOracle(series,mul,dur)`） | ❌ **已被明确删除** | `src/mods/contracts.ts:24`：「原『策略卡引用校验』随『××令』移除一并删除」；`src/mods/registry.ts:8`：「2026-08-21 用户裁定：registerStrategyCard/"××令"机制整体移除」；`src/__tests__/contracts.test.ts:3` 同义；`src/__tests__/assembly.test.ts:87` 提到「删除 oracle 包后…」 |
+
+**判定结论：「旧版决策层」在 v3 中五个入口全不对应，且不存在任何等价物。**
+唯一「玩家影响小人行为」的通道是 **`move` 一条命令**，且按 `AGENTS.md` 与
+`docs/PROGRESS.md` 的 2026-08-21 用户裁定，明确**不做**任何「××令」/策略卡/全局干预机制。
+换句话说：文档里的「旧版决策层」不是**名字变了**，而是**被产品决策删除了**。
+
+> 顺带澄清一处残留命名：`src/mods/contracts.ts:7` 的注释里还留着「策略卡引用的系列必须真实存在」、
+> `src/mods/contracts.ts:24` 留着「××令移除」——这两处是**有意保留的历史注记**，
+> 说明该机制是被删除而非从未存在，不是漂移。
+
+**「旧版决策层」在代码里的原名（这决定了它的判定）**：`docs/PROGRESS.md:247`（v3 阶段①②入库那一行）
+把它写得很直白——权重管线曾含 **`神谕 oracleMul`** 一项，由 `strategy` 命令查策略卡表后
+`setOracle(series, mul, dur)` 注入，到期自然失效。把它和 `src/sim/cards.ts:43-52` 对照：
+**当前管线里已没有 `oracleMul` 这个因子**（只剩 base × 钩子 × 特质 × 熟练度）。
+所以「旧版决策层」= **神谕/策略卡权重注入层**，v3 里这个因子被摘掉了。
+`docs/PROGRESS.md:247` 本身因此也是一条漂移行（仍写着 `玩法包 7 个（…/oracle/bootstrap）`，
+实际 `src/mods/packs/playstyle.ts:20-29` 是 8 个且**无 oracle 包**）。
+
+### 三、额外漂移体检（同一轮的顺手发现，不改上文）
+
+**A. 文档说有、v3 没有（各带 file:line）**
+
+1. **`docs/DESIGN.md:1041` 「默认玩法包 6 个」已过期** → v3 是 **8 个**（新增 `tech-pool`、`farming`）。
+   依据：`src/mods/packs/playstyle.ts:20-29`（`DEFAULT_PLAYSTYLE_PACKS` 列 8 项）。
+   顺带同处 `:1044` 写「移除 oracle/"××令"机制」，与 `src/mods/registry.ts:8` 一致 ✅。
+2. **`docs/DESIGN.md:1045` 「SER_\*(9 工作系列)」已过期** → v3 是 **10 个**（新增 `SER_FARM`）。
+   依据：`src/mods/contracts.ts:25-34`（定义）与 `:37-48`（`ALL_SERIES` 数组实为 10 项，`src/mods/packs/farming.ts:24` 引入）。
+3. **`docs/PLAYING.md:609` 「棚屋需要「棚屋营造」」已过期** → 棚屋**刻意不加**科技门控
+   （这是 R2-1 后的平衡修正，理由见 `src/mods/packs/building.ts:40-45` 注释）；只有仓库需要「仓储术」
+   （`src/mods/packs/building.ts:57` `tech: ['storage:store']`）。
+4. **`docs/DLC_PACKS.md` 整份与 v3 无关** → 该文件描述旧实现的 62 包 / 50 系统，
+   其中 `oracle-guidance`、`drafting`、`field-command`、`thermo`、`cooking`、`clothing` 等在 v3 全部不存在
+   （`src/mods/packs/` 只有 10 个文件）。文首「默认装配共 **62 个玩法包**、**50 个系统**」在 v3 应为
+   8 个包（`src/mods/packs/playstyle.ts:20-29`）。
+5. **测试基线在四处文档全部过期**：`README.md:23` 写 632 用例、`docs/INDEX.md:8` 写 70 用例/13 文件、
+   `docs/PLAYING.md:477` 写 62 用例/12 文件、`docs/PROGRESS.md:247` 写 49 用例/10 文件（该行另含
+   **已删除的 `oracleMul` 与 `setOracle` 描述**——见 §二）。
+   v3 当前基线为 **31 个 `.test.ts` 文件 / 254 个 `it()` 用例**（`src/__tests__/*.test.ts` 静态计数，
+   **不是本地跑 vitest 得出的**——本地 CPU 被占，以 CI 远端 runner 为准）。
+
+**B. 代码有、文档没说（v3 已实现但 PLAYING.md 没有对应描述）**
+
+6. **仓库（store）建筑没有任何玩法描述**。v3 已实现：2×2、造价木 8、带 `storage` 标签、
+   受「仓储术」科技门控 + 人口比例门（`src/mods/packs/building.ts:48-58`、`:133-153`）。
+   PLAYING.md 只在 `:609`（科技门控表）和 `:732`（图标区分）顺带提过，**没有独立说明**。
+7. **`building` 包的木料富余权重钩子没写进 PLAYING**。木 ≥20 → build 系列 ×1.8，木 ≥12 → ×1.3，
+   心情 <40 时 `build_hut` 再 ×2（`src/mods/packs/building.ts:99-106`）——这是玩家能观察到的行为差异。
+8. **篝火燃料维护（断薪熄灭）没有玩家侧说明**。篝火每 12s 烧 1 木，断薪时按 id 序确定性熄灭一座
+   并记事件「💨 … 断了燃料，熄灭了」（`src/mods/packs/building.ts:64-96`、`src/mods/packs/building.ts:29`）。
+   PLAYING.md 只在 `:514` 提了「每 12 秒烧 1 木」，**没说断薪会熄火**。
+9. **熟练度 / 抽卡记录已进 HUD**，PLAYING.md `:688` 有一句，但**没解释它会反过来抬高那张卡的权重**
+   （权重 ×(0.5+mastery/100)：`src/sim/cards.ts:50`；熟练度演化 `src/sim/systems.ts:116`）——
+   这是「鼠为什么会越干越偏」的唯一解释，玩家看不见机制就会以为出 bug。
+10. **`build_field` 卡的 series 是 `build` 不是 `farm`**（`src/mods/packs/farming.ts:138`），
+    所以饥饿钩子（`src/mods/packs/farming.ts:127-131`，判 `card.series !== SER_FARM` 即返回 1）
+    **只作用于播种/收割两张卡**；开垦卡走的是另一条路——`building` 包的木料富余钩子
+    （`src/mods/packs/building.ts:99-106`，木 ≥20 时 `SER_BUILD` 整体 ×1.8）。
+    `docs/PLAYING.md:740` 写的「`needs.food < 45 → SER_FARM 系列权重 × 2.2`」字面正确
+    （`src/sim/tuning.ts:273-274` = `hungryBelow:45 / hungryWeightMul:2.2`），
+    但**读者容易推出"饿了就会自动开垦"**——实际语义是：**得先有人攒够木料去开垦，饿才逼出播种与收割。**
+    （本条是措辞精度问题，不是事实错误，故不改上文，登记在此。）
+
+**C. 玩法包覆盖核对（bootstrap/gathering/building/social/raid/needs/playstyle/tech-pool/farming）**
+
+| 玩法包 | v3 存在 | PLAYING.md 有对应描述 |
+|---|---|---|
+| `bootstrap` | ✅ `src/mods/packs/bootstrap.ts:13-38` | ⚠️ 有（`:442` 开局 4 只鼠 + 篝火），但未点名 `bootstrap` 包 |
+| `gathering` | ✅ `src/mods/packs/gathering.ts:39-67` | ✅ `:513` 大树 / `:513` 浆果丛图例 |
+| `building` | ✅ `src/mods/packs/building.ts:15-155` | ⚠️ 篝火/棚屋有（`:514-515`），**仓库缺失**（见上 §B-6） |
+| `social` | ✅ `src/mods/packs/social.ts:13-44` | ✅ `:442` 「闲聊（偶尔吵一架）」 |
+| `raid` | ✅ `src/mods/packs/raid.ts:14-119` | ✅ `:516` 野猫 + `:516` 警戒圈 18 格 |
+| `needs` | ✅ `src/mods/packs/needs.ts:12-133` | ✅ `:523-526` 四条需求微条 + `:526` 语义 |
+| `playstyle` | ✅ `src/mods/packs/playstyle.ts:20-29`（默认清单） | ❌ 未点名（玩家侧无需感知，但 AGENTS.md 同步纪律要求口径一致） |
+| `tech-pool` | ✅ `src/mods/packs/tech-pool.ts:27-64` | ✅ `:598-619` 科技抽卡池整节（写得最好的一节） |
+| `farming` | ✅ `src/mods/packs/farming.ts:85-172` | ✅ `:719-758` 农耕整节 |
+
+结论：**9 个包中 6 个有合格描述，2 个部分（`building` 缺仓库、`bootstrap` 未点名），1 个（`playstyle`）未点名。**
+其中**唯一实质缺口是仓库建筑**（§B-6）；`playstyle`/`bootstrap` 只是没写包名，玩家侧无感。
+
+### 四、订正后的 v3 玩家一页纸（当前真实口径）
+
+| 维度 | v3 真实情况 | 依据 |
+|---|---|---|
+| 你是什么角色 | 观察者 + **只有一条指挥命令**（`move`）。5 秒服从窗口内该鼠不自主抽卡 | `src/sim/sim.ts:407-425`；`:446` 用户裁定 |
+| 资源 | 🍎 食物 · 🪵 木料，**只有两种** | `src/mods/contracts.ts:12-13` |
+| 建筑 | 🔥 篝火 · 🏚 棚屋 · 📦 仓库 · 🌾 农田，**只有四种** | `src/mods/packs/building.ts:22-58`、`src/mods/packs/farming.ts:92-99` |
+| 敌人 | 🐱 野猫，**只有一种** | `src/mods/packs/raid.ts:25` |
+| 科技 | 4 项（简易工具/仓储术/火塘改良/精工工具），碎片制独立池，玩家碰不到 | `src/mods/packs/tech-pool.ts:35-38` |
+| 社会 | 只有闲聊/口角 + 关系值。**无派系、无信仰、无教堂、无外交、无贸易** | `src/mods/packs/social.ts:17-42` |
+| 环境 | **无昼夜、无温度、无天气**。z 高度模型只有 0~4 层级（`world.maxZ`） | `src/sim/tuning.ts:212`；HUD 明示见 `docs/PLAYING.md:699-706` |
+| 人口 | **只减不增**：`spawnPawn` 只在开局/读档路径被调（`src/mods/packs/bootstrap.ts:31`、`src/sim/sim.ts:101`），没有任何繁殖或增长系统 | — |
+
+> **审计边界声明**：本次只做文档订正，**不改任何源码**（因此 §3 的 10 条中，第 10 条只登记不修）。
+> §1/§2 的 file:line 结论均来自对 `src/` 具体文件的读取与窄范围 grep，未做全库扫描；
+> 测试基线数字为 `.test.ts` 文件数与 `it()` 静态计数，**不是本地跑出来的**，以 CI 远端 runner 为准。
