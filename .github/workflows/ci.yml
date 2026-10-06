@@ -1,0 +1,88 @@
+# CI —— 测试/tsc/build 全部跑在 GitHub Actions 远端 runner 上，不占本地 CPU。
+#
+# 为什么这样切：本地 CPU 被别的活占用时，本地 vitest 跑不动 → 验证变成瓶颈。
+# 合并门槛改为「CI 全绿」，本地只做编辑。
+#
+# 为什么 job 矩阵里 test 与 build 分开：test 需要 spawn 真实 http.Server 监听
+# ephemeral 端口，build 只需要 tsc+vite。两者并行比串行快，且失败时能一眼
+# 区分「玩法/协议回归」与「类型/打包回归」。
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['20', '22']
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - name: npm test
+        run: npm test -- --reporter=verbose
+
+  typecheck-build:
+    name: typecheck + build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: typecheck
+        run: npx tsc --noEmit
+      - name: vite build
+        run: npx vite build
+
+  # 平衡复采：与 ROADMAP「完成定义」一致——seed42/7/99/2026 存活 ≥3/4。
+  # 这是纯逻辑入口（scripts/play.ts），不需要浏览器，放远端跑最划算。
+  #
+  # 为什么 continue-on-error（2026-10-06 加 CI 时实测）：v3 基线在这四个 seed 上
+  # 已经不达标（seed42/900s = 存活 2/4），平衡是已知的未还账，不是本轮回归。
+  # 门槛以 warning 形式报出并落进 CI 日志，等平衡修好后把 continue-on-error 去掉。
+  # 门禁只认 test + typecheck-build 两个 job。
+  balance:
+    name: balance smoke (900s x 4 seed) [报告, 不阻断]
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: balance sweep
+        run: |
+          set -euo pipefail
+          fail=0
+          for seed in 42 7 99 2026; do
+            out=$(npx tsx scripts/play.ts 900 "$seed")
+            echo "$out" | grep -E '^存活 ' || true
+            alive=$(echo "$out" | sed -n 's/^存活 \([0-9]*\)\/.*/\1/p' | head -1)
+            if [ "${alive:-0}" -lt 3 ]; then
+              echo "::error::seed $seed 存活 $alive/4 < 门槛 3"
+              fail=1
+            fi
+          done
+          exit $fail
