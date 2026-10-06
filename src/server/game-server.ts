@@ -16,7 +16,15 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { Sim } from '../sim';
 import type { ModRegistry } from '../mods';
 import type { FullState, ServerMsg } from '../shared/protocol';
-import { PING_MS, SERVER_COMMANDS, validateAdminArgs, validMoveArgs, HUD_SCRATCH_KEYS } from '../shared/protocol';
+import {
+  PING_MS,
+  SERVER_COMMANDS,
+  validateAdminArgs,
+  validInterest,
+  validMoveArgs,
+  HUD_SCRATCH_KEYS,
+} from '../shared/protocol';
+import { chunkKeyToXY, chunksForInterest, tileChunkKey, toChunkCoords, type ChunkCoord } from '../shared/chunks';
 import { authorizeAdmin, authorizeHandshake } from './auth';
 import { SaveStore, timestampName } from './save-store';
 import { loadSim, snapshotOf, type SaveData } from '../sim/sim-save';
@@ -41,6 +49,28 @@ export interface GameServerOptions {
   saveDir?: string;
   /** R1-5 启动即读档（CLI --load 传进来） */
   loadFrom?: string | undefined;
+  /**
+   * 分区块同步开关（line/net 2026-10-06）。默认 **true**。
+   *
+   * 为什么默认开而不是"上线怕破坏兼容才默认关"：协议字段全是可选的，旧客户端
+   * 不发 interest 就会走全量路径（行为逐位不变），所以开启对老客户端是零风险的；
+   * 而默认关会让"没配就是没优化"，下一个人得重新发现这个开关。
+   *
+   * 唯一需要关掉的场景是**基准对照**（bench 里要测"未裁剪"的字节数作为基线）。
+   */
+  chunked?: boolean;
+  /**
+   * 客户端未上报 interest 时的默认兴趣区半径（tile）。
+   *
+   * 语义决策（关键）：**不**给"全世界"默认，而是给一个**有限**视口半径。
+   * 因为服务端权威：客户端没告诉它兴趣区时，若服务端猜"它要全世界"，
+   * 就等于让一个恶意/异常客户端永远拉全量。给有限默认 = 安全默认值，
+   * 且真的想要全量的旧客户端可以用合法客户端补上——旧版**无**这个能力，
+   * 所以它在本轮仍会拿到裁剪后的世界（正确但范围小），这是可接受的兼容代价：
+   * 玩家看到的实体在自己视野 192 tile 内，超出范围的建筑只是暂时不显示，
+   * 而地形（hash 推导）**照常全量**，不会变空白。
+   */
+  defaultInterestRadius?: number;
 }
 
 export interface GameServerHandle {
@@ -57,6 +87,26 @@ interface ClientCtx {
   sock: WebSocket;
   lastPawnJson: Map<string, string>;
   sentEvents: number;
+  /**
+   * 该连接当前订阅的区块键集合（line/net）。
+   *
+   * null = 尚未上报 interest（用默认视口兜底，见 defaultInterestRadius 注释）。
+   * 存"集合"而不是坐标，是为了让 droppedChunks 的计算退化成一次差集；
+   * 每 500ms 算一次差集（O(区块数)）远比每次重建集合便宜。
+   */
+  interest: Set<number> | null;
+  /**
+   * 上一轮 delta 生效的区块集合（line/net）：用来算 droppedChunks。
+   *
+   * 为什么必须留快照而不是直接比"上一条 interest 消息"：
+   * 兴趣区是在两次 delta 之间**多次**更新的（玩家平移镜头），只有
+   * "上次实际发给这条连接什么"才是正确的比对基准。用 interest 历史会
+   * 在两次快速移动时把中间区块漏报成 dropped——客户端就会卸载一个
+   * 它其实刚订阅过的区块（表现为"镜头扫过的地方建筑闪一下消失"）。
+   */
+  prevInterest: Set<number> | null;
+  /** 该连接的中心（tick 分帧调度的优先级锚点：中心附近的块先处理） */
+  center: { x: number; y: number };
 }
 
 export function createGameServer(opts: GameServerOptions): Promise<GameServerHandle> {
@@ -103,17 +153,50 @@ export function createGameServer(opts: GameServerOptions): Promise<GameServerHan
   }
 
   function fullState(): FullState {
+    return fullStateFor(null);
+  }
+
+  /**
+   * 按区块裁剪的全量状态（line/net）。
+   *
+   * cks = null → 全量（v1 语义，供基准对照与 replaceSim 的自愈对账用）。
+   *
+   * **权威性不因裁剪而降低**：裁剪只决定"这条连接看得到哪些实体"，
+   * 逻辑状态永远只有服务器这一份，客户端不会因为没收到某个区块就自己算——
+   * 它只是不知道那片区域有什么（视野外的东西不需要知道）。
+   *
+   * world 段的处理是这里最需要解释的地方：
+   *  - buildings：按区块取（buildingsInChunks）
+   *  - featureLeft / harvestCd：**同样按区块取**。这一条最容易漏——
+   *    v3 里地形是 hash 推导、客户端零流量自推，如果只裁剪建筑不同步特征余量，
+   *    玩家会看到"远一点的树还满着、走过去发现已经被采光了"。
+   *    反之若连地形也下发，就等于推翻"无限地图零流量"这条已有设计（徒增百倍流量）。
+   *    所以边界划在：**地形永远自推，被采/冷却这类"地表状态"按区块同步**。
+   *  - nextBuildingId：全局单调计数器，**必须全量下发**（不是按区块的状态）——
+   *    客户端只用它做 id 去重与调试显示，裁剪它会破坏计数器语义。
+   */
+  function fullStateFor(cks: Set<number> | null): FullState {
+    const blds = cks === null ? [...sim.world.buildings.values()] : sim.world.buildingsInChunks(cks);
+    const state = sim.world.exportState();
+    if (cks !== null) {
+      state.buildings = blds.map((b) => structuredClone(b));
+      state.featureLeft = sim.world.featureLeftInChunks(cks);
+      state.harvestCd = sim.world.harvestCdInChunks(cks);
+    }
     return {
       time: sim.time,
       stockpile: { ...sim.stockpile },
       pawns: [...sim.pawns()].map((p) => structuredClone(p)),
       hostiles: sim.hostiles().map((h) => structuredClone(h)),
-      buildings: [...sim.world.buildings.values()].map((b) => structuredClone(b)),
+      buildings: state.buildings.map((b) => structuredClone(b)),
       events: structuredClone(sim.events),
-      world: sim.world.exportState(),
+      world: state,
       techs: [...sim.techUnlocked()], // 科技抽卡池状态（R2-1；只随 full/welcome 走，delta 不带）
       techFragments: { ...sim.techFragments },
       hudScratch: hudScratchOf(sim),
+      // scope 缺省 = 客户端保持全量投影；存在 = 范围外应当卸载。
+      // 与 hudScratch 正交：hudScratch 是字段白名单，scope 是视野裁剪。
+      ...(cks === null ? {} : { scope: toChunkCoords(cks) }),
     };
   }
 
@@ -146,9 +229,20 @@ export function createGameServer(opts: GameServerOptions): Promise<GameServerHan
       sock.close(1008, verdict.reason ?? 'unauthorized');
       return; // 不入 clients 集合：这个连接从一开始就不存在
     }
-    const ctx: ClientCtx = { sock, lastPawnJson: new Map(), sentEvents: 0 };
+    const ctx: ClientCtx = {
+      sock,
+      lastPawnJson: new Map(),
+      sentEvents: 0,
+      interest: null,
+      prevInterest: null,
+      center: { x: sim.world.spawn.x, y: sim.world.spawn.y },
+    };
     clients.add(ctx);
-    // 新连接：先收 welcome（seed+tuning+全量），之后走常规节奏
+    // 新连接：先收 welcome（seed+tuning+全量），之后走常规节奏。
+    // welcome 用**全量**（不裁剪）——理由：新连接还不知道自己在哪（没有客户端
+    // 相机概念），此刻给一份全量能让客户端立刻有完整世界；等它上报 interest
+    // 之后的 full/delta 才按区块裁剪。这样"首包最大"只发生一次，代价可控，
+    // 换来的是首帧不会出现"世界一半是空的"再慢慢长出来的观感。
     send(ctx, {
       t: 'welcome',
       d: { ...fullState(), seed: sim.world.seed, tuning: sim.tuning },
@@ -167,7 +261,22 @@ export function createGameServer(opts: GameServerOptions): Promise<GameServerHan
       const m = parsed as {
         t?: string;
         c?: { type?: string; args?: Record<string, unknown>; src?: string; token?: string };
+        d?: unknown;
       };
+      /**
+       * interest：订阅范围更新（line/net）。**不进命令白名单**——
+       * 它不改游戏状态，只改"这条连接看得到什么"，且不该计入 rejectedCommands
+       * （那会污染"是否有人在攻击服务器"的计数）。坏形状只丢包不报错，
+       * 与命令的静默丢弃同风格：客户端 interest 坏了会表现为"看不到东西"，
+       * 而不是崩溃——这类失效要能被下一条合法 interest 自愈。
+       */
+      if (m?.t === 'interest') {
+        if (!validInterest(m.d)) return;
+        const d = m.d;
+        ctx.center = { x: d.x, y: d.y };
+        ctx.interest = new Set(chunksForInterest({ x: d.x, y: d.y, r: d.r }));
+        return;
+      }
       if (m?.t !== 'cmd' || typeof m.c?.type !== 'string') {
         rejected++;
         return;
@@ -233,11 +342,86 @@ export function createGameServer(opts: GameServerOptions): Promise<GameServerHan
     for (const ctx of clients) send(ctx, msg);
   }, pingMs);
 
+  // ---- 增量同步配置（line/net）：声明必须早于 tickTimer ——
+  // activeChunkSet() 被 setInterval 的回调闭包捕获，回调在下一轮事件循环才跑，
+  // 但 chunked / UNIVERSE 是 const/let，处在 TDZ 里。写成"反正回调晚点才执行"
+  // 的隐式依赖很脆：任何人把 tickTimer 改成立刻同步跑一次（测试里很常见）
+  // 就会拿到 ReferenceError，而报错点离原因很远。显式提前声明，别赌。
+  const chunked = opts.chunked !== false;
+  const defaultR = opts.defaultInterestRadius ?? 192;
+  /** 全量哨兵：语义是"不裁剪"，用一个独立常量对象做身份判定（不用 null，
+   *  省掉每个调用点的 null 检查，也让"全量"与"恰好空集"不会混淆）。 */
+  const UNIVERSE: Set<number> = new Set<number>();
+  let defaultScope: Set<number> | null = null;
+
   // ---- tick 循环：固定步长推进权威模拟 ----
   const tickMs = opts.tickMs ?? 100;
-  const timer = setInterval(() => sim.step(tickMs / 1000), tickMs);
+  /**
+   * 本 tick 真正要推进的区块（line/net 分帧预算）。
+   *
+   * 取值规则（**null = 全部**，逐位等价于旧行为）：
+   *  - 没有任何连接上报过 interest → null（全量）：此时"分片"没有意义，
+   *    因为没人表达过关心范围，贸然只跑出生点附近会让唯一可能的观察者
+   *    （本地调试/无 interest 的旧客户端）看到远方实体冻结。
+   *  - 有连接上报了 → 各自的并集：玩家的鼠一定在自己订阅的区块里（见
+   *    Sim.stepChunked 的确定性段），所以玩家关心的部分永不被跳过。
+   *
+   * 为什么 tick 不按"预算"切成多帧（任务书说的 budget 分片）而用"区块集合"：
+   * 模拟时间必须等距推进才能让远端客户端的插值与服务器对齐（interp.ts 按
+   * delta 间隔归一化 k），把一个 tick 的工作摊到后续 tick 会让某些 tick 的
+   * dt≠0.1，破坏插值手感与所有"每秒速率"的确定性。
+   * 所以这里的"分片"= **按区块决定工作集**，而"预算"体现为工作集大小本身
+   * （客户端订阅半径即可调）。这是刻意不做的取舍，不是遗漏。
+   */
+  const tickTimer = setInterval(() => {
+    const active = activeChunkSet();
+    sim.stepChunked(tickMs / 1000, active);
+  }, tickMs);
+
+  /** 所有连接订阅范围的并集（无订阅者 = null） */
+  function activeChunkSet(): Set<number> | null {
+    if (!chunked) return null;
+    let any = false;
+    const out = new Set<number>();
+    for (const ctx of clients) {
+      const s = ctx.interest;
+      if (!s) continue; // 未上报兴趣区：不贡献（未订阅≠要全部，见 tick 注释）
+      any = true;
+      for (const k of s) out.add(k);
+    }
+    return any ? out : null;
+  }
 
   // ---- 增量同步 ~500ms：逐连接对照自己的基线（新事件/变更 pawn/删除名单）----
+  // line/net：对照范围从"全世界"收窄为"该连接订阅的区块"。这是带宽收益的主来源——
+  // 原实现每 500ms 对每条连接遍历全部建筑与敌袭，与玩家视野无关。
+  // （chunked / UNIVERSE / defaultScope 已在 tickTimer 之前声明，见那里的 TDZ 注释）
+
+  /** 该连接本轮生效的区块集合：已上报用上报值；未上报用出生点为心的默认视口。
+   *  默认视口**只算一次**并缓存（Set 不可变语义：连接间共享安全，
+   *  因为 chunksForInterest 对同一输入是纯函数）。 */
+  function scopeOf(ctx: ClientCtx): Set<number> {
+    if (!chunked) return UNIVERSE;
+    if (ctx.interest) return ctx.interest;
+    if (!defaultScope) {
+      defaultScope = new Set(chunksForInterest({ x: sim.world.spawn.x, y: sim.world.spawn.y, r: defaultR }));
+    }
+    return defaultScope;
+  }
+
+  /**
+   * 坐标是否落在本连接的 scope 内。
+   *
+   * 为什么不用"先算区块键再查 Set"：delta 里每只 pawn 每帧都要判一次，
+   * 而 pawn 数可以远大于区块数——用 tileChunkKey 做一次 Map 查（O(1)）比
+   * 构造对象 {cx,cy,key,offset} 便宜。选 cheap 分支（棋盘式判定）在
+   * chunked=false 时省掉一切计算。
+   */
+  function inScope(scope: Set<number>, x: number, y: number): boolean {
+    if (scope === UNIVERSE) return true;
+    return scope.has(tileChunkKey(x, y).key);
+  }
+
   const deltaMs = opts.deltaMs ?? 500;
   const deltaTimer = setInterval(() => {
     // 性能线（2026-10-06）：把「每只鼠算一次指纹」提到**连接循环之外**。
@@ -261,13 +445,36 @@ export function createGameServer(opts: GameServerOptions): Promise<GameServerHan
       snapshots.set(id, structuredClone(p)); // 本轮唯一的深拷贝
     }
     for (const ctx of clients) {
+      // 性能线 × 联机分区块线（2026-10-06）：本轮指纹**只在连接循环外算一次**，
+      // 但"这条连接关心哪些鼠"是**每连接**决定的（区块 scope），两者正交。
+      // 所以：遍历仍走 sim.pawns()（scope 判定需要 p.pos），但序列化/deep copy
+      // 复用上面那份共享表 —— 既保住了「N 条连接只序列化一遍」，
+      // 又保住「视口外的鼠不进这条连接的消息体」。
+      const scope = scopeOf(ctx);
+      const universe = scope === UNIVERSE;
       const changedPawns: PawnState[] = [];
       const removedPawns: number[] = [];
       const currentIds = new Set<string>();
-      for (const [id, json] of fingerprints) {
+      for (const p of sim.pawns()) {
+        // pawn 按区块裁剪：视口外的鼠不需要 2Hz 位置更新（带宽主收益）。
+        // 两个例外，二者都关乎"玩家看得见的东西必须跟得上"：
+        //  1. **被选中的鼠**：否则框选后指挥，目标一走出视野就收不到坐标，
+        //     表现为"命令发给空气"——这是功能性损坏而非画质降级。
+        //     selected 是服务端权威集合，所以这个判定不依赖客户端自称。
+        //  2. **被 holdUntil 优先窗口锁定**（玩家 5s 内指挥过的）：同上，
+        //     且窗口很短（5s），代价可忽略。
+        const selected = sim.selected.includes(p.eid);
+        const held = p.holdUntil > sim.time;
+        if (!universe && !selected && !held && !inScope(scope, p.pos.x, p.pos.y)) {
+          // 出 scope：不进 currentIds，且**必须删除** lastPawnJson 基线——
+          // 下一帧它若回到 scope 内，指纹相同会被当作"没变化"而漏发。
+          ctx.lastPawnJson.delete(String(p.eid));
+          continue;
+        }
+        const id = String(p.eid);
         currentIds.add(id);
-        if (ctx.lastPawnJson.get(id) === json) continue; // 该连接已知，跳过
-        ctx.lastPawnJson.set(id, json);
+        if (ctx.lastPawnJson.get(id) === fingerprints.get(id)) continue; // 该连接已知，跳过
+        ctx.lastPawnJson.set(id, fingerprints.get(id)!);
         // 复用本轮共享快照（性能线）：指纹相同的连接拿同一份 clone。
         // ⚠ 安全性：send() 内部**同步** JSON.stringify(msg) 后才返回，
         //   消息离开本函数时已经变成字符串，所以多个连接共享同一个 clone
@@ -277,12 +484,39 @@ export function createGameServer(opts: GameServerOptions): Promise<GameServerHan
       }
       for (const id of [...ctx.lastPawnJson.keys()]) {
         if (!currentIds.has(id)) {
+          // 出 scope 的 pawn 已在上面 delete 过基线，所以**不会**在这里被误报为
+          // "死亡"——只有真正从 pawnMap 消失的才会进 removedPawns。
+          // 这条依赖 delete 的位置（必须在上方循环内），改代码时注意别调换。
           removedPawns.push(Number(id));
           ctx.lastPawnJson.delete(id);
         }
       }
       const newEvents = sim.events.slice(ctx.sentEvents);
       ctx.sentEvents = sim.events.length;
+
+      // 敌袭与建筑按区块裁剪。
+      // hostiles：敌袭会追着玩家跑，裁剪后可能出现"猫跑出视野→消失→又出现"。
+      // 可接受吗？能接受：视野外的东西玩家看不见，而它继续伤害远处的鼠是
+      // 服务器权威行为（不会被裁剪掉），只是客户端不画出来。
+      // 建筑同理：视野外的篝火不显示，但寻路/燃料照常在服务器跑。
+      const hostiles = universe ? sim.hostiles() : sim.hostiles().filter((h) => inScope(scope, h.pos.x, h.pos.y));
+      const buildings = universe
+        ? [...sim.world.buildings.values()]
+        : sim.world.buildingsInChunks(scope);
+
+      // droppedChunks：该连接退出了 scope 的区块（line/net 的关键信号）。
+      // 客户端据此卸载远端区块——没有它，"没提到"和"没了"无法区分。
+      const dropped: ChunkCoord[] = [];
+      if (!universe && ctx.prevInterest) {
+        for (const k of ctx.prevInterest) {
+          if (!scope.has(k)) {
+            const { cx, cy } = chunkKeyToXY(k);
+            dropped.push({ cx, cy });
+          }
+        }
+      }
+      ctx.prevInterest = universe ? null : new Set(scope);
+
       send(ctx, {
         t: 'delta',
         d: {
@@ -290,21 +524,28 @@ export function createGameServer(opts: GameServerOptions): Promise<GameServerHan
           stockpile: { ...sim.stockpile },
           pawns: changedPawns,
           removedPawns,
-          hostiles: sim.hostiles().map((h) => structuredClone(h)),
-          buildings: [...sim.world.buildings.values()].map((b) => structuredClone(b)),
+          hostiles: hostiles.map((h) => structuredClone(h)),
+          buildings: buildings.map((b) => structuredClone(b)),
           newEvents,
+          ...(universe
+            ? {}
+            : { scope: toChunkCoords(scope), droppedChunks: dropped }),
         },
       });
     }
   }, deltaMs);
 
   // ---- 全量对账 ~5s：重置每连接的增量基准（自愈任何漂移）----
+  // line/net：按 scope 发（不是全量）。full 是**"本 scope 的权威对账"**，
+  // 不是"全世界的权威对账"——所以它带的 scope 语义是卸载级的：
+  // 客户端拿它整体替换 scope 内投影并卸载 scope 外的（applyChunkScope）。
   const fullMs = opts.fullMs ?? 5000;
   const fullTimer = setInterval(() => {
     for (const ctx of clients) {
       ctx.lastPawnJson.clear();
       ctx.sentEvents = sim.events.length;
-      send(ctx, { t: 'full', d: fullState() });
+      const scope = scopeOf(ctx);
+      send(ctx, { t: 'full', d: fullStateFor(scope === UNIVERSE ? null : scope) });
     }
   }, fullMs);
 
@@ -320,7 +561,7 @@ export function createGameServer(opts: GameServerOptions): Promise<GameServerHan
         rejectedCommands: () => rejected,
         lastSave: () => lastSaved,
         async close(): Promise<void> {
-          clearInterval(timer);
+          clearInterval(tickTimer);
           clearInterval(deltaTimer);
           clearInterval(fullTimer);
           clearInterval(pingTimer);

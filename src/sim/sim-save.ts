@@ -15,7 +15,7 @@ import type { ModRegistry } from '../mods/registry';
 import { mulberry32 } from './rng';
 import type { Hostile, LogEvent, PawnState } from './types';
 
-export const SAVE_VERSION = 3;
+export const SAVE_VERSION = 4;
 
 /** vN → vN+1 的迁移函数表；索引 i = 把 i 版档迁到 i+1 版。缺省迁移 = 显式 no-op。 */
 export const SAVE_MIGRATIONS: ((d: Record<string, unknown>) => void)[] = [
@@ -33,6 +33,21 @@ export const SAVE_MIGRATIONS: ((d: Record<string, unknown>) => void)[] = [
   (d) => {
     if (d.techs === undefined) d.techs = [];
     if (d.techFragments === undefined) d.techFragments = {};
+  },
+  // [3→4] 分区块存档（line/net 2026-10-06）：world 段增 worldChunks。
+  //
+  // 迁移语义：**缺省 = 空索引 = 旧行为**。
+  //   worldChunks = [] 意为"本档没有按区块归类的信息"，读档时不据此做任何裁剪，
+  //   全量 world 段（buildings/featureLeft/harvestCd）仍是唯一事实。
+  //
+  // 为什么不给旧档"补算一份索引"：索引是**派生数据**（把 buildings/featureLeft/
+  //   harvestCd 按区块分组而来），而读档时 World.ensureChunkIndex 会自动重建。
+  //   把重建结果写回存档，等于让存档体积分块数增长，却换不来任何读档收益——
+  //   且**派生数据落盘会产生"索引与真源不一致"的第二事实来源**，
+  //   那正是确定性续跑最怕的东西。故迁移只声明"字段缺失"，派生留给读档现算。
+  (d) => {
+    const w = d.world as Record<string, unknown> | undefined;
+    if (w && w.worldChunks === undefined) w.worldChunks = [];
   },
 ];
 
@@ -54,6 +69,31 @@ export interface SaveData {
     featureLeft: [string, number][];
     harvestCd: [string, number][];
     nextBuildingId: number;
+    /**
+     * 按区块归类的世界增量（v4 新增，line/net）。
+     *
+     * **形状 = diff**（对齐归档旧实现 test/src/sim/core/world.ts 的 serializeChunks
+     * 思路：只记"与生成层/默认态的差异"，不记全量）。这里没有"生成层"可言——
+     * v3 的地形是 hash 推导，所以 diff 的基准是"空"：每条记录是某区块内
+     * **被改动过的实体 id 列表**，配合全量段即可重建：
+     *   buildings = concat(worldChunks[].buildingIds)
+     *
+     * 保留它而不直接删掉的三个理由：
+     *  1. **分区块读取**：`loadChunksOf(key)` 让你只读某几块的存档（未来的
+     *     局部加载/存档分片）；没有它，想按区块存就只能重解析整个 JSON。
+     *  2. **可校验**：区块归属是"每个 id 恰好出现在一块"的强不变量，
+     *     实测（chunk-save 测试）比不变量一旦被破坏，说明增量维护漏了一条路径。
+     *  3. **向前兼容**：实体状态将来下沉到区块（真正的双图层）时，
+     *     存档形状不用再改一次。
+     *
+     * 空数组 = 无索引（等价于旧档）：读档侧只做校验不做裁剪。
+     */
+    worldChunks?: {
+      /** chunk 键（编码见 shared/chunks.ts；**不要自己写解码**） */
+      key: number;
+      /** 该块的建筑 id（与全量段 buildings 一一对应，不复制实体体） */
+      buildingIds: string[];
+    }[];
   };
   /** 玩法包运行态（ctx.scratch）原样随档 */
   scratch: Record<string, number>;

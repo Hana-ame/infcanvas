@@ -13,6 +13,7 @@ import type { SimContext } from './context';
 import { drawCard, touchMastery } from './cards';
 import type { CardDef } from './cards';
 import type { PawnState } from './types';
+import { tileChunkKey } from '../shared/chunks';
 
 export type Category = 'needs' | 'ai' | 'society' | 'production' | 'raid' | 'world' | 'boot';
 
@@ -22,6 +23,21 @@ export interface GameSystem {
   id: string;
   /** 每 tick 步进。允许缺省（纯 init 型系统，如出生引导）。 */
   update?(dt: number): void;
+  /**
+   * 按区块分片步进（line/net 2026-10-06）。**可选**：实现了就按 admitted 分片跑，
+   * 没实现就退回 update(dt) 全量。
+   *
+   * 契约（必须严格遵守，否则确定性会被悄悄破坏）：
+   *  1. **不得改变同 tick 内的处理顺序**。只允许"跳过不在 admitted 里的实体"，
+   *     不允许把实体重排（按区块分组遍历必然重排）。理由见 sim.stepChunked：
+   *     rng 是单一序列，重排 = 抽卡顺序变 = 整局分叉。
+   *  2. 不得写入跨分片的全局状态（那会引入 tick 间的顺序耦合）。
+   *
+   * 收益边界（诚实前提）：分片只省掉**不活跃区块**的开销。世界小、鼠群集中时
+   * 所有鼠都在少数几个区块里，分片几乎不省——不靠"分片了所以更快"自我安慰。
+   * 规模收益出现在鼠群分散开之后。
+   */
+  updateChunked?(dt: number, admitted: ReadonlySet<number>): void;
   init?(): void;
 }
 
@@ -48,23 +64,47 @@ export function behaviorCtor(ctx: SimContext): GameSystem {
   return {
     id: 'behavior',
     update(dt) {
+      for (const p of ctx.pawns()) stepPawn(ctx, p, dt);
+    },
+    /**
+     * 分片步进（line/net）：**顺序与 update 逐字一致**，只是跳过不在 admitted 区块里的鼠。
+     *
+     * 为什么这里是最值得做分片的地方（实测依据见 docs/PROGRESS.md 本轮条目）：
+     * behavior 是唯一 per-pawn 每 tick 执行的系统，工作量 O(鼠数)，
+     * 且卡 action 里包含寻路（findPath，maxIter 上限 8000）——单只鼠的一次远距离
+     * 规划就能占到整 tick 的可观比例。世界上 90% 的区块没有鼠时，这部分全是浪费。
+     *
+     * 关键：`for (const p of ctx.pawns()) if (!admitted.has(...)) continue;` 这个形状
+     * 保证跳过不改变其余鼠的处理顺序 → rng 消费序列在 admitted=全集时与 update 相同，
+     * 分片只在"确实没有活跃实体"的区块上省掉工作量，不引入分叉。
+     */
+    updateChunked(dt, admitted) {
       for (const p of ctx.pawns()) {
-        // 到期（且不在玩家命令优先窗口内）→ 抽新卡
-        if (ctx.time >= p.busyUntil && ctx.time >= p.holdUntil) {
-          const card = drawCard(ctx, p) ?? FALLBACK_CARD;
-          commit(ctx, p, card);
-        }
-        // 当前卡每 tick 执行（action 幂等：重复声明路径/结算安全）
-        if (p.cardId !== null) {
-          const card = ctx.cardById(p.cardId);
-          if (card) card.action(p, ctx, dt);
-          else p.cardId = null; // 卡被卸载（mod 热插拔）：安全落地，下轮重抽
-        }
-        if (p.atkCd > 0) p.atkCd = Math.max(0, p.atkCd - dt);
-        if (p.path.length > 0) ctx.moveStep(p, dt);
+        // 每鼠一次 Map 查（O(1)）；比"先分组再遍历"便宜，且不重排。
+        if (!admitted.has(tileChunkKey(p.pos.x, p.pos.y).key)) continue;
+        stepPawn(ctx, p, dt);
       }
     },
   };
+}
+
+/** 单只鼠的一 tick 推进：抽卡 → 执行当前卡 → 冷却/路径。
+ *  抽成函数是为了让 update 与 updateChunked **共用同一份实现**——
+ *  两份复制品迟早分叉（改一边忘了另一边 = 确定性 bug 潜伏）。 */
+function stepPawn(ctx: SimContext, p: PawnState, dt: number): void {
+  // 到期（且不在玩家命令优先窗口内）→ 抽新卡
+  if (ctx.time >= p.busyUntil && ctx.time >= p.holdUntil) {
+    const card = drawCard(ctx, p) ?? FALLBACK_CARD;
+    commit(ctx, p, card);
+  }
+  // 当前卡每 tick 执行（action 幂等：重复声明路径/结算安全）
+  if (p.cardId !== null) {
+    const card = ctx.cardById(p.cardId);
+    if (card) card.action(p, ctx, dt);
+    else p.cardId = null; // 卡被卸载（mod 热插拔）：安全落地，下轮重抽
+  }
+  if (p.atkCd > 0) p.atkCd = Math.max(0, p.atkCd - dt);
+  if (p.path.length > 0) ctx.moveStep(p, dt);
 }
 
 /** 抽中承诺：写当前卡 + 到期时刻 + 统计 + 熟练度成长（卡=习惯：越用越顺手）。

@@ -9,10 +9,31 @@
  *
  * 地形策略：无限地图不下发地形——客户端用 welcome 里的 seed+tuning 本地重建 World
  * 纯函数推导 tile；特征余量/冷却属于运行态，随 full 快照的 world 段同步。
+ *
+ * ================= 分区块同步（2026-10-06，line/net） =================
+ *
+ * ROADMAP 已知限制表登记的缺口「服务器 tick 无快照压缩（规模大后带宽）」在本轮部分清偿。
+ * 做法：**按区块（CHUNK_SIZE=64，见 shared/chunks.ts）切分快照，客户端只收视口附近区块**。
+ *
+ * ### 兼容性：纯增量，旧客户端 / 新服务端可互通
+ *
+ * 新增字段一律**可选**（`?`），语义统一为「缺省 = 不做区块裁剪 = v1 行为」：
+ *  - 服务端不发 `scope` → 客户端理解为"全量世界"（旧行为），不会因字段缺失而画成空白；
+ *  - 客户端不上行 `interest` → 服务端理解为"要全世界"（旧行为）。
+ * 于是**未升级的客户端连新区块化服务器仍然正确**，只是拿不到带宽收益。
+ * 这是刻意选的方向：区块化若做成破坏性变更，有活跃玩家的联机协议无法部署。
+ *
+ * ### 为什么裁剪靠"显式 scope + dropped"，而不是"服务端直接不发"
+ *
+ * 被裁掉的部分不是丢弃，而是"这一帧没说"。若服务端只是沉默地少发，客户端无法区分
+ * 「这块没变化」与「这块被删了/这帧超出 scope」——前者该保留旧数据，后者必须卸载。
+ * 所以每条区块化消息都自带区块坐标范围，delta 额外带 `droppedChunks`（退出租图的块），
+ * 客户端据此做**远端区块卸载**（RemoteSim.applyChunkScope）。
  */
 import type { BuildingState, Eid, Hostile, LogEvent, PawnState } from '../sim/types';
 import type { SaveData } from '../sim/sim-save';
 import type { Tuning } from '../sim/tuning';
+import type { ChunkCoord } from './chunks';
 
 /** 全量状态（welcome/full 共用体；不含 tuning——welcome 单独带一次） */
 export interface FullState {
@@ -47,6 +68,21 @@ export interface FullState {
    * 放进 500ms 增量帧纯属浪费带宽；玩家最迟 5s 看到，与抽卡节奏同一量级，不可见。
    */
   hudScratch: Record<string, number>;
+
+  /**
+   * 本帧快照覆盖的区块坐标范围（line/net，2026-10-06）。**可选**：
+   *  - 缺失 = 老服务端 / 未开裁剪 → 客户端保持全量投影不动（旧行为，逐位不变）；
+   *  - 存在 = 这一份 pawns/hostiles/buildings/world.featureLeft 等**只覆盖该范围**，
+   *    范围外的本地投影应当卸载（而不是保留陈旧数据——那会让玩家在走回旧区块时
+   *    看到已经不存在的建筑）。
+   *
+   * 之所以是"坐标范围"而不是区块列表：区块集合在客户端可由范围直接算出来，
+   * 只传包围盒能省一个随规模增长的数组（视口 3×3 块时 4 个 int vs 9 个对象）。
+   *
+   * 与 hudScratch（R3-HUD）**正交**：那条线做字段白名单，这条线做视野裁剪，
+   * 两者同时生效、互不覆盖（hudScratch 只随 full 走，scope 每帧都可能在变）。
+   */
+  scope?: ChunkCoord[];
 }
 
 /** HUD 面板依赖的 scratch 键白名单（R3-HUD）。
@@ -73,6 +109,23 @@ export interface DeltaMsg {
     buildings: BuildingState[]; // 同上
     newEvents: LogEvent[];
     /** 特征运行态只在 full 里同步；delta 不带（低频变化可容忍 5s 延迟） */
+    /**
+     * 本帧 delta 覆盖的区块（line/net，2026-10-06）。**可选**，缺省 = v1 全量语义。
+     *
+     * 注意与 full 的 scope 语义差别：delta 是"这些块里**发生了变化**的东西"，
+     * 所以 scope 在 delta 里的含义是"变化可能发生在哪些块"，
+     * **不能**用来卸载（没出现≠没了）。卸载只认 droppedChunks。
+     */
+    scope?: ChunkCoord[];
+    /**
+     * 退出了该连接 scope 的区块：客户端必须卸载其投影（line/net，2026-10-06）。
+     *
+     * 为什么必须有这条：区块化后"服务端没提到某栋建筑"有了两种含义——
+     * 它没变，或者它已经不在我订阅的范围里。不显式告知，客户端只能选择
+     * 永久保留（陈旧幽灵建筑）或者每次清空重发（退化成全量）。这条信号是
+     * 让"局部更新"成立的前提，也让"卸载"成为可验证的行为而非猜测。
+     */
+    droppedChunks?: ChunkCoord[];
   };
 }
 /**
@@ -101,7 +154,42 @@ export interface CmdMsg {
   t: 'cmd';
   c: { type: string; args?: Record<string, unknown>; src?: string; token?: string };
 }
-export type ClientMsg = CmdMsg;
+/**
+ * 客户端上行订阅范围（line/net，2026-10-06）。**独立于 cmd**：它不改变游戏状态，
+ * 只改变"我需要收到哪些区块"，所以不进 SERVER_COMMANDS 白名单（白名单是防注入的
+ * 命令面，把查询类消息混进去会让"未登记即静默丢弃"这条纪律失效）。
+ *
+ * 为什么不是 cmd 的 args：命令会被计数进 rejectedCommands，而兴趣区被服务器拒绝
+ * （越界/坏形状）不该污染"是否有人在攻击服务器"的计数。
+ */
+export interface InterestMsg {
+  t: 'interest';
+  /** 视口中心（tile 坐标）+ 半径（tile） */
+  d: { x: number; y: number; r: number };
+}
+export type ClientMsg = CmdMsg | InterestMsg;
+
+/**
+ * 兴趣区校验（line/net）。
+ *
+ * 上限 512 tile 是**带宽保护**不是玩法限制：客户端请求超大范围会让服务端把它当作
+ * "要全世界"（等价于关闭裁剪），那等于允许单条消息关掉带宽优化。钳到上限后
+ * 最坏情况仍是"多发一点"，不会变成"拒绝服务式的下发"。
+ * 半径下限 0：就是中心那一块，允许（单块视野调试用）。
+ */
+export const MAX_INTEREST_RADIUS = 512;
+
+/** 兴趣区消息校验：形状合法且坐标有限、半径在 [0, MAX_INTEREST_RADIUS] */
+export function validInterest(d: unknown): d is { x: number; y: number; r: number } {
+  if (typeof d !== 'object' || d === null) return false;
+  const { x, y, r } = d as { x?: unknown; y?: unknown; r?: unknown };
+  if (typeof x !== 'number' || typeof y !== 'number' || typeof r !== 'number') return false;
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(r)) return false;
+  if (r < 0 || r > MAX_INTEREST_RADIUS) return false;
+  // 坐标防御：与 validMoveArgs 同一条 ±30000 边界（CHUNK_SIZE=64 下约 ±470 chunk）
+  if (Math.abs(x) > 30000 || Math.abs(y) > 30000) return false;
+  return true;
+}
 
 /**
  * 服务端命令白名单：基础指挥面。新命令要上行必须在此登记（防任意调用注入）。

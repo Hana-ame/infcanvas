@@ -787,3 +787,23 @@ validateContracts 校验卡的系列已登记。
 `topoSort → apply → validateContracts` 链路（这就是 R2-3 要证明的「同一内容两种部署形态」）。
 失败策略见 `server/mod-loader.ts` 文件头注释（响亮失败且绝不半挂载）。
 
+
+## 分区块同步的可调面（line/net，2026-10-06）
+
+本轮**刻意没有新增任何玩法可调项**：区块划分的三个常量是**协议/实现常量**，
+不是平衡参数，放进 `DEFAULT_TUNING` 会让人误以为改它能调平衡。
+
+| 常量 | 位置 | 值 | 为什么不是数据驱动 |
+|---|---|---|---|
+| `CHUNK_SIZE` | `src/shared/chunks.ts` | 64 | 与协议绑定；客户端/服务端/存档三处必须一致，改它=改协议 |
+| `MAX_INTEREST_RADIUS` | `src/shared/protocol.ts` | 512 | **安全上限**，防止恶意/出错客户端上报 r=1e9 让服务端遍历整张地图 |
+| `defaultInterestRadius` | `GameServerOptions` | 192 | 部署参数（服务端启动时给），不是玩法数值 |
+
+**为什么 `MAX_INTEREST_RADIUS` 必须硬编码在协议层**：它防的是"客户端要求全图"
+这种请求。若交给服务端配置，一个手滑的 `999999` 就把 O(1) 的区块推导变成
+O(整张地图) 的遍历——正是本轮要消除的那类成本。所以它是**协议的边界**，
+和服务端配置无关。
+
+**存档侧**：`SaveData.world.worldChunks`（区块→建筑 id 归属）随 `SAVE_VERSION` 3→4
+落盘，迁移 `[3→4]` 只补空数组，**不回算**——派生数据进存档等于制造第二事实来源，
+是确定性隐患。真源仍是 `world.buildings`。
