@@ -5,6 +5,7 @@
  * R1-2：SERVER_TOKEN 由环境变量注入，命令行不传 token（避免出现在 shell history 与 ps 输出里）。
  */
 import { createGameServer } from './game-server';
+import { readDlcLoad } from './dlc-load';
 import { ModRegistry } from '../mods';
 
 interface CliOpts {
@@ -49,16 +50,32 @@ function parseArgs(argv: string[]): CliOpts {
 
 const { port, seed, load, saveDir } = parseArgs(process.argv.slice(2));
 
+/**
+ * DLC 分层（P0）：启动时读 `dlc_load.json`（与 mods/ 同目录，可用 MODS_DIR 改）。
+ * 文件不存在 = 只挂本体（原版体验）；present 时按 enabledDlc/disabledDlc 装配。
+ * 坏配置会在这里抛错——服务器起不来是有意的（响亮失败优于"以为启用了"）。
+ */
+const modsDir = process.env.MODS_DIR ?? 'mods';
+const dlc = readDlcLoad(modsDir);
+
 createGameServer({
   port,
   seed,
   loadFrom: load,
   saveDir,
-  registry: ModRegistry.default(),
+  registry: ModRegistry.default({ dlc: dlc.enabledDlc, exclude: dlc.disabledDlc }),
 }).then((h) => {
   console.log('🐭 infcanvas 权威服务器已启动');
   console.log(`   ws://127.0.0.1:${h.port}   seed=${seed ?? 42}`);
   console.log(`   客户端连接：?remote=ws://127.0.0.1:${h.port}`);
+  // DLC 装配状态：让"我明明勾了怎么没生效"在服务端侧就能自查（同鉴权提示的理由）
+  if (!dlc.present) {
+    console.log(`   🧩 未找到 ${modsDir}/dlc_load.json：只挂本体（DLC 需显式启用）`);
+  } else {
+    const on = dlc.enabledDlc.filter((id) => !dlc.disabledDlc.includes(id));
+    console.log(`   🧩 DLC：${on.length > 0 ? on.join(', ') : '（无）'}`);
+    if (dlc.disabledDlc.length > 0) console.log(`   ⏸ 已停用：${dlc.disabledDlc.join(', ')}`);
+  }
   // R1-2：明确提示鉴权状态。开着却忘了带 token 的玩家会一直看到断连横幅，
   // 提前打印这一行能让「连不上」在服务端侧就能自查出来。
   if (process.env.SERVER_TOKEN) {

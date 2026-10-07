@@ -8,9 +8,30 @@
  * - 无依赖必须写 requires: []（显式无依赖，与"忘了写"区分）。
  */
 
+/**
+ * DLC 声明（P0 地基）：包**带此字段** = 它是"可选增量"而非本体的一部分。
+ *
+ * 为什么是标记而不是新类型：DLC 与本体包在运行期的唯一区别就是"在不在
+ * DEFAULT_PLAYSTYLE_PACKS 里"（见 packs/playstyle.ts 的纪律注释），装配路径、
+ * requires 拓扑、apply 全同。所以形态上只补一个身份声明，不引入第二种包。
+ *
+ * 对位 HOI4：`title` ≈ dlcmetadata.json 的 name；`order` ≈ dlc001…dlc052 的内部
+ * 编号（≈发售序，决定加载位次）。P0 只消费"存在性"（决定 hasDlc 与否），
+ * order 的排序语义留给加载顺序落地时接。
+ */
+export interface DlcDecl {
+  title: string;
+  /** 加载位次（升序；缺省 0）。仅作声明，P0 不排序消费 */
+  order?: number;
+  /** 要求的最早本体系列（信息性，P0 不消费） */
+  since?: string;
+}
+
 export interface ModPack {
   id: string;
   requires?: string[];
+  /** 存在 = 本包是 DLC（不默认挂载、可被 dlc_load.json 启停）。见 DlcDecl */
+  dlc?: DlcDecl;
   apply(m: import('./registry').ModRegistry): void;
 }
 

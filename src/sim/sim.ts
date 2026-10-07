@@ -318,6 +318,14 @@ export class Sim implements SimContext {
     return true;
   }
 
+  /** DLC 门控（P0）：权威来源是 registry 的已挂载 DLC 集合（见 ModRegistry.dlcEnabled）。
+   *  为什么查 registry 而不是在 Sim 里另存一份：registry 是"装了什么"的唯一事实源，
+   *  复制一份就有两处会漂移（同 techSatisfied 把判定收口在一处的理由）。
+   *  缺省（registry 无 DLC）= 恒 false = 原版体验。 */
+  hasDlc(id: string): boolean {
+    return this.reg.dlcEnabled(id);
+  }
+
   relation(a: Eid, b: Eid): number {
     return this.relations.get(pairKey(a, b)) ?? 0;
   }

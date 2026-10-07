@@ -15,7 +15,7 @@ import type { SimContext, CardWeightHook } from '../sim/context';
 import type { CardDef } from '../sim/cards';
 import { behaviorCtor, CATEGORY_ORDER, type Category, type GameSystem, type SystemDef } from '../sim/systems';
 import type { BuildingTuningEntry, EnemyTuningEntry, TechTuningEntry } from '../sim/tuning';
-import { topoSort, type ModPack } from './pack';
+import { topoSort, type ModPack, type DlcDecl } from './pack';
 
 export type CommandHandler = (ctx: SimContext, args: Record<string, unknown>, source: 'player' | 'system') => void;
 
@@ -77,6 +77,12 @@ export class ModRegistry {
   readonly eventSeeds: EventSeedDef[] = [];
   private predicates = new Map<string, (ctx: SimContext) => boolean>();
   private tuningOverrides: TuningOverride[] = [];
+  /** 已成功挂载的包 id（P0：hasDlc 的权威来源）。只在 apply 成功返回后才写入——
+   *  挂载失败不记 = 不会出现"注册了但没生效"的半挂载幽灵。 */
+  private mounted = new Set<string>();
+  /** 已挂载的 **DLC** 包 id → 声明。与 mounted 分开：本体包也在 mounted 里，
+   *  但 hasDlc('medicine') 这类问法必须答 false——DLC 门控只认带 `dlc` 声明的包。 */
+  private dlcDecls = new Map<string, DlcDecl>();
 
   constructor() {
     // 内核系统最先注册：决策引擎是引擎服务（原则④终态裁定），内联于此而非玩法包。
@@ -204,31 +210,129 @@ export class ModRegistry {
   /** 挂载一个包（apply 幂等性由包自己保证：重复 apply 的重复注册会抛"已存在"） */
   mountPack(pack: ModPack): void {
     pack.apply(this);
+    this.trackMounted(pack);
   }
 
-  /** 默认装配：拓扑挂载默认玩法清单 + 契约校验。
+  /** 记录挂载事实（P0 hasDlc 的权威来源）。分开成一步是为了让 mountPacks 在
+   *  "已 apply 完再登记"的同一语义下工作——apply 抛错时绝不登记（不半挂载）。 */
+  private trackMounted(pack: ModPack): void {
+    this.mounted.add(pack.id);
+    if (pack.dlc) this.dlcDecls.set(pack.id, pack.dlc);
+  }
+
+  /** 是否已挂载某个包（本体与 DLC 都算） */
+  isMounted(id: string): boolean {
+    return this.mounted.has(id);
+  }
+
+  /**
+   * hasDlc 的权威判定（P0）：该 id 是否是**已挂载的 DLC**。
+   *
+   * 语义三条（对位 HOI4 的 `has_dlc` = 检查"已启用"而非"已拥有"）：
+   *  - 本体包即使已挂载也答 false——门控只认带 `dlc` 声明的包，避免把"装了本体"
+   *    误读成"装了某个 DLC"；
+   *  - 未挂载的 DLC 答 false（"没装 = 不跑"，这正是原版体验）；
+   *  - 拼错/不存在的 id 也答 false 而不是抛错——门控是**运行时每 tick 的谓词**，
+   *    在这里抛错会把"玩家没买 DLC"变成"游戏崩了"，与"缺料不是崩溃"同一条纪律。
+   *    拼错的**装配期**失败由 resolvePacks（未知 DLC id 抛错）负责拦截。
+   */
+  dlcEnabled(id: string): boolean {
+    return this.dlcDecls.has(id);
+  }
+
+  /** 已启用 DLC 的 id（稳定排序，供 HUD/存档/报告展示） */
+  enabledDlcIds(): string[] {
+    return [...this.dlcDecls.keys()].sort();
+  }
+
+  /** 某 DLC 的声明（未启用返回 undefined） */
+  dlcMeta(id: string): DlcDecl | undefined {
+    return this.dlcDecls.get(id);
+  }
+
+  /**
+   * 默认装配：拓扑挂载默认玩法清单（可加 DLC / 排除本体包）+ 契约校验。
    *  清单是纯数据（playstyle.ts）；框架其余部分不 import 任何玩法包——
-   *  只有这个工厂触碰它，纯引擎使用者（最小装配测试）零玩法依赖。 */
-  static default(): ModRegistry {
-    const { DEFAULT_PLAYSTYLE_PACKS } = playstyleList();
-    return ModRegistry.mountPacks(DEFAULT_PLAYSTYLE_PACKS);
+   *  只有这个工厂触碰它，纯引擎使用者（最小装配测试）零玩法依赖。
+   *
+   * P0 加参（原签名 default() 保持不变 = 零回归）：
+   *  - `dlc`：要额外挂载的 DLC id（查 DLC_PACKS 表；未登记 → 响亮抛错）；
+   *  - `exclude`：要排除的包 id（本体或 DLC 都行；**级联**——依赖被排除包的
+   *    包一并排除，见 resolvePacks，否则拓扑会因缺依赖抛错）。
+   *  不传参 = 只挂本体（DLC 显式 opt-in，也就是"原版能玩"的无条件保证）。
+   */
+  static default(opts: ModRegistryOptions = {}): ModRegistry {
+    const { DEFAULT_PLAYSTYLE_PACKS, DLC_PACKS } = playstyleList();
+    return ModRegistry.mountPacks(resolvePacks(DEFAULT_PLAYSTYLE_PACKS, DLC_PACKS, opts));
   }
 
   /** 拓扑挂载给定清单（乱序自动拉齐），末尾跑契约校验（违例即抛，防回归静默漂移） */
   static mountPacks(packs: ModPack[]): ModRegistry {
     const reg = new ModRegistry();
-    for (const p of topoSort([...packs])) p.apply(reg);
+    for (const p of topoSort([...packs])) reg.mountPack(p);
     const errors = validateContracts(reg);
     if (errors.length > 0) throw new Error(`契约校验失败：\n- ${errors.join('\n- ')}`);
     return reg;
   }
 }
 
+/** ModRegistry.default 的加参形态（P0） */
+export interface ModRegistryOptions {
+  /** 启用的 DLC id（查 DLC_PACKS；未登记 = 抛错） */
+  dlc?: string[];
+  /** 排除的包 id（本体或 DLC；级联排除依赖它的包） */
+  exclude?: string[];
+}
+
+/**
+ * 纯函数：把「本体清单 + 可用 DLC 表 + 启用/排除」解析成一份要挂载的包清单。
+ *
+ * 为什么拆成独立纯函数：它是"哪一层装了什么"的**唯一判定处**，纯函数可单测
+ * （不必真的装配一个世界），也不会把装配副作用带进判定逻辑。
+ *
+ * 规则（确定性）：
+ *  1. 起点 = 本体清单（顺序保留——topoSort 的同层稳定性依赖它）；
+ *  2. 追加 opts.dlc 里登记的 DLC（按传入顺序；已在清单里则幂等跳过）；
+ *  3. **exclude 优先于 dlc**（"买了也能停"，对位 HOI4 启动器可停用已购 DLC）；
+ *  4. exclude **级联**：requires 里含被排除包的包一并排除——否则拓扑会因缺依赖
+ *     抛错，把"玩家想关掉一个包"变成"游戏起不来"（级联排除是依赖断裂安全）。
+ *  5. 未登记的 DLC id → 抛错（拼错不该静默变成"没装"；响亮失败是仓库铁律）。
+ */
+export function resolvePacks(
+  base: readonly ModPack[],
+  dlcTable: Readonly<Record<string, ModPack>>,
+  opts: ModRegistryOptions = {},
+): ModPack[] {
+  const all = new Map<string, ModPack>();
+  for (const p of base) all.set(p.id, p);
+  for (const id of opts.dlc ?? []) {
+    const p = dlcTable[id];
+    if (!p) {
+      const known = Object.keys(dlcTable).sort().join(', ') || '（DLC_PACKS 为空）';
+      throw new Error(`未知 DLC："${id}"（已登记：${known}）`);
+    }
+    if (!all.has(p.id)) all.set(p.id, p); // 幂等：与本体清单重名时不重复挂
+  }
+  const excluded = new Set(opts.exclude ?? []);
+  // 级联：一轮可能牵出新依赖者，循环到不动点（包数有限，必然收敛）
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const p of all.values()) {
+      if (excluded.has(p.id)) continue;
+      if ((p.requires ?? []).some((r) => excluded.has(r))) {
+        excluded.add(p.id);
+        changed = true;
+      }
+    }
+  }
+  return [...all.values()].filter((p) => !excluded.has(p.id));
+}
+
 // 数据清单与契约校验用静态 import：它们是纯数据/纯函数，不构成框架↔玩法运行时环
 // （玩法包只 import 本文件的**类型**，类型在编译期擦除）。
-import { DEFAULT_PLAYSTYLE_PACKS } from './packs/playstyle';
+import { DEFAULT_PLAYSTYLE_PACKS, DLC_PACKS } from './packs/playstyle';
 import { validateContracts } from './contracts';
 
 function playstyleList(): typeof import('./packs/playstyle') {
-  return { DEFAULT_PLAYSTYLE_PACKS };
+  return { DEFAULT_PLAYSTYLE_PACKS, DLC_PACKS };
 }

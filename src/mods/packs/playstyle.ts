@@ -5,7 +5,7 @@
  *  - 这里只决定"默认挂哪些包"，顺序不承担依赖约束（拓扑由 pack.topoSort 从
  *    requires 推导，乱序也正确）。
  *  - 新增玩法包：写包 → 声明 requires → 在此登记一行。完事。
- *  - DLC 不进本清单（requires: [] 的独立包，按需显式 mountPacks）。
+ *  - DLC 不进本清单（requires: [] 的独立包，按需显式 mountPacks 或登记进 DLC_PACKS）。
  */
 import type { ModPack } from '../pack';
 import { needsPack } from './needs';
@@ -43,3 +43,19 @@ export const DEFAULT_PLAYSTYLE_PACKS: ModPack[] = [
   factionsPack, // 派系外交：贸易卡 + 掠夺（raider）+ 传闻（requires building/raid/bootstrap）
   fortifyPack, // 防御（line/fort）：围墙/哨塔/陷阱三张建造卡 + 陷阱触发系统（requires building）
 ];
+
+/**
+ * 可用 DLC 清单（P0 地基）：包 id → 带 `dlc` 声明的玩法包。
+ *
+ * 为什么与 DEFAULT_PLAYSTYLE_PACKS **同文件但不同表**：两者都是"纯数据清单"，
+ * 同属 playstyle 模块（registry 只 import 这一个模块，框架其余部分不碰玩法包）。
+ * 分开两张表是因为它们的**默认命运相反**——本体表是"默认全挂"，DLC 表是
+ * "默认全不挂、由 dlc_load.json 显式启用"（见 proj-infcanvas-dlc-design-2026-10-07）。
+ *
+ * 纪律：
+ *  - 新增 DLC：写包（ModPack 带 `dlc: { title }`）→ 在此登记一行 → 完事。
+ *    **不要**把它加进 DEFAULT_PLAYSTYLE_PACKS（那会让原版体验被 DLC 污染）。
+ *  - 空表是合法状态：没有 DLC 时 `ModRegistry.default()` 与加参 `default({dlc:[]})`
+ *    行为完全一致（零回归）。传未登记的 id 会**响亮报错**（拼错不该静默变"没装"）。
+ */
+export const DLC_PACKS: Record<string, ModPack> = {};

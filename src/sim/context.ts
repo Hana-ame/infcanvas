@@ -125,6 +125,25 @@ export interface SimContext extends DrawSurface {  // ---- 时钟与随机（见
   finishCard(p: PawnState): void; // 卡提前完成（工作做完不等 duration）
   log(text: string): void; // 叙事 feed（历史层）
 
+  // ---- DLC 门控面（P0 地基）----
+  /**
+   * 某个 DLC 是否**已启用**（对位 HOI4 的 `has_dlc = "xxx"`——检查"已启用"而非"已拥有"）。
+   *
+   * 为什么放在 SimContext 而不是让玩法包去摸 registry：卡的 `condition(p, ctx)` 与
+   * 事件的 `when(ctx)` 本来就只拿得到 SimContext——门控因此**零签名改动**，
+   * 任何包作者都能在自己的谓词里写 `ctx.hasDlc('xxx')` 而不必新增接口。
+   *
+   * 语义三条（缺省 = 恒 false 是第一条）：
+   *  - **没有 DLC 时一律 false** —— 这是"原版能玩"的无条件保证：门控失效 =
+   *    DLC 分支不跑 = 原版体验，且绝不会因为"缺 DLC"而报错；
+   *  - 只对带 `dlc` 声明的包答 true（本体包即使挂着也答 false，避免语义混淆）；
+   *  - 未知 id 答 false 不抛错（门控是每 tick 的运行时谓词，"玩家没买"不该变"游戏崩了"）。
+   *
+   * 用法：把 DLC 独有的那段逻辑**留在本体**、用本门控挡住（HOI4「门控不拆分」），
+   * 或者干脆整包不挂载（结构性门控——那样连本成员都不必调用）。
+   */
+  hasDlc(id: string): boolean;
+
   // ---- 命令上行（系统也能发命令，如内部联动；玩家命令走 Sim.issueCommand）----
   command(type: string, args?: Record<string, unknown>): void;
 

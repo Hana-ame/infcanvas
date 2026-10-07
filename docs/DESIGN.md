@@ -1693,3 +1693,48 @@ in the same commit and cites its facts entry"。）
 关键卡下限、**带实测依据的豁免清单**、以及稀有卡的**上界**断言。
 反向验证：还原 `chat` 的旧写法后，探测器在两个维度同时报警
 （3.11 张 < 3.5、chat 0.68% < 5%），与原缺陷的 3.08 / 1.5% 吻合。
+
+## DLC 分层 P0 地基（2026-10-07 追加，DLC-P0）
+
+**目标**：原版能玩、加 DLC 也能玩（对位 HOI4 四条：门控不拆分 / 本体完整体验 / 后覆盖前 /
+可停用）。与既有「内容层 DLC」（`.mod.json`、事件种子、玩法包）**正交**：内容层解决
+"加什么内容"，本节解决"整包在哪一层、默认挂不挂、能不能停"。
+
+**形态：不加新类型，只加一个身份标记。** `ModPack.dlc?: { title, order?, since? }`
+（`mods/pack.ts:24`，`DlcDecl`）。带此字段 = 可选增量；装配路径、`requires` 拓扑、
+`apply` 与本体包**全同**——运行期唯一区别是"在不在 `DEFAULT_PLAYSTYLE_PACKS` 里"。
+对位 HOI4：`title` ≈ `dlcmetadata.json` 的 name，`order` ≈ 内部发售编号（P0 只消费
+"存在性"，排序语义留给加载顺序落地时接）。
+
+**门控：`SimContext.hasDlc(id)`**（`sim/context.ts:145` / `sim/sim.ts:325`，权威源
+`ModRegistry.dlcEnabled`）。为什么放 SimContext 而不是让包去摸 registry：卡的
+`condition(p, ctx)` 与事件的 `when(ctx)` 本来就只拿得到 SimContext ⇒ **零签名改动**，
+包作者不必新增接口面。语义三条：
+1. **没有 DLC 时一律 false** —— "原版能玩"的无条件保证；门控失效 = DLC 分支不跑，
+   且**绝不因为"缺 DLC"抛错**（未知 id 也答 false，与"缺料不是崩溃"同一条纪律）。
+2. 只对带 `dlc` 声明的包答 true —— 本体包即使已挂载也答 false（避免把"装了本体"
+   误读成"装了某 DLC"）。
+3. "已**启用**"而非"已拥有"（HOI4 `has_dlc` 同款）：停用 = `dlcLoad` 不启用 = false。
+
+**装配：`ModRegistry.default({ dlc?, exclude? })`**（`mods/registry.ts:261`，纯函数
+`resolvePacks` 在 `:301`）。原无参签名 `default()` **保持不变**（零回归：不传参 =
+只挂本体 = DLC 显式 opt-in）。规则：`dlc` 查 `DLC_PACKS` 表，**未登记 → 装配期抛错**
+（拼错不该静默变成"没装"）；`exclude` **级联**排除依赖被排除包的包（否则拓扑因缺依赖
+把"想关一个包"变成"游戏起不来"）；**exclude 优先于 dlc**（买了也能停）。可用 DLC 清单
+`DLC_PACKS: Record<string, ModPack>`（`packs/playstyle.ts:61`）**出厂空表**，与本体清单
+同文件不同表（默认命运相反：本体默认全挂、DLC 默认全不挂）。
+
+**启停：`dlc_load.json`**（新 `server/dlc-load.ts`，读 `MODS_DIR` 目录）。**文件不存在
+= 只挂本体**（`present:false`，与 HOI4 "没勾选 DLC" 同构，也是原版体验的落地形态）；
+`{ "enabledDlc": [...], "disabledDlc": [...] }`，坏配置带文件名抛错（服务器起不来是有意的）。
+`server/index.ts:66` 接线并在启动日志打印启用/停用清单。
+
+**边界（P0 明确未做）**：拆 `medicine` 成最小 DLC 示例；"后覆盖前"的 R1-R6 约束
+（`overrideTuning` 任意函数无 allowlist 是最大隐患面，约束留后续）；内容层 DLC 改动；
+**客户端/CLI 接线**（`src/client/main.ts:92,95`、`scripts/play.ts` 仍 `default()` 无参
+⇒ 本地单机 = 纯本体，DLC 目前只经服务器 `MODS_DIR` 生效）。
+
+**测试**：`src/__tests__/dlc-p0.test.ts`（14 条：hasDlc 基线含"本体包答 false"、
+resolvePacks 五条规则、`dlc_load.json` 解析含坏配置）。全量 42 文件 / 405 用例全绿。
+完整设计（7 点 + HOI4 四原则 + 最小示例方案）见 KB
+`/mnt/e/knowledge-base/notes/proj-infcanvas-dlc-design-2026-10-07.md`。

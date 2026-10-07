@@ -927,3 +927,28 @@ needs.food < 45  →  SER_FARM 系列权重 × 2.2
 > **审计边界声明**：本次只做文档订正，**不改任何源码**（因此 §3 的 10 条中，第 10 条只登记不修）。
 > §1/§2 的 file:line 结论均来自对 `src/` 具体文件的读取与窄范围 grep，未做全库扫描；
 > 测试基线数字为 `.test.ts` 文件数与 `it()` 静态计数，**不是本地跑出来的**，以 CI 远端 runner 为准。
+
+## DLC 启停：`dlc_load.json`（2026-10-07 追加，DLC-P0）
+
+**默认状态就是原版**：不建任何配置文件时，服务器只挂 16 个本体包，与以前**逐位相同**
+（`dlc_load.json` 不存在 ⇒ `present:false` ⇒ `ModRegistry.default()`）。
+
+想玩带 DLC 的服务器，在 `mods/` 目录（可用环境变量 `MODS_DIR` 改）放一个
+`dlc_load.json`：
+
+```json
+{ "enabledDlc": ["medicine-plus"], "disabledDlc": [] }
+```
+
+- `enabledDlc`：要启用的 DLC id（必须在 `src/mods/packs/playstyle.ts` 的 `DLC_PACKS`
+  表里登记过；**写错 id 服务器会直接报错起不来**——响亮失败优于"以为启用了"）。
+- `disabledDlc`：要停用的包（本体或 DLC 都行）；**会级联停掉依赖它的包**（否则依赖
+  断裂会让服务器起不来），且**优先级高于 `enabledDlc`**（买了也能停）。
+- 启动日志会打印一行 `🧩 DLC：…` / `⏸ 已停用：…`，用来自查"我明明勾了怎么没生效"。
+
+> ⚠️ **P0 边界（还没接的线）**：本地单机（`npm run dev`）与 CLI（`scripts/play.ts`）
+> 目前仍是无参 `ModRegistry.default()` ⇒ **只挂本体**；带 DLC 的玩法当前只能通过
+> 服务器（`npm run server`，客户端 `?remote=`）进入。客户端侧读取 `dlc_load.json`
+> 属后续批次。另：`DLC_PACKS` 出厂是**空表**，所以现在即使写了配置文件也启不了任何
+> DLC——本批只落"地基"，第一个真 DLC 示例（medicine 拆本体核心 + `medicine-plus`）
+> 排在下一批。
