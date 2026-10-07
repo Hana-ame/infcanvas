@@ -44,6 +44,7 @@ const EVT_TEXTS = {
   plague: '瘟疫',
   stranger: '流浪者加入',
   festival: '丰收节',
+  fecund: '丰饶雨季',
 } as const;
 
 /** 创建测试用 Sim：events 包 + 可调场景参数 */
@@ -259,6 +260,70 @@ describe('events 事件包 —— 局面触发', () => {
     // festival stock: { food: +15 }
     expect(s.stockpile[K_STOCK_FOOD]).toBe(food0 + 15);
     expect(countEvents(s, EVT_TEXTS.festival)).toBeGreaterThan(0);
+  });
+
+  it('丰饶雨季 fecund-season：雨天 + food > 阈值 → stockMul 倍增库存（stockMul 首个消费者）', () => {
+    const s = eventSim({
+      seed: 23,
+      pawnCount: 2,
+      withBuilding: true,
+      food: 60, // >50 触发 fecund，且不会触发 harvest/festival
+      wood: 100,
+      addCampfire: true, // 有火避免 coldsnap
+      coldsnapMinPawns: 999,
+      harvestFoodBelow: 0,
+      strangerFoodAbove: 999,
+      festivalFoodAbove: 999,
+    });
+    // 模拟 env 包在场且正在下雨
+    s.scratch['env.rain'] = 1;
+    const food0 = s.stockpile[K_STOCK_FOOD] ?? 0;
+    expect(food0).toBe(60);
+    s.run(3);
+    // fecund-season stockMul: { food: 1.3 } → 60 × 1.3 = 78
+    expect(s.stockpile[K_STOCK_FOOD]).toBeCloseTo(78, 1);
+    expect(countEvents(s, EVT_TEXTS.fecund)).toBeGreaterThan(0);
+  });
+
+  it('丰饶雨季不触发：env 未挂载（env.rain 不存在）→ 静默跳过', () => {
+    const s = eventSim({
+      seed: 23,
+      pawnCount: 2,
+      withBuilding: true,
+      food: 60, // 满足 fecund 的 food 条件，但不触发 harvest/festival/stranger
+      wood: 100,
+      addCampfire: true,
+      coldsnapMinPawns: 999,
+      harvestFoodBelow: 0,
+      strangerFoodAbove: 999,
+      festivalFoodAbove: 999,
+    });
+    // 不设置 env.rain（env 包未挂载时的行为）
+    const food0 = s.stockpile[K_STOCK_FOOD] ?? 0;
+    s.run(3);
+    // 无事件触发 → food 不变
+    expect(s.stockpile[K_STOCK_FOOD]).toBe(food0);
+    expect(countEvents(s, EVT_TEXTS.fecund)).toBe(0);
+  });
+
+  it('丰饶雨季不触发：food ≤ 阈值 → 静默跳过', () => {
+    const s = eventSim({
+      seed: 23,
+      pawnCount: 2,
+      withBuilding: true,
+      food: 50, // ≤50 不触发 fecund，且不会触发 harvest/festival/stranger
+      wood: 100,
+      addCampfire: true,
+      coldsnapMinPawns: 999,
+      harvestFoodBelow: 0,
+      strangerFoodAbove: 999,
+      festivalFoodAbove: 999,
+    });
+    s.scratch['env.rain'] = 1; // 下雨但粮食不足
+    const food0 = s.stockpile[K_STOCK_FOOD] ?? 0;
+    s.run(3);
+    expect(s.stockpile[K_STOCK_FOOD]).toBe(food0);
+    expect(countEvents(s, EVT_TEXTS.fecund)).toBe(0);
   });
 
   it('冷却去重：同一事件在冷却期内不重复触发（≤1 次）', () => {
