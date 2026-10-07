@@ -326,6 +326,15 @@ export interface Tuning {
      *  意味着第二张床必须落在第一张的 5 格外（"脚下第一格"几乎必然被间距拒），
      *  半径太小就永远只搭得出第一张床。 */
     bedSearchRadius: number;
+    /** 每只鼠最多几张病榻（全局配额，与 farming.fieldRatio 同构的「够用就停」闸）。
+     *  ⚠ Round 56 实测的缺陷：改前 build_bed **无任何全局配额**，而它的 condition
+     *  只判「木料够 + 营地里有人受伤」——伤员在，则任何鼠抽到就搭一张，于是
+     *  6 seed×900 tick 实测 1.50~7.00 张/鼠（seed99 3 只鼠 21 张、seed2026 11 只鼠
+     *  47 张），床耗木 64~376，而同期田只耗 88~176、且木料是全场最紧的资源
+     *  （900s 末余木仅 2~29）。床是医疗的**载体**不是产量，木料买病床挤掉的是
+     *  田/墙/塔 ⇒ 「多床少田」= 把医疗当产能刷。与 build_field 的
+     *  `fields < ceil(pawns × fieldRatio)` 门同形，取 1（一人一床够用）。 */
+    bedRatio: number;
   };
   social: {
     chatRadius: number;
@@ -833,6 +842,8 @@ export const DEFAULT_TUNING: Tuning = {
     healWeightWounded: 3.0,  // 有重伤同伴时 SER_HEAL ×3.0
     restWeightWounded: 1.6,  // 自己重伤时 SER_REST ×1.6（想躺下）
     bedSearchRadius: 12,     // 必须 > minSpacing(5)：2×2 床 + 间距 5 ⇒ 第二张床至少 6 格外
+    bedRatio: 1,             // 一鼠一床够用：Round 56 实测改前 1.50~7.00 张/鼠、耗木
+                             // 64~376，把木料从田/墙/塔上挤走了（推导见接口注释）
   },
   social: {
     chatRadius: 2.5,

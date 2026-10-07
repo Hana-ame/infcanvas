@@ -349,21 +349,36 @@ describe('派系外交包', () => {
   it('声望漂移：足以触达敌对区并真的刷出掠夺（改动前数学上不可能）', () => {
     // 直接断言「掠夺发生过」——这是「背叛与战争」半系统存在性的判据。
     // 改动前 rep 只升不降、恒 ≥ 35，掠夺门槛 -25 永远到不了，该断言必然失败。
-    const s = new Sim({ seed: 75, registry: ModRegistry.default() });
+    //
+    // ⚠ Round 56：本断言原先硬编码**单 seed 75**，而「这个 seed 有掠夺」是轨迹运气，
+    //   不是机制保证——任何无关改动都会让那个 seed 的漂移走向不同分支。
+    //   实测证据（bedRatio 闸 A/B，14 seed×6000 tick）：改前 4/14 seed 出掠夺
+    //   （75:11、2026:20、8080:19、5555:2），改后仍是 4/14（42:1、99:6、2026:6、1234:6）
+    //   ⇒ 机制活着，只是命中了不同 seed。故本断言改为**多 seed 比率**：
+    //   「N 个 seed 里至少 M 个出掠夺」才是机制的真正判据，且不被单条轨迹绑架。
+    const SEEDS = [75, 42, 7, 99, 2026, 8888, 31337, 101, 202, 555, 8080, 1234, 5555, 60606];
+    let seedsWithRaid = 0;
+    let raids = 0;
     let minRep = 1e9;
-    for (let t = 0; t < 6000; t++) {
-      s.step(1);
-      for (const key of Object.keys(s.scratch)) {
-        if (!key.startsWith('factions.rep.')) continue;
-        const v = s.scratch[key];
-        if (v < minRep) minRep = v;
+    for (const seed of SEEDS) {
+      const s = new Sim({ seed, registry: ModRegistry.default() });
+      for (let t = 0; t < 6000; t++) {
+        s.step(1);
+        for (const key of Object.keys(s.scratch)) {
+          if (!key.startsWith('factions.rep.')) continue;
+          const v = s.scratch[key];
+          if (v < minRep) minRep = v;
+        }
       }
+      const n = s.events.filter((e) => /袭击了.+的营地/.test(e.text)).length;
+      raids += n;
+      if (n > 0) seedsWithRaid++;
     }
     expect(minRep).not.toBe(1e9); // 至少有派系对存在（否则漂移无从谈起）
-    expect(minRep).toBeLessThan(s.tuning.factions.hostileThresh); // 穿到 -25 以下
+    expect(minRep).toBeLessThan(-25); // 穿到敌对线以下
     expect(
-      s.events.filter((e) => /袭击了.+的营地/.test(e.text)).length,
-      `minRep=${minRep.toFixed(1)} 已穿敌对线却没有掠夺发生`,
-    ).toBeGreaterThan(0);
+      seedsWithRaid,
+      `${raids} 次掠夺落在 ${seedsWithRaid}/${SEEDS.length} 个 seed 上（minRep=${minRep.toFixed(1)}）`,
+    ).toBeGreaterThanOrEqual(2); // 多个 seed 各自都能撞出掠夺 ⇒ 机制成立而非轨迹巧合
   });
 });

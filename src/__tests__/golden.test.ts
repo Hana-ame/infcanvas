@@ -313,9 +313,12 @@ const SCENARIOS = [
   */
 
 const GOLDEN: Record<string, string> = {
-  '42@900': 'fp_fd5510b0',
-  '7@900': 'fp_69939537',
-  '2026@900': 'fp_28d9b1df',
+  // ⚠ 第 20 次换血（Round 56，bedRatio 闸）：medicine.wantNewBed 加全局配额闸，
+  //   床数 108→39、余木 60→218、healUp 3376→3307（-2%）。这是**行为**变更不是数值微调，
+  //   故指纹必变；同批三个 seed 的指纹均已重算。
+  '42@900': 'fp_dc5d01ea',
+  '7@900': 'fp_cbe944db',
+  '2026@900': 'fp_f3788afa',
 };
 
 /** 跑一个场景：固定 seed 跑固定 tick 数，返回指纹（不存档直跑）。 */

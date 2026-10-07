@@ -286,18 +286,32 @@ function heal(p: PawnState, ctx: SimContext, dt: number): void {
 }
 
 /**
- * 搭床意愿：木料够 + 世界里有伤员。
+ * 搭床意愿：木料够 + 世界里有伤员 + **床还没超过配额**。
  *
  * 这道门是**抽卡硬闸**（原则①），不是行为树——它决定「这张卡能不能被抽上」，
  * 不决定「鼠该不该搭床」。木料富余 + 无伤员时这张卡自然抽不到，
  * 就不会出现 build_campfire 式的「4 只鼠狂搭 40 张空床」泛滥。
  * 遍历全部鼠（不只 p 附近）：病榻是营地的战略设施，不是"就近照顾"的临时物，
  * 谁抽到卡谁搭，但触发条件是"营地里有人受伤了"。
+ *
+ * ⚠ Round 56 新增第三条：床数配额（`tuning.medicine.bedRatio`）。
+ * 改前只有前两条，于是「有伤员」这个**持续**条件配上「抽到就搭一张」=
+ * 无限床：6 seed×900 tick 实测 1.50~7.00 张/鼠（seed2026 11 只鼠 47 张、
+ * 耗木 376），而同局木料余量只剩 2~29、田才 12~22 块。床是医疗的载体不是产量，
+ * 继续搭下去等于用医疗刷产能，把田/墙/塔的木料挪走。门形与 build_field 的
+ * `fields < ceil(pawns × fieldRatio)` 完全同构，保证「够用就停」在两条建造线上
+ * 是同一条纪律（口径统一，将来调平衡只动 ratio 不动结构）。
  */
 function wantNewBed(ctx: SimContext): boolean {
   const cost = ctx.tuning.buildings[BED_ID]?.cost[K_STOCK_WOOD] ?? Infinity;
   if ((ctx.stockpile[K_STOCK_WOOD] ?? 0) < cost) return false;
   const m = ctx.tuning.medicine;
+  // ---- 配额闸（Round 56 新增，口径与 build_field 的 fieldRatio 同构）----
+  let beds = 0;
+  let pawns = 0;
+  for (const b of ctx.buildingsAll()) if (b.defId === BED_ID) beds++;
+  for (const _ of ctx.pawns()) pawns++;
+  if (beds >= Math.max(1, Math.ceil(pawns * m.bedRatio))) return false;
   for (const o of ctx.pawns()) {
     if (o.hp <= 0) continue;
     if (o.hp < m.woundedBelow * o.maxHp) return true;
