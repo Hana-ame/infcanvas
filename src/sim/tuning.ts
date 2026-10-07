@@ -318,6 +318,13 @@ export interface Tuning {
     naturalHealPerSec: number;
     /** 磁铁半径内有重伤同伴时 SER_HEAL 系列的权重乘数（"为什么去照料"的唯一实现处） */
     healWeightWounded: number;
+    /** heal 卡是否要求「库存草药 ≥ herbCost」才进候选池（默认 1 = 要求）。
+     *  ⚠ Round 57 A/B 定案项：无料时这张卡抽中后必然空转（`heal()` 直接 return），
+     *  condition 不判它自己的原料 = 抽卡硬闸不纯（对照 wantNewBed / wantNewField
+     *  都先判木料）。本闸与 `heal()` 第 4 步「没料不 finishCard、留着等料」原方向
+     *  相反，故默认开是有代价的；12 seed×900 tick 实测代价与收益均已在
+     *  medicine.ts 的 wantHeal 注释里记明（医疗未牺牲、木料 +178%）。 */
+    healRequireHerb: number;
     /** 自己重伤时 SER_REST 系列的权重乘数（想躺下歇着，不是去送死）。
      *  为什么进 tuning 而不是写死包内：它是权重乘数（可 A/B 的玩法量），
      *  与卡基础权重（registerCard 期拿不到 ctx，必须写死）不同层。 */
@@ -840,6 +847,8 @@ export const DEFAULT_TUNING: Tuning = {
     healMagnetRadius: 24,    // 磁铁半径：与 sleepMagnetRadius / newFireRadius 同锚点
     naturalHealPerSec: 0.05, // 自然恢复：每 100s 回 5 点，慢但不停（防"永久停血"死状态）
     healWeightWounded: 3.0,  // 有重伤同伴时 SER_HEAL ×3.0
+    // ↓ Round 57 A/B 实验旋钮：两者默认关（0 / 1），定案后清理
+    healRequireHerb: 1,      // heal 卡要求有草药才进候选池：Round 57 A/B 定案，见 wantHeal 注释
     restWeightWounded: 1.6,  // 自己重伤时 SER_REST ×1.6（想躺下）
     bedSearchRadius: 12,     // 必须 > minSpacing(5)：2×2 床 + 间距 5 ⇒ 第二张床至少 6 格外
     bedRatio: 1,             // 一鼠一床够用：Round 56 实测改前 1.50~7.00 张/鼠、耗木

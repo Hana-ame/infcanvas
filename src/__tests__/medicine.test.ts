@@ -14,6 +14,8 @@
  * 10. build_bed：木料够 + 有伤员 → 搭出病榻并扣料；
  * 11. 卸载不破坏核心（原则④）：摘掉 medicine 后无 heal 卡 / 无 bed 定义，世界照跑；
  * 12. 存读档：build_bed 后存档读档，bed 建筑仍在；且带病榻的档在**卸载后**仍能读、照跑。
+ * 13. Round 57：heal 的 condition 判原料 —— 无草药时即使有重伤同伴也抽不到
+ *     （硬闸纯度：condition 必须判自己的原料，对照 build_bed 判木料）。
  *
  * 装配纪律（照 cooking.test.ts SOLO 注释）：**不挂 bootstrapPack**——bootstrap 的 init
  * 会按 tuning.bootstrap.pawnCount(4) 出生 4 只鼠，`new Sim({pawnCount:2})` 实际会得到
@@ -134,12 +136,46 @@ describe('医疗包 medicine', () => {
     expect(s.adjacent(a, b.pos.x, b.pos.y, m.healWorkRadius)).toBe(false); // 此刻确实还没到位
     b.hp = 20;
     const cond = s.cardById('heal')!.condition!;
-    expect(cond(a, s), '伤员在磁铁半径内却抽不到 heal 卡 = 死代码').toBe(true);
     s.stockpile[K_STOCK_HERB] = 50;
-    const hp0 = b.hp;
+    expect(cond(a, s), '伤员在磁铁半径内却抽不到 heal 卡 = 死代码').toBe(true);
     s.debugForceCard(a.eid, 'heal');
+    const hp0 = b.hp;
     s.run(10); // 够 a 走到伤员身旁（5 格 / 4.5 格每秒 ≈ 1.1s）并照料若干 tick
     expect(b.hp, 'a 应该真的走过去并开始照料').toBeGreaterThan(hp0 + m.naturalHealPerSec * 10 + 1);
+  });
+
+  /**
+   * Round 57 契约升级（原单条磁铁断言的前半）：heal 的 condition 必须同时判
+   * 「附近有伤员」**和**「库存草药 ≥ herbCost」。
+   *
+   * 为什么必须有这道门：`heal()` 里「没草药就 return 等下一 tick」意味着无料时这张卡
+   * 抽中后必然空转，而 condition 不判自己的原料 = 抽卡硬闸不纯（对照 build_bed 先判木料、
+   * build_field 先判木料：能干的活才进候选池）。12 seed×900 tick 实测见 medicine.ts
+   * wantHeal 注释：加了这道门医疗不降（卡回血 231→236hp）、木料 +178%、空转 −92%。
+   *
+   * 这条不是放宽原断言，而是把它拆成两段各自断言：无料→假（新增）、有料→真（保留）。
+   */
+  it('heal condition 判原料：无草药时即使有重伤同伴也抽不到（Round 57 硬闸纯度）', () => {
+    const s = new Sim({ seed: 12, registry: reg(SOLO), pawnCount: 2 });
+    const [a, b] = setupPair(s, 1);
+    b.hp = 20;
+    const m = s.tuning.medicine;
+    expect(s.tuning.medicine.healRequireHerb, '默认必须开启原料闸').toBeGreaterThan(0);
+    const cond = s.cardById('heal')!.condition!;
+    expect(s.stockpile[K_STOCK_HERB] ?? 0, '夹具默认不该有草药').toBe(0);
+    expect(cond(a, s), '无草药时不该抽 heal——抽中后必然空转，这是硬闸不纯').toBe(false);
+
+    // 料一到就放行（不是"一直抽不到"）：只补刚好 1 份即满足 herbCost(1)
+    s.stockpile[K_STOCK_HERB] = m.herbCost;
+    expect(cond(a, s), '草药够 1 份就应该放行').toBe(true);
+
+    // 把闸关掉（mod 可自行调回旧语义）：无料也抽得到 —— 证明这是可关的机制而非写死
+    const regOff = ModRegistry.mountPacks(SOLO);
+    regOff.overrideTuning((t) => { t.medicine.healRequireHerb = 0; });
+    const s2 = new Sim({ seed: 12, registry: regOff, pawnCount: 2 });
+    const [a2, b2] = setupPair(s2, 1);
+    b2.hp = 20;
+    expect(s2.cardById('heal')!.condition!(a2, s2), '闸关后回到旧语义').toBe(true);
   });
 
   it('病榻倍率：病人身边有床时回血速率 = healPerSec × bedBonus（与无床对照）', () => {

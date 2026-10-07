@@ -313,12 +313,16 @@ const SCENARIOS = [
   */
 
 const GOLDEN: Record<string, string> = {
-  // ⚠ 第 20 次换血（Round 56，bedRatio 闸）：medicine.wantNewBed 加全局配额闸，
-  //   床数 108→39、余木 60→218、healUp 3376→3307（-2%）。这是**行为**变更不是数值微调，
-  //   故指纹必变；同批三个 seed 的指纹均已重算。
-  '42@900': 'fp_dc5d01ea',
-  '7@900': 'fp_cbe944db',
-  '2026@900': 'fp_f3788afa',
+  // ⚠ 第 21 次换血（Round 57，healRequireHerb 闸）：heal 的 condition 新增「库存
+  //   草药 ≥ herbCost」硬闸，修掉 condition 不判自己原料的不纯（对照 build_bed 判木料）。
+  //   12 seed×900 tick A/B：卡回血 231→236hp（+2%，医疗未牺牲）、木料 305→848（+178%）、
+  //   人口 61→66、空转 3854→301（−92%）、持卡 tick 6642→371。释放的卡期流向 chop_tree
+  //   +284 / gather_berry +252 / cook +160 / sow_field +166。这是**行为**变更，指纹必变；
+  //   同批三个 seed 全部重算（42 dc5d01ea→557aa1bc、7 cbe944db→24bc2f7c、
+  //   2026 f3788afa→6c0c44a0），无一保持不变。
+  '42@900': 'fp_557aa1bc',
+  '7@900': 'fp_24bc2f7c',
+  '2026@900': 'fp_6c0c44a0',
 };
 
 /** 跑一个场景：固定 seed 跑固定 tick 数，返回指纹（不存档直跑）。 */

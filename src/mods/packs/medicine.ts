@@ -160,13 +160,39 @@ export const medicinePack: ModPack = {
       series: SER_HEAL,
       weight: 4,
       duration: 8,
-      condition: (p, ctx) => hasWoundedNearby(p, ctx, ctx.tuning.medicine.healMagnetRadius),
+      condition: (p, ctx) => wantHeal(p, ctx),
       action(p, ctx, dt) {
         heal(p, ctx, dt);
       },
     });
   },
 };
+
+/**
+ * heal 卡的抽卡硬闸 = 「附近有伤员」＋「库存草药 ≥ herbCost」。
+ *
+ * 第二道门（`healRequireHerb`，默认开）是 Round 57 的 A/B 结论：
+ * `heal()` 里「没草药就 return 等下一 tick」意味着**无料时这张卡抽中后必然空转**，
+ * 而 condition 不判它自己的原料 = 抽卡硬闸的不纯（对照 `wantNewBed` 判木料、
+ * `wantNewField` 判木料：能干的活才进候选池）。
+ *
+ * ⚠ 这道门与 `heal()` 第 4 步「没草药不 finishCard、留着等料」原方向相反——
+ * 后者刻意保留「已走到伤员身旁」的位置优势。所以默认开是有代价的，且必须靠
+ * 数据而非直觉定案。12 seed×900 tick 实测（A 关 / B 开）：
+ *   卡回血 231→236hp（+2%，未牺牲医疗）｜木料 305→848（+178%）｜人口 61→66
+ *   空转 3854→301（-92%）｜持卡 tick 6642→371
+ * 释放出的卡期去了真活：chop_tree +284、gather_berry +252、cook +160、sow_field +166。
+ * 代价：work tick 88→70（-20%），因为料一到就得重新走过去；换来的是净收益。
+ *
+ * 对照方案「无料时 SER_HEAL 权重软衰减」在同一组 seed 上**劣于本门**
+ * （人口 69 略高但空转仍留 1030 tick），且它只是把症状压低而非修掉不纯，故弃用。
+ */
+function wantHeal(p: PawnState, ctx: SimContext): boolean {
+  const m = ctx.tuning.medicine;
+  if (!hasWoundedNearby(p, ctx, m.healMagnetRadius)) return false;
+  if (m.healRequireHerb > 0 && (ctx.stockpile[K_STOCK_HERB] ?? 0) < m.herbCost) return false;
+  return true;
+}
 
 /**
  * 磁铁半径内有没有值得照料的伤员（heal 卡的 condition 硬闸 + SER_HEAL 权重钩子共用）。
