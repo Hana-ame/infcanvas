@@ -40,6 +40,16 @@
  * （与 cooking 缺生食时 wantCook 返回 false 同构，只是那边写在 condition、这边写在 action）。
  *
  * 数值：全部读 tuning.medicine（原则③），本文件零魔法数字。
+ *
+ * ⚠ Round 56 取证：「herb 库存恒 0」是**误读**（读的是 1200 tick 末的快照）。
+ *   4 seed×1200 tick 实测：herb 峰值 2~4 份、在场 195~267 tick，生产 12~13 份；
+ *   产出严格等于鹿的击杀数（seed42 逐 tick 轨迹：t=77/80/253/331 四次「鹿 被击退了
+ *   （+2 meat +1 herb）」⇒ 恰好 +4 herb），消耗是 heal 卡、与产出**同 tick** 发生
+ *   （t=367 产 / t=368 耗，t=414 产 / t=417 耗）。所以 herb 是「零库存、当拍即兑」
+ *   的过手资源，末拍快照必然是 0 —— 链子是通的，材料链证据在 healUp 756~1044 tick。
+ *   真正的浪费在别处：heal 卡 condition 只看「附近有伤员」、不看 herb 存量，
+ *   于是 4 seed 实测持有 heal 卡 838~1624 tick 里，有 23.7%~59.5% 的 tick 是
+ *   「已贴到伤员身边但没草药可扣」空转（working 仅 5~70 tick）。待办见 Round 56 交接。
  */
 import type { ModPack } from '../pack';
 import {

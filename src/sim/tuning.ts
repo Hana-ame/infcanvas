@@ -942,7 +942,9 @@ export const DEFAULT_TUNING: Tuning = {
   factions: {
     repInit: 35,          // 必须 > friendlyThresh(30)，否则 trade 是死代码（推导见上方 repInit 注释）
     friendlyThresh: 30,    // 声望 > 30 才算友好；初值 35 已在其上，开局即可贸易
-    hostileThresh: -25,   // 声望 < -25 才敌对；与 friendlyThresh 之间的 [-25,30] 是死区（无机制移动）
+    hostileThresh: -25,   // 声望 < -25 才敌对；[-25,30] 曾是死区（无机制移动），已由下方
+                         // repMeanRev/repDriftMag 打破——Round 56 实测 4 seed×1200 tick：
+                         // 声望真的会游走到 -25 以下并刷出掠夺（factions.test.ts 有断言）
     tradeRatio: 0.5,      // 2 wood → 1 food：贸易有成本，不是白拿口粮
     tradeMagnetRadius: 28,
     tradeWorkRadius: 2.5,
