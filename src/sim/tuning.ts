@@ -8,6 +8,97 @@
  *    "战或逃都有戏"的区间（全灭太易=没有故事，永无威胁=没有故事）。
  */
 
+/**
+ * ============================================================================
+ * §0 运行常数真相源（模块化审查 P1 + P2，2026-10-10）
+ * ============================================================================
+ *
+ * 【原缺陷 · P1】dt 曾有**三套真相源**，各自硬编码、互不相认：
+ *   · client/main.ts:105-107  `sim.step(0.25)`
+ *   · client/main.ts:257      `Math.min(0.1, ...)`（渲染帧钳位）
+ *   · server/game-server.ts   `opts.tickMs ?? 100`
+ * 而 tuning.ts（数值总表）里**根本没有 dt**。更糟的是 medicine.ts 与本文件各有一处
+ * 注释，拿 **client 的 0.25** 当契约基准去论证"秒 vs tick 量纲"——可服务器侧权威
+ * 推进跑的是 **0.1**。量纲论证的基准本身就是错的，任何人复核都对不上账。
+ *
+ * 【原缺陷 · P2】`seed 42` ×3（client/main.ts、server/game-server.ts、server/index.ts）、
+ * `port 8080` ×2（server/index.ts、server/game-server.ts）同为散落的字面量默认值。
+ *
+ * 【归口规则（本轮起）】
+ *  - `SIM_DT_SEC` 是**唯一**的理论真实 dt（秒）；"一步推进多少秒"只答它。
+ *  - client/server 的值一律从它**派生**，禁止再写 0.25 / 0.1 / 100 字面量。
+ *  - 这些是**运行常数不是玩法数值**：不进 `Tuning` 接口、不参与 `overrideTuning`——
+ *    mod 调参面不该能改掉 tick 步长或服务器端口（那是部署配置，不是平衡数据）。
+ *  - 默认种子/端口同理：出厂缺省值的唯一来源，客户端与服务端两侧共用。
+ *
+ * ⚠ **刻意保留的差异**：`CLIENT_STEP_SEC (0.25) ≠ SIM_DT_SEC (0.1)`。
+ * 客户端本地单机模式没有插值/全量对账契约（interp 只服务于服务端快照），历史上用
+ * 0.25 的步进密度跑得一直正常；把它对齐到 0.1 会改变本地世界的轨迹（同 seed 下
+ * 移动落点不同），属**行为变更**——需要 golden 换血 + 平衡复采，独立立项，
+ * 不由本轮"统一真相源"顺手决定。现在它是**显式命名、从真相源派生**的参数，
+ * 不再是分裂；且必须是真实 dt 的整数倍（`CLIENT_STEP_MULT`），
+ * 否则累加会漂出真实 dt 的格子——见 `__tests__/time-source.test.ts`。
+ * ============================================================================
+ */
+
+/** 理论真实 dt（秒）：模拟步长的**唯一真相源**。服务器按它推进权威模拟。 */
+export const SIM_DT_SEC = 0.1;
+
+/** 客户端本地固定步长占几个真实 tick（整数倍，避免分数 tick 漂移）。 */
+export const CLIENT_STEP_MULT = 2.5;
+
+/** 客户端本地固定步长（秒）= CLIENT_STEP_MULT × SIM_DT_SEC = 0.25 */
+export const CLIENT_STEP_SEC = CLIENT_STEP_MULT * SIM_DT_SEC;
+
+/** 渲染帧墙钟钳位（秒）：单帧最多喂入一个真实 tick 的时长。
+ *  后台标签页回来的补偿由调用方的 acc 上限兜住，不是靠放宽这里。 */
+export const RENDER_DT_CLAMP_SEC = SIM_DT_SEC;
+
+/** 服务器 tick 间隔（ms）= SIM_DT_SEC × 1000。全库唯一允许出现 `100` 的地方。
+ *  0.1 的二进制表示是 0.1000000000000000055511，`×1000` 恰好落回 100（已验证）；
+ *  若将来把 SIM_DT_SEC 改成不整除的值，这里必须改 `Math.round(... * 1000)`。 */
+export const SERVER_TICK_MS = SIM_DT_SEC * 1000;
+
+/** 出厂默认世界种子：client 本地 / 服务器 / CLI 三处缺省共用（原 `42` ×3）。 */
+export const DEFAULT_SEED = 42;
+
+/** 出厂默认联机端口：CLI 与 createGameServer 缺省共用（原 `8080` ×2）。 */
+export const DEFAULT_PORT = 8080;
+
+/**
+ * ============================================================================
+ * §1 文件结构地图（模块化审查 P2：1144 行单点 → 先区块化，完整拆分待评估）
+ * ============================================================================
+ *
+ * 本文件承载四块（顺序固定）：
+ *   §0  运行常数真相源（SIM_DT_SEC / CLIENT_STEP_SEC / RENDER_DT_CLAMP_SEC /
+ *       SERVER_TICK_MS / DEFAULT_SEED / DEFAULT_PORT）——非玩法数值，**不进** Tuning
+ *   §1  条目接口（TileTuningEntry / BuildingTuningEntry / TechTuningEntry /
+ *       EnemyTuningEntry）——只定义形状，无数据
+ *   §2  `Tuning` 接口（按玩法域分节）
+ *   §3  `DEFAULT_TUNING` 出厂数值（键顺序镜像 §2——两块的域顺序必须逐域对齐）
+ *
+ * §2/§3 的玩法域顺序：
+ *   world → pawn → needs → build → gathering → farming → cooking → medicine →
+ *   social → raid → hunting → combat → env → factions → fortify → techPool →
+ *   bootstrap → events → [tiles / buildings / enemies / techs / traits]
+ *
+ * ⚠ **完整拆分：本轮刻意不做，只做区块化 + 登记待评估**（不是偷懒，是风险）：
+ *   `Tuning` 是被 Sim/world/protocol/20+ 玩法包/测试共同引用的**单一大接口**，
+ *   `DEFAULT_TUNING` 是它的唯一构造点，而 mod 的 `overrideTuning('medicine.healPerSec')`
+ *   走**扁平路径**。把 §3 按域拆成多个文件后，必须保证 `DEFAULT_TUNING` 展平后仍是
+ *   同一张扁平表，否则按路径覆盖会**静默失效**（不报错，只表现为"调了参数没效果"，
+ *   正是本仓库最怕的一类缺陷）。
+ *   建议做法（独立一批，不夹带任何行为改动）：
+ *     1. `sim/tuning/types.ts`      ← §1+§2 全部 interface
+ *     2. `sim/tuning/defaults/*.ts` ← §3 按上表分组（core / build / combat / social / env）
+ *     3. `sim/tuning/index.ts`      ← 全部 re-export，**调用方 import 路径零改动**
+ *     4. 护栏：新增"拆分后 DEFAULT_TUNING 深比较 === 拆分前快照"契约测试，
+ *        且 golden 指纹必须逐位不变（纯搬家；指纹变即说明搬家时动了数据）
+ *   估量：1 个纯移动 commit + 1 轮契约测试。
+ * ============================================================================
+ */
+
 export interface TileTuningEntry {
   name: string;
   /** 液体（水面）：不可立足，无论 z 与攀爬 */
@@ -84,6 +175,7 @@ export interface EnemyTuningEntry {
   aggro?: number;
 }
 
+/** ===== §2 Tuning 接口：按玩法域分节（域顺序 = §3 DEFAULT_TUNING 的键顺序）===== */
 export interface Tuning {
   world: {
     /**
@@ -306,9 +398,15 @@ export interface Tuning {
     /** 「在病榻旁」的判定半径：病人距病榻这么近就算有床位加成（以病人位置为锚点） */
     bedWorkRadius: number;
     /** 照料每秒消耗的草药数（份/秒）。R3 审计 P1 #2 起按秒扣（herbCost × dt）而非按 tick：
-     *  预留量是 herbCost × duration（秒），而生产按 step(0.25) 推进（client/main.ts）——
-     *  若每 tick 扣 1 份，8 秒卡期 = 32 tick，预留的 8 份只够前 8 tick，其余 24 tick
-     *  因"无预留"直接 return，整卡 75% 空转。按秒扣后 8 份正好覆盖 8 秒，量纲自洽。 */
+     *  预留量是 herbCost × duration（秒），消费是 herbCost × dt（秒）——**两者都是秒**，
+     *  量纲自洽靠的是「单位」而不是任何具体步长。
+     *
+     * ⚠ 契约基准是 §0 的 `SIM_DT_SEC`（理论真实 dt），**不是** client 本地那一步多大：
+     *  任何 dt 都成立——dt 只决定"这一拍扣多少"，扣的总时长恒等于卡期。原注释拿
+     *  client 的 step(0.25)（8 秒 = 32 tick）当论证基准已订正：服务器权威侧走的是
+     *  `SIM_DT_SEC`(0.1)、本地单机走 `CLIENT_STEP_SEC`(0.25)，两个值都不该出现在
+     *  这里当基准。改前"每 tick 扣 1 份"的缺陷与 dt 无关——8 秒卡期里预留只有 8 份，
+     *  按 tick 扣则 8 份只够前 8 tick（无论一个 tick 是 0.1 还是 0.25）。 */
     herbCost: number;
     /** 照料到位半径（「伸手可及」）：走到伤员这么近才真的开始照料。
      *  与 healMagnetRadius 是**两个量**，不可复用同一个数——
@@ -707,7 +805,7 @@ export interface Tuning {
   traits: Record<string, { name: string; seriesMul?: Record<string, number> }>;
 }
 
-/** 出厂数值。所有注释即语义来源，mod 可整体或按路径 overrideTuning 覆盖。 */
+/** ===== §3 出厂数值：所有注释即语义来源；顺序镜像 §2；mod 可整体或按路径 overrideTuning 覆盖 ===== */
 export const DEFAULT_TUNING: Tuning = {
   world: {
     maxZ: 4,            // 海拔层级 0~4

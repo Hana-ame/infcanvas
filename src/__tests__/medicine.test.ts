@@ -26,6 +26,7 @@
 import { describe, expect, it } from 'vitest';
 import { Sim, loadSim, snapshotOf, cardWeight, type PawnState } from '../sim';
 import { ModRegistry, type ModPack } from '../mods';
+import { CLIENT_STEP_SEC } from '../sim/tuning';
 import {
   K_STOCK_HERB,
   K_STOCK_WOOD,
@@ -481,18 +482,19 @@ describe('医疗包 medicine', () => {
 
   /**
    * R3 审计 P1 #2：预留是「秒」量纲，heal() 的消费曾经是「每 tick 一份」——
-   * 生产走 step(0.25)（client/main.ts）时 8 秒卡期 = 32 tick，预留的 8 份只够 8 tick，
-   * 其余 24 tick 因"无预留"直接 return，整卡 75% 空转、只回 25% 的血。
-   * 改成 herbCost × dt 后 8 份正好覆盖 8 秒；测试走的 step(1) 行为与改前等价。
+   * 8 秒卡期下预留的 8 份只够前 8 个 tick，其余全因"无预留"直接 return，整卡空转。
+   * 缺多少与 dt 取值无关（client 0.25 → 只够 2s；server 0.1 → 只够 0.8s）。
+   * 改成 herbCost × dt 后两端都是秒，8 份正好覆盖 8 秒；测试走的 step(1) 行为与改前等价。
+   * 见 time-source.test.ts 的同款断言在两种步长下都成立。
    */
-  it('R3 P1#2：按秒消费与 step(0.25) 对齐——半卡期只花一半预留，卡期回血覆盖率 ≈100%', () => {
+  it('R3 P1#2：按秒消费——半卡期只花一半预留，卡期回血覆盖率 ≈100%', () => {
     const s = new Sim({ seed: 41, registry: reg(SOLO), pawnCount: 2 });
     const [a, b] = setupPair(s, 1);
     b.hp = 20;
     const m = s.tuning.medicine;
     const dur = s.cardById('heal')!.duration ?? s.tuning.pawn.defaultCardSec;
     const total = m.herbCost * dur;
-    const dt = 0.25; // 生产步进：client/main.ts 的 sim.step(0.25)
+    const dt = CLIENT_STEP_SEC; // 客户端生产步进：tuning.ts §0 的单一真相源
     const herbKey = `medicine.herbReserved.${a.eid}`;
     s.stockpile[K_STOCK_HERB] = total;
     s.debugForceCard(a.eid, 'heal');

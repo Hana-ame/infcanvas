@@ -7,6 +7,7 @@
 import { createGameServer } from './game-server';
 import { readDlcLoad } from './dlc-load';
 import { ModRegistry } from '../mods';
+import { DEFAULT_PORT, DEFAULT_SEED } from '../sim/tuning';
 
 interface CliOpts {
   port: number;
@@ -22,7 +23,7 @@ interface CliOpts {
  */
 function parseArgs(argv: string[]): CliOpts {
   const opts: CliOpts = {
-    port: Number(process.env.PORT ?? 8080),
+    port: Number(process.env.PORT ?? DEFAULT_PORT),
     seed: undefined,
     load: undefined,
     saveDir: undefined,
@@ -66,7 +67,7 @@ createGameServer({
   registry: ModRegistry.default({ dlc: dlc.enabledDlc, exclude: dlc.disabledDlc }),
 }).then((h) => {
   console.log('🐭 infcanvas 权威服务器已启动');
-  console.log(`   ws://127.0.0.1:${h.port}   seed=${seed ?? 42}`);
+  console.log(`   ws://127.0.0.1:${h.port}   seed=${seed ?? DEFAULT_SEED}`);
   console.log(`   客户端连接：?remote=ws://127.0.0.1:${h.port}`);
   // DLC 装配状态：让"我明明勾了怎么没生效"在服务端侧就能自查（同鉴权提示的理由）
   if (!dlc.present) {

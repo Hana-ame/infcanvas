@@ -2,7 +2,8 @@
  * server/game-server.ts —— WSS 权威模拟服务器（阶段④）。
  *
  * 架构（技术规格）：服务器持权威 Sim；客户端只收快照 + 上行命令。
- *  - tick 循环：固定 100ms 步长（dt=0.1；衰减/速度都是每秒速率，确定性不受步长影响）。
+ *  - tick 循环：固定步长（`SIM_DT_SEC`=0.1s，真相源见 sim/tuning.ts §0；衰减/速度
+ *    都是每秒速率，确定性不受步长影响）。
  *  - 同步节奏：增量 ~500ms（只发改变的 pawn + 删除名单 + 新事件），全量对账 ~5000ms，
  *    新连接先收 welcome（seed+tuning+全量）。
  *  - 命令上行：白名单（SERVER_COMMANDS）+ 参数校验 → issueCommand 同一入口；
@@ -28,6 +29,7 @@ import { chunkKeyToXY, chunksForInterest, tileChunkKey, toChunkCoords, type Chun
 import { authorizeAdmin, authorizeHandshake } from './auth';
 import { SaveStore, timestampName } from './save-store';
 import { loadSim, snapshotOf, type SaveData } from '../sim/sim-save';
+import { DEFAULT_PORT, DEFAULT_SEED, SERVER_TICK_MS } from '../sim/tuning';
 import type { PawnState } from '../sim/types';
 
 export interface GameServerOptions {
@@ -117,7 +119,7 @@ export function createGameServer(opts: GameServerOptions): Promise<GameServerHan
   if (opts.loadFrom) {
     sim = loadSim(store.read(opts.loadFrom), opts.registry);
   } else {
-    sim = new Sim({ seed: opts.seed ?? 42, registry: opts.registry });
+    sim = new Sim({ seed: opts.seed ?? DEFAULT_SEED, registry: opts.registry });
   }
   const httpServer =
     opts.httpServer ??
@@ -363,7 +365,9 @@ export function createGameServer(opts: GameServerOptions): Promise<GameServerHan
   let defaultScope: Set<number> | null = null;
 
   // ---- tick 循环：固定步长推进权威模拟 ----
-  const tickMs = opts.tickMs ?? 100;
+  // 步长真相源 = tuning.ts §0 的 SERVER_TICK_MS（= SIM_DT_SEC × 1000）；
+  // 测试/压测可用 opts.tickMs 覆盖（覆盖值不参与契约，golden 与客户端对齐都按出厂值算）。
+  const tickMs = opts.tickMs ?? SERVER_TICK_MS;
   /**
    * 本 tick 真正要推进的区块（line/net 分帧预算）。
    *
@@ -377,7 +381,7 @@ export function createGameServer(opts: GameServerOptions): Promise<GameServerHan
    * 为什么 tick 不按"预算"切成多帧（任务书说的 budget 分片）而用"区块集合"：
    * 模拟时间必须等距推进才能让远端客户端的插值与服务器对齐（interp.ts 按
    * delta 间隔归一化 k），把一个 tick 的工作摊到后续 tick 会让某些 tick 的
-   * dt≠0.1，破坏插值手感与所有"每秒速率"的确定性。
+   * dt ≠ SIM_DT_SEC，破坏插值手感与所有"每秒速率"的确定性。
    * 所以这里的"分片"= **按区块决定工作集**，而"预算"体现为工作集大小本身
    * （客户端订阅半径即可调）。这是刻意不做的取舍，不是遗漏。
    */
@@ -581,7 +585,7 @@ export function createGameServer(opts: GameServerOptions): Promise<GameServerHan
     if (opts.httpServer) {
       done(); // 复用外部 server：它已在监听
     } else {
-      httpServer.listen(opts.port ?? 8080, () => done());
+      httpServer.listen(opts.port ?? DEFAULT_PORT, () => done());
     }
   });
 }

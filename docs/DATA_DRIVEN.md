@@ -608,6 +608,40 @@ boot(1)       bootstrap（恒表尾——出生刷人晚于全体系统）
 覆盖方式：`ModRegistry.overrideTuning(fn)` 注册期写覆盖链，`effectiveTuning()` 在 Sim 构造时
 一次性生效并缓存（运行期改表不生效是刻意语义——确定性优先）。
 
+### 运行常数真相源（src/sim/tuning.ts §0，2026-10-10 追加：模块化审查 P1/P2）
+
+数值表只管**玩法数值**；**运行常数**（模拟步长、默认种子、默认端口）也住在 `tuning.ts`，
+但**不进 `Tuning` 接口、不参与 `overrideTuning`** —— mod 调参面不该能改掉 tick 步长或服务器端口。
+
+| 常量 | 值 | 派生自 | 消费方 |
+| --- | --- | --- | --- |
+| `SIM_DT_SEC` | 0.1 | ——（**唯一原始值**） | 一切"一步推进多少秒"的问题只答它 |
+| `SERVER_TICK_MS` | 100 | `SIM_DT_SEC × 1000` | `server/game-server.ts` tick 间隔 |
+| `CLIENT_STEP_MULT` / `CLIENT_STEP_SEC` | 2.5 / 0.25 | `MULT × SIM_DT_SEC` | `client/main.ts` 固定步长循环 |
+| `RENDER_DT_CLAMP_SEC` | 0.1 | `= SIM_DT_SEC` | `client/main.ts` 渲染帧墙钟钳位 |
+| `DEFAULT_SEED` | 42 | —— | client / game-server / server CLI 三处缺省 |
+| `DEFAULT_PORT` | 8080 | —— | `server/index.ts` 与 `createGameServer` 缺省 |
+
+**为什么收口**：dt 曾有三套真相源（client `step(0.25)`、client `min(0.1,…)`、
+server `tickMs ?? 100`），而 `tuning.ts` 里根本没有 dt；`seed 42` ×3、`port 8080` ×2 同为
+散落字面量。更糟的是 `tuning.ts` 与 `medicine.ts` 各有一处注释拿 **client 的 0.25** 当
+"秒/tick 量纲"的契约基准，而服务器权威侧跑的是 **0.1** —— 论证基准本身就是错的。
+
+**刻意保留的差异**：`CLIENT_STEP_SEC (0.25) ≠ SIM_DT_SEC (0.1)`。客户端本地单机没有
+插值/全量对账契约（interp 只服务服务端快照），0.25 的步进密度历史上一直正常；对齐到 0.1
+会改变本地世界轨迹（同 seed 下移动落点不同）= **行为变更**，需 golden 换血 + 平衡复采，
+独立立项，不由"统一真相源"顺手决定。现在它**必须是真实 dt 的整数倍**（`CLIENT_STEP_MULT`），
+否则累加会漂出真实 dt 的格子 —— `__tests__/time-source.test.ts` 守着这条。
+
+**结构性护栏**：`time-source.test.ts` 直接读生产源码断言真相源是唯一出处、旧字面量已清干净；
+量纲断言在**两种步长**下都跑（改前"每 tick 扣 1 份"的缺陷在 0.1 与 0.25 下都成立，改后按秒扣
+必须任意步长完整覆盖卡期）。
+
+**tuning.ts 的区块结构**：§0 运行常数 → §1 条目接口 → §2 `Tuning` 接口（按玩法域分节）
+→ §3 `DEFAULT_TUNING`（键顺序镜像 §2）。完整拆分成 `types.ts` / `defaults/*.ts` + `index.ts`
+re-export 已登记待评估（拆默认值表有静默失效风险，需配深比较快照 + golden 指纹护栏），
+本轮只做区块化，不做硬拆。
+
 ### 注册内容速查（当前默认装配）
 
 - **系统 4**：needs(needs) → behavior(ai·内核) → raid(raid) → bootstrap(boot·恒表尾)

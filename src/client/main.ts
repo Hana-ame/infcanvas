@@ -11,6 +11,7 @@ import { Application } from 'pixi.js';
 import { Sim } from '../sim';
 import { snapshotOf, loadSim, type SaveData } from '../sim/sim-save';
 import { ModRegistry } from '../mods';
+import { DEFAULT_PORT, DEFAULT_SEED, CLIENT_STEP_SEC, RENDER_DT_CLAMP_SEC } from '../sim/tuning';
 import { Renderer } from './render';
 import { Hud } from './hud';
 import { RemoteSim } from './remote';
@@ -92,7 +93,7 @@ async function boot(): Promise<void> {
       sim = loadSim(JSON.parse(savedRaw), ModRegistry.default());
       history.replaceState(null, '', location.pathname + location.search.replace(/[?&]save=1/, ''));
     } else {
-      sim = new Sim({ seed: Number(params.get('seed') ?? 42), registry: ModRegistry.default() });
+      sim = new Sim({ seed: Number(params.get('seed') ?? DEFAULT_SEED), registry: ModRegistry.default() });
     }
     let acc = 0;
     const view = new LocalView(sim);
@@ -102,9 +103,11 @@ async function boot(): Promise<void> {
         if (paused) return;
         acc += realDt * speed;
         let steps = 0;
-        while (acc >= 0.25 && steps < 32) {
-          sim.step(0.25);
-          acc -= 0.25;
+        // 固定步长推进：步长来自 tuning.ts §0 的 CLIENT_STEP_SEC（= 2.5 × SIM_DT_SEC），
+        // 不是这里的字面量——历史 bug 就是把 0.25 当契约基准写进 sim 侧注释（P1）。
+        while (acc >= CLIENT_STEP_SEC && steps < 32) {
+          sim.step(CLIENT_STEP_SEC);
+          acc -= CLIENT_STEP_SEC;
           steps++;
         }
         if (acc > 8) acc = 0; // 后台标签页回来不补帧雪崩
@@ -254,7 +257,7 @@ async function boot(): Promise<void> {
   let last = performance.now();
   app.ticker.add(() => {
     const now = performance.now();
-    const dt = Math.min(0.1, (now - last) / 1000);
+    const dt = Math.min(RENDER_DT_CLAMP_SEC, (now - last) / 1000);
     last = now;
     ctrl.tick(dt);
     if (followCam) {
@@ -282,5 +285,5 @@ async function boot(): Promise<void> {
 boot().catch((err) => {
   document.getElementById('app')!.innerHTML =
     `<div style="color:#f88;font:14px system-ui;padding:24px">启动失败：${String(err)}<br>` +
-    `联机地址是否正确？服务器是否已启动（npm run server -- 8080）？</div>`;
+    `联机地址是否正确？服务器是否已启动（npm run server -- ${DEFAULT_PORT}）？</div>`;
 });

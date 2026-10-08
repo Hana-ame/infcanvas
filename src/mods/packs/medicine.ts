@@ -330,10 +330,15 @@ function heal(p: PawnState, ctx: SimContext, dt: number): void {
   p.path = []; // 停到伤员身旁别乱走
   // ---- 到身旁了：按**秒**扣这一拍的草药费，扣不动就等下一拍（不 finishCard，见区块头注释）----
   // R3 审计 P1 #2（量纲失配）：改前"每 tick 扣 1 份 herbCost"，而预留是 herbCost × duration **秒**
-  // ——生产走 step(0.25)（client/main.ts）时 8 秒卡期 = 32 tick，预留的 8 份只够 8 tick，
-  // 其余 24 tick 因"无预留"直接 return，整卡 75% 空转（回血只出 25%）。
-  // 改成 herbCost × dt 后，预留 8 份正好覆盖 8 秒（32 × 0.25 = 8），与 wantHeal 的原料门
-  // （herbCost × HEAL_DURATION）同一量纲，卡期被完整利用；测试走 step(1) 时行为与改前等价。
+  // ——扣的单位是 tick、预留的单位是秒，两个量纲对不上，预留的 8 份只够前 8 个 tick，
+  // 其余全部因"无预留"直接 return，整卡 75%~90% 空转（回血只出 10%~25%）。
+  // ⚠ 契约基准是 tuning.ts §0 的 SIM_DT_SEC（理论真实 dt），**不是** client 本地那一步多大：
+  //   0.1/0.25 只是同一缺陷在两种步长下的两种表现（服务器 0.1 → 8 份够 0.8s；本地 0.25 →
+  //   8 份够 2s），缺陷与 dt 取值无关——按 tick 扣恒等于"每秒只扣 (1/dt) 份"。原注释拿
+  //   client 的 step(0.25)（8 秒 = 32 tick）当基准已订正：那是本地单机的巧合，不是契约。
+  // 改成 herbCost × dt 后两端都是秒，**任意步长**下 8 份都正好覆盖 8 秒卡期，与 wantHeal
+  // 的原料门（herbCost × HEAL_DURATION）同一量纲，卡期被完整利用。
+  // 唯一与改前逐位等价的特例是 dt=1（1 tick = 1 秒）——测试里 step(1) 的读数因此不变。
   const need = m.herbCost * dt;
   const herbKey = `medicine.herbReserved.${p.eid}`;
   const reserved = ctx.scratch[herbKey];
