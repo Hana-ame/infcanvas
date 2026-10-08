@@ -588,21 +588,21 @@ export class Sim implements SimContext {
     const card = this.reg.cardById(cardId);
     const p = this.pawnMap.get(eid);
     if (!card || !p) return false;
-    p.cardId = null;
-    p.busyUntil = this.time;
-    commit(this, p, card);
-    // 原子性预留：heal 卡强制指派时也预留草药，防并发超卖（P1 #4）
+    // R1 审计 P1 #2：预留不足时**不指派**——改前 commit 先于预留检查，
+    // herbs < totalCost 时卡已指派但预留静默失败 → 原地发呆至 duration 到期。
+    // 改为预留优先：预留不足则直接返回 false，不污染 cardId/busyUntil。
     if (card.id === 'heal' && this.tuning.medicine?.healRequireHerb > 0) {
       const cost = this.tuning.medicine.herbCost ?? 1;
       const duration = card.duration ?? this.tuning.pawn.defaultCardSec;
       const totalCost = cost * duration;
       const herbs = (this.stockpile[K_STOCK_HERB] ?? 0);
-      if (herbs >= totalCost) {
-        this.stockpile[K_STOCK_HERB] = herbs - totalCost;
-        const key = `medicine.herbReserved.${p.eid}`;
-        this.scratch[key] = totalCost;
-      }
+      if (herbs < totalCost) return false; // 预留不足：不指派
+      this.stockpile[K_STOCK_HERB] = herbs - totalCost;
+      this.scratch[`medicine.herbReserved.${p.eid}`] = totalCost;
     }
+    p.cardId = null;
+    p.busyUntil = this.time;
+    commit(this, p, card);
     return true;
   }
 }

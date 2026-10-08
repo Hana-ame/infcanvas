@@ -66,6 +66,11 @@ import type { PawnState } from '../../sim/types';
 /** 病榻建筑定义 id（单包自洽键；与 contracts 的跨包资源/标签键不同层） */
 const BED_ID = 'bed';
 
+/** heal 卡的承诺秒数（与 gather_berry(8)/chop_tree(6) 同量纲的**持续劳作**，不是"秒完成"）。
+ *  提取为常量：wantHeal 的原料门（herbs ≥ herbCost × duration）与卡定义共用同一个值，
+ *  避免两处硬编码 8 导致漂移（R1 审计 P1 #1：门检 herbCost(1) vs 预留 herbCost×8 失配）。 */
+const HEAL_DURATION = 8;
+
 /** 照料目标 scratch 键前缀：键 "medicine.target.<鼠eid>"，值 = 伤员 eid（number）。
  *  值存 eid 而非坐标——伤员会走，坐标会过期，eid 才是稳定标识。 */
 const TARGET_PREFIX = 'medicine.target.';
@@ -159,7 +164,7 @@ export const medicinePack: ModPack = {
       label: '照料',
       series: SER_HEAL,
       weight: 4,
-      duration: 8,
+      duration: HEAL_DURATION,
       condition: (p, ctx) => wantHeal(p, ctx),
       action(p, ctx, dt) {
         heal(p, ctx, dt);
@@ -169,12 +174,18 @@ export const medicinePack: ModPack = {
 };
 
 /**
- * heal 卡的抽卡硬闸 = 「附近有伤员」＋「库存草药 ≥ herbCost」。
+ * heal 卡的抽卡硬闸 = 「附近有伤员」＋「库存草药 ≥ herbCost × HEAL_DURATION」。
  *
  * 第二道门（`healRequireHerb`，默认开）是 Round 57 的 A/B 结论：
  * `heal()` 里「没草药就 return 等下一 tick」意味着**无料时这张卡抽中后必然空转**，
  * 而 condition 不判它自己的原料 = 抽卡硬闸的不纯（对照 `wantNewBed` 判木料、
  * `wantNewField` 判木料：能干的活才进候选池）。
+ *
+ * ⚠ R1 审计 P1 #1 修正（2026-08-21）：门检量必须与 systems.ts 的预留量
+ * `totalCost = herbCost × duration` 对齐。改前只判 `herbCost`(=1)，但预留要 8 份，
+ * herbs=1~7 时门放行、预留静默失败 → heal() 每 tick return，卡空转至自然到期
+ * （Round 57 的"空转-92%"优化被回退）。改为判 `herbCost × HEAL_DURATION` 后，
+ * 门与预留量纲一致，herbs<8 时直接不放行，不存在"门放行但预留失败"的缝隙。
  *
  * ⚠ 这道门与 `heal()` 第 4 步「没草药不 finishCard、留着等料」原方向相反——
  * 后者刻意保留「已走到伤员身旁」的位置优势。所以默认开是有代价的，且必须靠
@@ -190,7 +201,11 @@ export const medicinePack: ModPack = {
 function wantHeal(p: PawnState, ctx: SimContext): boolean {
   const m = ctx.tuning.medicine;
   if (!hasWoundedNearby(p, ctx, m.healMagnetRadius)) return false;
-  if (m.healRequireHerb > 0 && (ctx.stockpile[K_STOCK_HERB] ?? 0) < m.herbCost) return false;
+  // R1 审计 P1 #1：门检量必须与预留量对齐（herbCost × HEAL_DURATION）。
+  // 改前只判 herbCost(1)，但 systems.ts 预留 totalCost(=8)，herbs=1~7 时
+  // 门放行、预留静默失败 → heal() 每 tick return，卡空转至自然到期。
+  const totalCost = m.herbCost * HEAL_DURATION;
+  if (m.healRequireHerb > 0 && (ctx.stockpile[K_STOCK_HERB] ?? 0) < totalCost) return false;
   return true;
 }
 

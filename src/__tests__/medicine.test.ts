@@ -148,15 +148,18 @@ describe('医疗包 medicine', () => {
   });
 
   /**
-   * Round 57 契约升级（原单条磁铁断言的前半）：heal 的 condition 必须同时判
-   * 「附近有伤员」**和**「库存草药 ≥ herbCost」。
+   * Round 57 契约升级 + R1 审计 P1 #1 修正：heal 的 condition 必须同时判
+   * 「附近有伤员」**和**「库存草药 ≥ herbCost × duration」。
    *
    * 为什么必须有这道门：`heal()` 里「没草药就 return 等下一 tick」意味着无料时这张卡
    * 抽中后必然空转，而 condition 不判自己的原料 = 抽卡硬闸不纯（对照 build_bed 先判木料、
    * build_field 先判木料：能干的活才进候选池）。12 seed×900 tick 实测见 medicine.ts
    * wantHeal 注释：加了这道门医疗不降（卡回血 231→236hp）、木料 +178%、空转 −92%。
    *
-   * 这条不是放宽原断言，而是把它拆成两段各自断言：无料→假（新增）、有料→真（保留）。
+   * R1 审计 P1 #1（2026-08-21）：改前门检 herbCost(1)，但预留量是 herbCost×duration(8)，
+   * herbs=1~7 时门放行、预留静默失败 → 空转。修正后门检量 = 预留量，边界对齐。
+   *
+   * 这条不是放宽原断言，而是把它拆成多段各自断言：无料→假、不足→假（新增）、刚好→真。
    */
   it('heal condition 判原料：无草药时即使有重伤同伴也抽不到（Round 57 硬闸纯度）', () => {
     const s = new Sim({ seed: 12, registry: reg(SOLO), pawnCount: 2 });
@@ -168,9 +171,14 @@ describe('医疗包 medicine', () => {
     expect(s.stockpile[K_STOCK_HERB] ?? 0, '夹具默认不该有草药').toBe(0);
     expect(cond(a, s), '无草药时不该抽 heal——抽中后必然空转，这是硬闸不纯').toBe(false);
 
-    // 料一到就放行（不是"一直抽不到"）：只补刚好 1 份即满足 herbCost(1)
-    s.stockpile[K_STOCK_HERB] = m.herbCost;
-    expect(cond(a, s), '草药够 1 份就应该放行').toBe(true);
+    // 料一到就放行：R1 审计 P1 #1 修正——门检量 = herbCost × duration（=8），
+    // 不是 herbCost(1)。herbs=1~7 时门不放行（预留会静默失败），herbs=8 才放行。
+    s.stockpile[K_STOCK_HERB] = m.herbCost; // 1 份
+    expect(cond(a, s), 'herbs=1（< herbCost×duration=8）不该放行——预留会失败').toBe(false);
+    s.stockpile[K_STOCK_HERB] = m.herbCost * 7; // 7 份
+    expect(cond(a, s), 'herbs=7（< 8）仍不该放行').toBe(false);
+    s.stockpile[K_STOCK_HERB] = m.herbCost * 8; // 8 份 = totalCost
+    expect(cond(a, s), 'herbs=8（= herbCost×duration）应该放行').toBe(true);
 
     // 把闸关掉（mod 可自行调回旧语义）：无料也抽得到 —— 证明这是可关的机制而非写死
     const regOff = ModRegistry.mountPacks(SOLO);
@@ -206,22 +214,22 @@ describe('医疗包 medicine', () => {
     expect(bedded.gain - plain.gain).toBeCloseTo(m.healPerSec * (m.bedBonus - 1) * 5, 3);
   });
 
-  it('缺料不崩：herb=0 时 heal 卡不报错、不额外回血（hunting 未挂载时的自然状态）', () => {
+  it('缺料不崩：herb=0 时 debugForceCard 返回 false（R1 审计 P1 #2：不指派空转卡）', () => {
     const s = new Sim({ seed: 14, registry: reg(SOLO), pawnCount: 2 });
     const [a, b] = setupPair(s, 1);
     b.hp = 20;
     s.stockpile[K_STOCK_HERB] = 0;
-    s.debugForceCard(a.eid, 'heal');
+    // R1 审计 P1 #2：预留不足时 debugForceCard 返回 false，不指派卡
+    expect(s.debugForceCard(a.eid, 'heal'), 'herb=0 时 debugForceCard 应返回 false').toBe(false);
+    expect(a.cardId, '预留不足时不该指派 heal 卡').not.toBe('heal');
     const hp0 = b.hp;
     expect(() => {
       s.step(1);
       s.step(1);
       s.step(1);
     }).not.toThrow();
-    // 只有自然恢复，没有照料加成
+    // 只有自然恢复，没有照料加成（卡根本没被指派）
     expect(b.hp).toBeCloseTo(hp0 + s.tuning.medicine.naturalHealPerSec * 3, 5);
-    // 卡**没**被提前收工：a 还占着照料位等草药（下一 tick 也许就到了）
-    expect(a.cardId).toBe('heal');
   });
 
   it('自然恢复：无人照料时 hp 缓慢上升，速率 = naturalHealPerSec（不形成死循环）', () => {
@@ -358,5 +366,53 @@ describe('医疗包 medicine', () => {
     // 我们检查：stockpile 应比预留后高（说明旧预留已归还）
     // 简单验证：跑完后 stockpile 不应低于 herb02 - consumed（除非新卡又预留了）
     expect(s2.stockpile[K_STOCK_HERB]!).toBeGreaterThanOrEqual(herb02 - consumed);
+  });
+
+  /**
+   * R1 审计 P1 #1 边界测试：wantHeal 门检量 = herbCost × HEAL_DURATION（=8）。
+   * herbs=0~7 时门不放行，herbs=8 时放行——消除"门放行、预留静默失败"的缝隙。
+   */
+  it('R1 P1#1 边界：herbs=0~7 时 wantHeal=false，herbs=8 时 true（门检与预留量纲对齐）', () => {
+    const s = new Sim({ seed: 30, registry: reg(SOLO), pawnCount: 2 });
+    const [a, b] = setupPair(s, 1);
+    b.hp = 20;
+    const m = s.tuning.medicine;
+    const cond = s.cardById('heal')!.condition!;
+    const totalCost = m.herbCost * (s.cardById('heal')!.duration ?? s.tuning.pawn.defaultCardSec);
+    // 逐边界扫描：0,1,2,...,7 → false；8 → true
+    for (let h = 0; h < totalCost; h++) {
+      s.stockpile[K_STOCK_HERB] = h;
+      expect(cond(a, s), `herbs=${h}（< totalCost=${totalCost}）不该放行`).toBe(false);
+    }
+    s.stockpile[K_STOCK_HERB] = totalCost;
+    expect(cond(a, s), `herbs=${totalCost}（= totalCost）应该放行`).toBe(true);
+    // 超量也放行
+    s.stockpile[K_STOCK_HERB] = totalCost + 100;
+    expect(cond(a, s), 'herbs 远超 totalCost 应放行').toBe(true);
+  });
+
+  /**
+   * R1 审计 P1 #2 边界测试：debugForceCard 预留不足时返回 false，不指派卡。
+   * herbs < totalCost → false（不指派、不预留）；herbs >= totalCost → true（指派+预留）。
+   */
+  it('R1 P1#2 边界：debugForceCard 预留不足时返回 false 且不指派卡', () => {
+    const s = new Sim({ seed: 31, registry: reg(SOLO), pawnCount: 2 });
+    const [a, b] = setupPair(s, 1);
+    b.hp = 20;
+    const m = s.tuning.medicine;
+    const totalCost = m.herbCost * (s.cardById('heal')!.duration ?? s.tuning.pawn.defaultCardSec);
+    // herbs=7（< totalCost=8）：debugForceCard 返回 false，不指派
+    s.stockpile[K_STOCK_HERB] = totalCost - 1;
+    expect(s.debugForceCard(a.eid, 'heal'), 'herbs<totalCost 时 debugForceCard 应返回 false').toBe(false);
+    expect(a.cardId, '预留不足时不该指派 heal 卡').not.toBe('heal');
+    expect(s.stockpile[K_STOCK_HERB], '预留失败时不该扣草药').toBe(totalCost - 1);
+    expect(s.scratch[`medicine.herbReserved.${a.eid}`], '预留失败时不该写入预留').toBeUndefined();
+
+    // herbs=8（= totalCost）：debugForceCard 返回 true，指派+预留
+    s.stockpile[K_STOCK_HERB] = totalCost;
+    expect(s.debugForceCard(a.eid, 'heal'), 'herbs>=totalCost 时 debugForceCard 应返回 true').toBe(true);
+    expect(a.cardId, '预留成功时应该指派 heal 卡').toBe('heal');
+    expect(s.stockpile[K_STOCK_HERB], '预留成功时应该扣减草药').toBe(0);
+    expect(s.scratch[`medicine.herbReserved.${a.eid}`], '预留成功时应该写入预留').toBe(totalCost);
   });
 });
