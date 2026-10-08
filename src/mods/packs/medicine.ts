@@ -260,6 +260,13 @@ function resolveTarget(ctx: SimContext, p: PawnState): PawnState | undefined {
 /** 清掉这只鼠的照料目标（finishCard 时调用，下一卡重新选） */
 function clearTarget(ctx: SimContext, p: PawnState): void {
   delete ctx.scratch[targetKey(p)];
+  // 释放草药预留（如果有）
+  const herbKey = `medicine.herbReserved.${p.eid}`;
+  const reserved = ctx.scratch[herbKey];
+  if (reserved) {
+    ctx.scratch[herbKey] = 0;
+    ctx.stockpile[K_STOCK_HERB] = (ctx.stockpile[K_STOCK_HERB] ?? 0) + reserved;
+  }
 }
 
 /**
@@ -297,10 +304,11 @@ function heal(p: PawnState, ctx: SimContext, dt: number): void {
     return; // 路上，引擎 moveStep 推进
   }
   p.path = []; // 停到伤员身旁别乱走
-  // ---- 到身旁了：有草药才动手 ----
-  const herbs = ctx.stockpile[K_STOCK_HERB] ?? 0;
-  if (herbs < m.herbCost) return; // 没草药：等下一 tick（不 finishCard，见上方注释）
-  ctx.stockpile[K_STOCK_HERB] = herbs - m.herbCost;
+  // ---- 到身旁了：消耗预留的草药（每 tick 1 份 herbCost）----
+  const herbKey = `medicine.herbReserved.${p.eid}`;
+  const reserved = ctx.scratch[herbKey];
+  if (!reserved || reserved < m.herbCost) return; // 没预留或不足（异常情况）：等下一 tick
+  ctx.scratch[herbKey] = reserved - m.herbCost; // 消费 1 tick 的预留
   // 病榻旁：以**病人**位置判「在床旁」（床位是给病人的，语义锚点是病人，不是照料者）
   const bed = ctx.nearestBuildingByTag(K_TAG_BED, target.pos.x, target.pos.y, m.bedWorkRadius);
   const mult = bed ? m.bedBonus : 1;

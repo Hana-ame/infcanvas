@@ -18,7 +18,7 @@ import { behaviorCtor, commit, type GameSystem } from './systems';
 import type { BuildingState, Eid, FeatureHit, Hostile, LogEvent, PawnState, Pos } from './types';
 import type { SaveData } from './sim-save';
 import type { ModRegistry } from '../mods/registry';
-import { K_TAG_WAYPOINT } from '../mods/contracts';
+import { K_TAG_WAYPOINT, K_STOCK_HERB } from '../mods/contracts';
 
 export interface SimConfig {
   seed?: number;
@@ -591,6 +591,18 @@ export class Sim implements SimContext {
     p.cardId = null;
     p.busyUntil = this.time;
     commit(this, p, card);
+    // 原子性预留：heal 卡强制指派时也预留草药，防并发超卖（P1 #4）
+    if (card.id === 'heal' && this.tuning.medicine?.healRequireHerb > 0) {
+      const cost = this.tuning.medicine.herbCost ?? 1;
+      const duration = card.duration ?? this.tuning.pawn.defaultCardSec;
+      const totalCost = cost * duration;
+      const herbs = (this.stockpile[K_STOCK_HERB] ?? 0);
+      if (herbs >= totalCost) {
+        this.stockpile[K_STOCK_HERB] = herbs - totalCost;
+        const key = `medicine.herbReserved.${p.eid}`;
+        this.scratch[key] = totalCost;
+      }
+    }
     return true;
   }
 }

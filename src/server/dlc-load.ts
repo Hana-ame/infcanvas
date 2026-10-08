@@ -19,7 +19,7 @@
  * 而"格式"（键名与语义）本身与 shared/mod-schema 同级——若将来编辑器要导出
  * dlc_load.json，再把纯类型抽到 shared/（现在抽是过早抽象）。
  */
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 /** 配置文件名（与 .mod.json 同目录平铺；`scanModDir` 只收 `.mod.json`，不会误吃它） */
@@ -89,12 +89,20 @@ export function parseDlcLoad(text: string, fileName: string): DlcLoadConfig {
   };
 }
 
+/** 最大允许的 dlc_load.json 体积（字节）——防 OOM，防恶意/误写大文件 */
+const DLC_LOAD_MAX_BYTES = 64 * 1024; // 64 KiB
+
 /**
  * 从目录读 dlc_load.json。
  * **文件不存在 = emptyDlcLoad()（只挂本体）**，不报错——"没配置"是合法且默认的状态。
+ * 文件过大 → 抛错（响亮失败，不让 OOM 悄悄发生）。
  */
 export function readDlcLoad(dir: string): DlcLoadConfig {
   const full = join(dir, DLC_LOAD_FILE);
   if (!existsSync(full)) return emptyDlcLoad();
+  const stat = statSync(full);
+  if (stat.size > DLC_LOAD_MAX_BYTES) {
+    throw new Error(`dlc_load.json 过大（${stat.size} 字节，上限 ${DLC_LOAD_MAX_BYTES}）：${full}`);
+  }
   return parseDlcLoad(readFileSync(full, 'utf-8'), full);
 }

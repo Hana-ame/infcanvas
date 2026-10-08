@@ -52,16 +52,21 @@ export interface EventSeedDef {
    *    键不存在则静默跳过，不报错）；卸载纪律见 events.ts 文件头。
    *  - durationSec：效果持续时间（0/缺省=瞬时）；>0 的持续效果到点时做**反向效果**
    *    （简化实现：把持续效果建模成"到点时再做一次反向"）。
+   *
+   * 为了支持从 tuning.events.effects 读取数值（运行时才可用 ctx），effects 可为函数
+   * 接收 ctx 返回效果表对象。静态对象形态保留向后兼容。
    */
-  effects: {
-    log: string;
-    stock?: Record<string, number>;
-    stockMul?: Record<string, number>;
-    hpDelta?: number;
-    spawnPawn?: number;
-    tempShift?: number;
-    durationSec?: number;
-  };
+  effects: EventEffects | ((ctx: SimContext) => EventEffects);
+}
+
+export interface EventEffects {
+  log: string;
+  stock?: Record<string, number>;
+  stockMul?: Record<string, number>;
+  hpDelta?: number;
+  spawnPawn?: number;
+  tempShift?: number;
+  durationSec?: number;
 }
 
 type TuningOverride = (t: Tuning) => void;
@@ -113,6 +118,7 @@ export class ModRegistry {
     this.recipes.push(def);
   }
   registerEvent(def: EventSeedDef): void {
+    if (this.eventSeeds.some((e) => e.id === def.id)) throw new Error(`事件已存在：${def.id}`);
     this.eventSeeds.push(def);
   }
   registerPredicate(name: string, fn: (ctx: SimContext) => boolean): void {

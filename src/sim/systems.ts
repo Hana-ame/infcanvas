@@ -14,6 +14,7 @@ import { drawCard, touchMastery } from './cards';
 import type { CardDef } from './cards';
 import type { PawnState } from './types';
 import { tileChunkKey } from '../shared/chunks';
+import { K_STOCK_HERB } from '../mods/contracts';
 
 export type Category = 'needs' | 'ai' | 'society' | 'production' | 'raid' | 'world' | 'boot';
 
@@ -94,8 +95,29 @@ export function behaviorCtor(ctx: SimContext): GameSystem {
 function stepPawn(ctx: SimContext, p: PawnState, dt: number): void {
   // 到期（且不在玩家命令优先窗口内）→ 抽新卡
   if (ctx.time >= p.busyUntil && ctx.time >= p.holdUntil) {
+    // P2 #7：旧卡自然到期时释放草药预留（防资源泄漏——clearTarget 仅在 heal 内部条件满足时调用，
+    // 若目标未康复且卡自然到期，预留量会留在 scratch 永不归还 stockpile）
+    const herbKey = `medicine.herbReserved.${p.eid}`;
+    const reserved = ctx.scratch[herbKey];
+    if (reserved) {
+      ctx.scratch[herbKey] = 0;
+      ctx.stockpile[K_STOCK_HERB] = (ctx.stockpile[K_STOCK_HERB] ?? 0) + reserved;
+    }
     const card = drawCard(ctx, p) ?? FALLBACK_CARD;
     commit(ctx, p, card);
+    // 原子性预留：heal 卡抽中时预留草药，防并发超卖（P1 #4）
+    if (card.id === 'heal' && ctx.tuning.medicine?.healRequireHerb > 0) {
+      const cost = ctx.tuning.medicine.herbCost ?? 1;
+      // 预留整张卡时长所需草药（duration 秒 × 每秒 1 份）
+      const duration = card.duration ?? ctx.tuning.pawn.defaultCardSec;
+      const totalCost = cost * duration;
+      const herbs = (ctx.stockpile[K_STOCK_HERB] ?? 0);
+      if (herbs >= totalCost) {
+        ctx.stockpile[K_STOCK_HERB] = herbs - totalCost;
+        // 记录预留量，finishCard 时若未消费则释放
+        ctx.scratch[`medicine.herbReserved.${p.eid}`] = totalCost;
+      }
+    }
   }
   // 当前卡每 tick 执行（action 幂等：重复声明路径/结算安全）
   if (p.cardId !== null) {

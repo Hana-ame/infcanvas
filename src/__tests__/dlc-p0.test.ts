@@ -13,7 +13,7 @@
  * 组装/执行序是两层关注点；分文件后将来 P1（拆 DLC 内容包）能直接在这里扩。
  */
 import { describe, expect, it } from 'vitest';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Sim } from '../sim';
@@ -188,5 +188,46 @@ describe('DLC P0 · dlc_load.json 读取', () => {
     expect(() => parseDlcLoad('{"enabledDlc":"a"}', 'dlc_load.json')).toThrow(/必须是字符串数组/);
     expect(() => parseDlcLoad('{"enabledDlc":[""]}', 'dlc_load.json')).toThrow(/非法项/);
     expect(() => parseDlcLoad('{"base":1}', 'dlc_load.json')).toThrow(/base 必须是字符串/);
+  });
+
+  it('过大文件 → 抛错（防 OOM）', () => {
+    const dir = tmp();
+    try {
+      // 写一个 65 KiB 的文件（超过 64 KiB 限制）
+      const largeJson = JSON.stringify({
+        base: '2026.10',
+        enabledDlc: ['x'],
+        disabledDlc: [],
+        padding: 'x'.repeat(65 * 1024), // ~65 KiB
+      });
+      writeFileSync(join(dir, DLC_LOAD_FILE), largeJson);
+      expect(() => readDlcLoad(dir)).toThrow(/过大/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('完整管线：dlc_load.json → readDlcLoad → resolvePacks → mountPacks → hasDlc（真实路径，不经 fakeDlc 直挂）', () => {
+    const dir = tmp();
+    try {
+      // 写一份合法的 dlc_load.json
+      writeFileSync(
+        join(dir, DLC_LOAD_FILE),
+        JSON.stringify({ enabledDlc: ['fake-dlc'], disabledDlc: [] }),
+      );
+      // 真实管线：读文件 → 解析 → 按配置装配
+      const cfg = readDlcLoad(dir);
+      const table = { 'fake-dlc': fakeDlc };
+      const packs = resolvePacks(DEFAULT_PLAYSTYLE_PACKS, table, {
+        dlc: cfg.enabledDlc,
+        exclude: cfg.disabledDlc,
+      });
+      const reg = ModRegistry.mountPacks(packs);
+      const s = new Sim({ seed: 1, registry: reg });
+      expect(s.hasDlc('fake-dlc')).toBe(true);
+      expect(s.hasDlc('medicine')).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

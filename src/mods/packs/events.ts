@@ -26,7 +26,7 @@
  */
 import type { ModPack } from '../pack';
 import type { SimContext } from '../../sim/context';
-import type { EventSeedDef } from '../registry';
+import type { EventSeedDef, EventEffects } from '../registry';
 import { K_STOCK_FOOD, K_TAG_SHELTER, K_TAG_FIRE } from '../contracts';
 
 /** scratch 键（随档；键格式 "<包>.<名>" 见 context.ts 约定） */
@@ -72,10 +72,10 @@ export const eventsPack: ModPack = {
         if (!firstPawn) return false;
         return ctx.nearestFeature('berry', firstPawn.pos.x, firstPawn.pos.y, 60) !== null;
       },
-      effects: {
+      effects: (ctx: SimContext): EventEffects => ({
         log: '📦 丰收之年：浆果丛格外丰硕',
-        stock: { [K_STOCK_FOOD]: 20 },
-      },
+        stock: { [K_STOCK_FOOD]: ctx.tuning.events.effects.harvestStockDelta },
+      }),
     });
 
     // ---- 寒潮 coldsnap：无火堆 或 人多（≥阈值）→ 温度骤降（持续 60s）----
@@ -96,11 +96,11 @@ export const eventsPack: ModPack = {
         }
         return true; // 无火堆 → 直接触发（营地还没立起来就来了寒潮）
       },
-      effects: {
+      effects: (ctx: SimContext): EventEffects => ({
         log: '🥶 寒潮来袭',
-        tempShift: -12,
+        tempShift: ctx.tuning.events.effects.coldsnapTempShift,
         durationSec: 60,
-      },
+      }),
     });
 
     // ---- 瘟疫 plague：人多（≥阈值）→ 全体鼠 hp 下降 ----
@@ -113,10 +113,10 @@ export const eventsPack: ModPack = {
         for (const _ of ctx.pawns()) n++;
         return n >= t.plagueMinPawns;
       },
-      effects: {
+      effects: (ctx: SimContext): EventEffects => ({
         log: '⚠ 瘟疫在营地蔓延',
-        hpDelta: -10,
-      },
+        hpDelta: ctx.tuning.events.effects.plagueHpDelta,
+      }),
     });
 
     // ---- 流浪者 stranger：富余（food > 阈值）+ 有棚屋 → 新增 1 鼠 ----
@@ -132,10 +132,10 @@ export const eventsPack: ModPack = {
         }
         return false;
       },
-      effects: {
+      effects: (ctx: SimContext): EventEffects => ({
         log: '🐭 一个流浪者加入了营地',
-        spawnPawn: 1,
-      },
+        spawnPawn: ctx.tuning.events.effects.strangerSpawnPawn,
+      }),
     });
 
     // ---- 丰收节 festival：奢侈（food > 阈值）→ 分掉一部分食物（庆祝）----
@@ -149,10 +149,10 @@ export const eventsPack: ModPack = {
         const t = ctx.tuning.events.thresholds;
         return (ctx.stockpile[K_STOCK_FOOD] ?? 0) > t.festivalFoodAbove;
       },
-      effects: {
+      effects: (ctx: SimContext): EventEffects => ({
         log: '🎉 丰收节：大家分着吃',
-        stock: { [K_STOCK_FOOD]: 15 },
-      },
+        stock: { [K_STOCK_FOOD]: ctx.tuning.events.effects.festivalStockDelta },
+      }),
     });
 
     // ---- 丰饶雨季 fecund-season：雨天 + 粮食尚可 → 库存倍增（stockMul 首个消费者）----
@@ -180,10 +180,10 @@ export const eventsPack: ModPack = {
         // env 包在场时 env.rain 存在（0 或 1）；未挂载时 undefined → false
         return ctx.scratch[KEY_ENV_RAIN] === 1;
       },
-      effects: {
+      effects: (ctx: SimContext): EventEffects => ({
         log: '🌧️ 丰饶雨季：雨水让粮仓日渐充实',
-        stockMul: { [K_STOCK_FOOD]: 1.3 },
-      },
+        stockMul: { [K_STOCK_FOOD]: ctx.tuning.events.effects.fecundSeasonStockMul },
+      }),
     });
 
     // 全部注册进 registry（registry.eventSeeds 数组会持有引用，供未来的跨包消费者用）
@@ -227,9 +227,12 @@ export const eventsPack: ModPack = {
  *
  * 卸载纪律：tempShift 只在 env.temp 存在时生效（?? 判空，不报错）。
  * 其余效果走 ctx 单点出口（stockpile / damagePawn / spawnPawn），只要 Sim 存在就成立。
+ *
+ * effects 可以是静态对象或接收 ctx 返回效果表的函数（支持读 tuning.events.effects）。
  */
 function applyEffects(ctx: SimContext, seed: EventSeedDef): void {
-  const e = seed.effects;
+  // 支持 effects 为函数（运行时读 tuning）或静态对象（向后兼容）
+  const e = typeof seed.effects === 'function' ? seed.effects(ctx) : seed.effects;
   // log 是效果表的必有字段（哪怕其他效果都缺，log 也在）
   ctx.log(e.log);
 
@@ -306,7 +309,8 @@ function handleExpiry(ctx: SimContext, seeds: EventSeedDef[]): void {
       delete ctx.scratch[key];
       continue;
     }
-    const e = seed.effects;
+    // 支持 effects 为函数（运行时读 tuning）或静态对象（向后兼容）
+    const e = typeof seed.effects === 'function' ? seed.effects(ctx) : seed.effects;
     // 反向效果：只有 tempShift 有 durationSec，反向 = 修饰量归零方向回退
     if (e.tempShift !== undefined) {
       if (ctx.scratch[KEY_ENV_TEMP] !== undefined) {

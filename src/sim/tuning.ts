@@ -1060,6 +1060,14 @@ export const DEFAULT_TUNING: Tuning = {
       festivalFoodAbove: 80,  // 奢侈（>80）才庆祝
       fecundFoodAbove: 50,    // 粮食尚可（>50）+ 雨天 → 库存倍增（stockMul 首个消费者）
     },
+    effects: {
+      harvestStockDelta: 20,      // 丰收之年：固定增加 food
+      coldsnapTempShift: -12,     // 寒潮：温度偏移
+      plagueHpDelta: -10,         // 瘟疫：全体鼠 hp 下降
+      strangerSpawnPawn: 1,       // 流浪者：新增鼠数
+      fecundSeasonStockMul: 1.3,  // 丰饶雨季：库存乘数
+      festivalStockDelta: 15,     // 丰收节：固定增加 food
+    },
   },
   tiles: {
     // z 不在这里——每格独立 z 由分形海拔场量化（world.maxZ 控制上限）
