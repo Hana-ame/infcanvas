@@ -201,10 +201,16 @@ export const medicinePack: ModPack = {
 function wantHeal(p: PawnState, ctx: SimContext): boolean {
   const m = ctx.tuning.medicine;
   if (!hasWoundedNearby(p, ctx, m.healMagnetRadius)) return false;
-  // R1 审计 P1 #1：门检量必须与预留量对齐（herbCost × HEAL_DURATION）。
+  // R1 审计 P1 #1：门检量必须与预留量对齐（herbCost × duration）。
   // 改前只判 herbCost(1)，但 systems.ts 预留 totalCost(=8)，herbs=1~7 时
   // 门放行、预留静默失败 → heal() 每 tick return，卡空转至自然到期。
-  const totalCost = m.herbCost * HEAL_DURATION;
+  // R4 审计 P3 #3：读源统一到 card.duration（与 systems.tryReserveHerb 同一份数据），
+  // 改前本函数读模块常量 HEAL_DURATION、systems.ts 读 card.duration —— 两个 8 各自
+  // 硬编码，改一边漏一边 = "门放行但预留失败"缝隙（R3 P1#1 已修 stepPawn 的缺口，
+  // 但根因是读源分裂，这里从源头统一）。
+  const card = ctx.cardById('heal');
+  const duration = card?.duration ?? ctx.tuning.pawn.defaultCardSec;
+  const totalCost = m.herbCost * duration;
   if (m.healRequireHerb > 0 && (ctx.stockpile[K_STOCK_HERB] ?? 0) < totalCost) return false;
   return true;
 }
@@ -276,10 +282,13 @@ function resolveTarget(ctx: SimContext, p: PawnState): PawnState | undefined {
 function clearTarget(ctx: SimContext, p: PawnState): void {
   delete ctx.scratch[targetKey(p)];
   // 释放草药预留（如果有）
+  // R4 审计 P3 #2：改前 `ctx.scratch[herbKey] = 0`（键=0 永留 scratch 随档泄漏）；
+  // 改为 `delete` 与 releaseHerbReservation 对称——"删除而非置零"。
+  // R4 审计 P2 #1：`if (reserved)` → `if (reserved !== undefined)`，修 herbCost=0 死锁。
   const herbKey = `medicine.herbReserved.${p.eid}`;
   const reserved = ctx.scratch[herbKey];
-  if (reserved) {
-    ctx.scratch[herbKey] = 0;
+  if (reserved !== undefined) {
+    delete ctx.scratch[herbKey];
     ctx.stockpile[K_STOCK_HERB] = (ctx.stockpile[K_STOCK_HERB] ?? 0) + reserved;
   }
 }
@@ -328,9 +337,14 @@ function heal(p: PawnState, ctx: SimContext, dt: number): void {
   const need = m.herbCost * dt;
   const herbKey = `medicine.herbReserved.${p.eid}`;
   const reserved = ctx.scratch[herbKey];
-  if (reserved && reserved >= need) {
+  // R4 审计 P2 #1：改用 `!== undefined` 而非 truthiness。
+  // herbCost=0 时 totalCost=0 → tryReserveHerb 写 scratch=0；旧代码 `if (reserved)`
+  // 把 0 当 falsy → 落到 `else if (healRequireHerb > 0)` → return → **永久死锁**
+  // （seed57/200tick 净回血 0.000，比无预留更糟：卡占着位置却不干活）。
+  // `!== undefined` 正确区分"预留了 0 份"（键存在、值=0）与"没预留"（键不存在）。
+  if (reserved !== undefined && reserved >= need) {
     ctx.scratch[herbKey] = reserved - need; // 从预留扣
-  } else if (reserved) {
+  } else if (reserved !== undefined) {
     return; // 预留不足（异常：预留与消费不同步）：等下一拍
   } else if (m.healRequireHerb > 0) {
     return; // 该预留却没预留（异常）：不消耗，等下一拍

@@ -165,7 +165,10 @@ export function tryReserveHerb(ctx: SimContext, p: PawnState, card: CardDef): bo
 export function releaseHerbReservation(ctx: SimContext, eid: Eid): void {
   const key = `medicine.herbReserved.${eid}`;
   const reserved = ctx.scratch[key];
-  if (reserved) {
+  // R4 审计 P2 #1：改用 `!== undefined` 而非 truthiness——totalCost=0（herbCost=0）时
+  // 预留写 0，旧代码 `if (reserved)` 把 0 当 falsy 跳过 → 键永留 scratch 不归还（键残留，
+  // 虽不吞量但随档泄漏）。`!== undefined` 区分"键存在（值可以是 0）"与"键不存在"。
+  if (reserved !== undefined) {
     delete ctx.scratch[key];
     ctx.stockpile[K_STOCK_HERB] = (ctx.stockpile[K_STOCK_HERB] ?? 0) + reserved;
   }

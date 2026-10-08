@@ -442,8 +442,8 @@ describe('医疗包 medicine', () => {
     const mk = (drift: boolean) => {
       const s = new Sim({ seed: 40, registry: reg(SOLO), pawnCount: 3 });
       const m = s.tuning.medicine;
-      if (drift) s.cardById('heal')!.duration = 20; // 门仍判 8，预留要 20：只改一边
-      s.stockpile[K_STOCK_HERB] = m.herbCost * 8; // 8 份：wantHeal 判真
+      if (drift) s.cardById('heal')!.duration = 20; // R4 P3#3: unified read source
+      s.stockpile[K_STOCK_HERB] = m.herbCost * 8; // 8: enough for aligned, not for drift
       const ps = [...s.pawns()];
       ps[2].hp = 20;
       ps[2].holdUntil = 1e6;
@@ -451,7 +451,10 @@ describe('医疗包 medicine', () => {
       ps[0].pos = { x: 1, y: 0 };
       ps[1].pos = { x: 2, y: 0 };
       for (const p of ps) { p.path = []; p.holdUntil = 0; p.busyUntil = 0; }
-      expect(s.cardById('heal')!.condition!(ps[0], s), 'wantHeal 放行（库存=门检量）').toBe(true);
+      const wantCond = drift ? false : true;
+      expect(s.cardById('heal')!.condition!(ps[0], s),
+        drift ? 'drift: wantHeal blocks (unified source)' : 'aligned: wantHeal passes')
+        .toBe(wantCond);
       let healTicks = 0;
       let unreserved = 0;
       for (let t = 0; t < 120; t++) {
@@ -469,11 +472,11 @@ describe('医疗包 medicine', () => {
     const aligned = mk(false);
     expect(aligned.healTicks, '门/预留对齐时 heal 应真的被抽上').toBeGreaterThan(0);
     expect(aligned.unreserved).toBe(0);
-    // 漂移：门放行但预留不足 → 必须降级为不派卡，绝不留一张没预留的 heal 空转
+    // R4 P3#3: drift eliminated - wantHeal and tryReserveHerb both read card.duration
     const drift = mk(true);
-    expect(drift.unreserved, '不该留下无预留的 heal 卡（改前 100% 都是这样）').toBe(0);
-    expect(drift.healTicks, '预留不足时应降级为不派卡，而不是留下空转卡').toBe(0);
-    expect(drift.s.stockpile[K_STOCK_HERB], '预留失败不该扣草药').toBe(drift.s.tuning.medicine.herbCost * 8);
+    expect(drift.unreserved, 'no unreserved heals').toBe(0);
+    expect(drift.healTicks, 'wantHeal blocks (unified source), no heals drawn').toBe(0);
+    expect(drift.s.stockpile[K_STOCK_HERB], 'no herbs consumed').toBe(drift.s.tuning.medicine.herbCost * 8);
   });
 
   /**
@@ -551,5 +554,99 @@ describe('医疗包 medicine', () => {
     expect(b.hp, '无料时只有自然恢复，不会凭空回血')
       .toBeCloseTo(hp0 + s.tuning.medicine.naturalHealPerSec * 8, 5);
     expect(s.stockpile[K_STOCK_HERB] ?? 0, '无料时不该扣出负数库存').toBe(0);
+  });
+
+  /**
+   * R4 审计 P2 #1：herbCost=0 时 tryReserveHerb 写 scratch=0（falsy），
+   * heal() 旧代码 `if (reserved)` 把 0 当"无预留" → 落到
+   * `else if (healRequireHerb > 0)` → return → **永久空转霸池**。
+   * 实测 seed57/200tick 净回血 0.000——比无预留更糟（卡占着位置却不干活）。
+   * 改用 `reserved !== undefined` 后，0 被视为有效预留（need=0, 0>=0 成立），
+   * heal() 正常扣减（0-0=0）并回血。
+   */
+  it('R4 P2#1：herbCost=0 时预留不致死锁（reserved=0 仍视为有效预留）', () => {
+    const r = ModRegistry.mountPacks(SOLO);
+    r.overrideTuning((t) => { t.medicine.herbCost = 0; });
+    const s = new Sim({ seed: 44, registry: r, pawnCount: 2 });
+    const [a, b] = setupPair(s, 1);
+    b.hp = 20;
+    s.stockpile[K_STOCK_HERB] = 10; // 有料但 herbCost=0 实际不消耗
+    s.debugForceCard(a.eid, 'heal');
+    // tryReserveHerb 应写入 scratch=0（reservation of 0 herbs, but key exists）
+    expect(s.scratch[`medicine.herbReserved.${a.eid}`],
+      'herbCost=0 时预留应写入 0（键存在，值=0）').toBe(0);
+    // 预留不实际扣减库存（totalCost=0）
+    expect(s.stockpile[K_STOCK_HERB], 'herbCost=0 时预留不扣库存').toBe(10);
+
+    const hp0 = b.hp;
+    s.run(5);
+    const m = s.tuning.medicine;
+    const naturalGain = m.naturalHealPerSec * 5;
+    // 改前：reserved=0 是 falsy → heal() return → 只拿自然恢复
+    // 改后：reserved=0 是 "!== undefined" → 0>=0 成立 → 正常回血
+    expect(b.hp - hp0 - naturalGain,
+      'herbCost=0 时 heal 应能照常回血（改前永远死锁，净回血=0）')
+      .toBeGreaterThan(0);
+  });
+
+  /**
+   * R4 审计 P3 #2：clearTarget 旧代码 `ctx.scratch[herbKey] = 0`（键=0 永留 scratch），
+   * releaseHerbReservation 是 `delete`。两处不对称 → 键=0 随档泄漏。
+   * 改用 `delete` 后与 releaseHerbReservation 对称——"删除而非置零"。
+   */
+  it('R4 P3#2：clearTarget 删除预留键（不置 0 留残键随档）', () => {
+    const s = new Sim({ seed: 45, registry: reg(SOLO), pawnCount: 2 });
+    const [a, b] = setupPair(s, 1);
+    b.hp = 99; // 接近满血：heal 一次即 finishCard
+    s.scratch[`medicine.target.${a.eid}`] = b.eid; // 手动设目标（99>70 不满足重伤判定）
+    s.stockpile[K_STOCK_HERB] = 50;
+    s.debugForceCard(a.eid, 'heal');
+    const herbKey = `medicine.herbReserved.${a.eid}`;
+    expect(s.scratch[herbKey], '预留键应存在').toBeDefined();
+    expect(s.scratch[herbKey]!, '预留量应 > 0').toBeGreaterThan(0);
+    // heal 一次 → b 到满血 → finishCard → clearTarget
+    s.step(1);
+    expect(b.hp, 'b 应已被抬到满血').toBe(b.maxHp);
+    expect(s.scratch[herbKey],
+      'finishCard 后预留键应被 delete（改前是 =0 永留）').toBeUndefined();
+    // 预留量应已归还库存
+    const reserved = s.tuning.medicine.herbCost * (s.cardById('heal')!.duration ?? s.tuning.pawn.defaultCardSec);
+    const consumed = s.tuning.medicine.herbCost * 1; // 1 秒消耗
+    expect(s.stockpile[K_STOCK_HERB], '预留量应已归还（扣除已消耗的）')
+      .toBeCloseTo(50 - consumed, 5);
+  });
+
+  /**
+   * R4 审计 P3 #3：wantHeal 旧代码读模块常量 HEAL_DURATION，
+   * systems.tryReserveHerb 读 card.duration —— 两个 8 各自硬编码。
+   * 改一边漏一边 = "门放行但预留失败"缝隙（R3 P1#1 的根因）。
+   * 统一到 card.duration 后，改卡时长只需改一处（卡定义），门/预留自动同步。
+   */
+  it('R4 P3#3：wantHeal 读源与 tryReserveHerb 一致（card.duration，非硬编码常量）', () => {
+    const s = new Sim({ seed: 46, registry: reg(SOLO), pawnCount: 2 });
+    const [a, b] = setupPair(s, 1);
+    b.hp = 20;
+    const m = s.tuning.medicine;
+    const cond = s.cardById('heal')!.condition!;
+    // 卡定义 duration=8，总成本 = herbCost(1) × 8 = 8
+    const totalCost = m.herbCost * (s.cardById('heal')!.duration ?? s.tuning.pawn.defaultCardSec);
+    // herbs=7 → 门不放行
+    s.stockpile[K_STOCK_HERB] = totalCost - 1;
+    expect(cond(a, s), 'herbs<totalCost 时 wantHeal 应为 false').toBe(false);
+    // herbs=8 → 门放行
+    s.stockpile[K_STOCK_HERB] = totalCost;
+    expect(cond(a, s), 'herbs=totalCost 时 wantHeal 应为 true').toBe(true);
+    // 改卡时长为 10 → 门检量自动跟着变（改前读常量 8，预留读 10 → 门放行但预留失败）
+    s.cardById('heal')!.duration = 10;
+    const newTotalCost = m.herbCost * 10;
+    s.stockpile[K_STOCK_HERB] = totalCost; // 8 份：旧常量下够、新卡时长下不够
+    expect(cond(a, s), '卡时长改为 10 后门检应自动同步（8<10 不放行）').toBe(false);
+    s.stockpile[K_STOCK_HERB] = newTotalCost; // 10 份：刚好够
+    expect(cond(a, s), '库存=新总成本时门应放行').toBe(true);
+    // 预留也应判同一份卡时长（10）
+    expect(s.debugForceCard(a.eid, 'heal'), '预留应判新卡时长（10）').toBe(true);
+    expect(s.stockpile[K_STOCK_HERB], '预留量应为 10 份').toBe(0);
+    expect(s.scratch[`medicine.herbReserved.${a.eid}`], '预留量应=10')
+      .toBe(newTotalCost);
   });
 });
