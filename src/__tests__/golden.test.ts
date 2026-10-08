@@ -313,6 +313,13 @@ const SCENARIOS = [
   */
 
 const GOLDEN: Record<string, string> = {
+  // ⚠ 第 22 次换血（R3 审计 P1#1+P1#2：heal 预留按秒量纲 + 失败降级不派卡）：
+  //   改前 heal 的预留是 herbCost×duration（秒）、消费是「每 tick 1 份」——生产 step(0.25)
+  //   下 8 秒卡期 = 32 tick，预留 8 份只够前 8 tick，其余 24 tick 空转，卡期回血覆盖率
+  //   只有 25%。改成 herbCost×dt 后 8 份正好覆盖 8 秒，覆盖率回到 ~97%。heal 的实际生效
+  //   时长被拉长，伤员康复时刻与后续抽卡/事件时序整条平移，三个 seed 全变：
+  //     42: fp_557aa1bc → fp_cc302d2f ｜ 7: fp_24bc2f7c → fp_ee09f7b8
+  //     2026: fp_6c0c44a0 → fp_122ecc8d
   // ⚠ 第 21 次换血（Round 57，healRequireHerb 闸）：heal 的 condition 新增「库存
   //   草药 ≥ herbCost」硬闸，修掉 condition 不判自己原料的不纯（对照 build_bed 判木料）。
   //   12 seed×900 tick A/B：卡回血 231→236hp（+2%，医疗未牺牲）、木料 305→848（+178%）、
@@ -320,9 +327,9 @@ const GOLDEN: Record<string, string> = {
   //   +284 / gather_berry +252 / cook +160 / sow_field +166。这是**行为**变更，指纹必变；
   //   同批三个 seed 全部重算（42 dc5d01ea→557aa1bc、7 cbe944db→24bc2f7c、
   //   2026 f3788afa→6c0c44a0），无一保持不变。
-  '42@900': 'fp_557aa1bc',
-  '7@900': 'fp_24bc2f7c',
-  '2026@900': 'fp_6c0c44a0',
+  '42@900': 'fp_cc302d2f',
+  '7@900': 'fp_ee09f7b8',
+  '2026@900': 'fp_122ecc8d',
 };
 
 /** 跑一个场景：固定 seed 跑固定 tick 数，返回指纹（不存档直跑）。 */

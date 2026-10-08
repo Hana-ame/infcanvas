@@ -14,11 +14,11 @@ import { World } from './world';
 import { findPath, planRoute } from './pathfinding';
 import type { SimContext, CardWeightHook } from './context';
 import type { CardDef } from './cards';
-import { behaviorCtor, commit, type GameSystem } from './systems';
+import { behaviorCtor, commit, releaseHerbReservation, tryReserveHerb, type GameSystem } from './systems';
 import type { BuildingState, Eid, FeatureHit, Hostile, LogEvent, PawnState, Pos } from './types';
 import type { SaveData } from './sim-save';
 import type { ModRegistry } from '../mods/registry';
-import { K_TAG_WAYPOINT, K_STOCK_HERB } from '../mods/contracts';
+import { K_TAG_WAYPOINT } from '../mods/contracts';
 
 export interface SimConfig {
   seed?: number;
@@ -144,6 +144,19 @@ export class Sim implements SimContext {
   killPawn(eid: Eid, cause: string): void {
     const p = this.pawnMap.get(eid);
     if (!p) return;
+    // R3 审计 P2 #3：死亡也要释放预留——killPawn 不走 finishCard/clearTarget（卡没到期就被打死），
+    // 预留量会一直挂在 scratch 上，永不归还 stockpile。与"卡自然到期"（P2 #7）是同一类
+    // 泄漏，只是触发点在死亡；两个释放点共用同一个 helper，键语义只有一处实现。
+    releaseHerbReservation(this, eid);
+    // 别的鼠身上指向这只鼠的照料目标键一并清掉。medicine.resolveTarget 会懒清（hp<=0 时删键），
+    // 但那要到它下一次 action 才发生；提前清掉省一次陈旧键读取，也让存档不带死链。
+    // 两半：① 它自己的目标键（值 = 别人）；② 别人指向它的键（值 = 它自己）。
+    // ⚠ ② 只清"目标是鼠"的键：scratch 里 factions.name.<建筑id> 也存数字，裸判 `v === eid`
+    // 会误删建筑名映射（建筑 id 与鼠 eid 都从 1 起，是真实碰撞）。
+    delete this.scratch[`medicine.target.${eid}`];
+    for (const [k, v] of Object.entries(this.scratch)) {
+      if (v === eid && k.startsWith('medicine.target.')) delete this.scratch[k];
+    }
     this.pawnMap.delete(eid);
     this.selected = this.selected.filter((s) => s !== eid);
     this.log(`💀 ${p.name} 死亡（${cause}）`);
@@ -588,18 +601,15 @@ export class Sim implements SimContext {
     const card = this.reg.cardById(cardId);
     const p = this.pawnMap.get(eid);
     if (!card || !p) return false;
+    // 强制换卡前先清旧预留：debugForceCard 是唯一绕过 stepPawn 到期释放的入口，不清的话
+    // "旧卡预留 + 新卡预留"会叠加，新卡一释放就把旧卡的钱一起退回去（等于白退一次）。
+    releaseHerbReservation(this, p.eid);
     // R1 审计 P1 #2：预留不足时**不指派**——改前 commit 先于预留检查，
     // herbs < totalCost 时卡已指派但预留静默失败 → 原地发呆至 duration 到期。
     // 改为预留优先：预留不足则直接返回 false，不污染 cardId/busyUntil。
-    if (card.id === 'heal' && this.tuning.medicine?.healRequireHerb > 0) {
-      const cost = this.tuning.medicine.herbCost ?? 1;
-      const duration = card.duration ?? this.tuning.pawn.defaultCardSec;
-      const totalCost = cost * duration;
-      const herbs = (this.stockpile[K_STOCK_HERB] ?? 0);
-      if (herbs < totalCost) return false; // 预留不足：不指派
-      this.stockpile[K_STOCK_HERB] = herbs - totalCost;
-      this.scratch[`medicine.herbReserved.${p.eid}`] = totalCost;
-    }
+    // R3 审计 P1 #1：判定逻辑抽成 systems.tryReserveHerb，与真实抽卡路径共用同一份实现
+    // （改前两条抽卡面各写一份，stepPawn 那份失败时静默、这份失败时返回 false，语义分叉）。
+    if (!tryReserveHerb(this, p, card)) return false;
     p.cardId = null;
     p.busyUntil = this.time;
     commit(this, p, card);

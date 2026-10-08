@@ -187,6 +187,15 @@ describe('医疗包 medicine', () => {
     const [a2, b2] = setupPair(s2, 1);
     b2.hp = 20;
     expect(s2.cardById('heal')!.condition!(a2, s2), '闸关后回到旧语义').toBe(true);
+    // R3 审计 P2 #4：上面只断言 condition 返回 true 是**假绿**——抽得到不等于活得成。
+    // 闸关时内核不写预留，heal() 必须退回直接扣库存；改前 heal() 只认 scratch 预留，
+    // 于是"闸关 + 有料"反而永远回不了血（反向死锁，比"闸开 + 无料"的空转更糟）。
+    s2.stockpile[K_STOCK_HERB] = 50;
+    s2.debugForceCard(a2.eid, 'heal');
+    const hp2 = b2.hp;
+    for (let i = 0; i < 3; i++) s2.step(1);
+    expect(b2.hp - hp2 - s2.tuning.medicine.naturalHealPerSec * 3,
+      '闸关+有料必须照常照料回血（改前永远空转）').toBeCloseTo(s2.tuning.medicine.healPerSec * 3, 3);
   });
 
   it('病榻倍率：病人身边有床时回血速率 = healPerSec × bedBonus（与无床对照）', () => {
@@ -414,5 +423,133 @@ describe('医疗包 medicine', () => {
     expect(a.cardId, '预留成功时应该指派 heal 卡').toBe('heal');
     expect(s.stockpile[K_STOCK_HERB], '预留成功时应该扣减草药').toBe(0);
     expect(s.scratch[`medicine.herbReserved.${a.eid}`], '预留成功时应该写入预留').toBe(totalCost);
+  });
+
+  /**
+   * R3 审计 P1 #1：真抽卡面（systems.stepPawn）的预留失败必须**降级为不派卡**。
+   *
+   * 复现点是一条真实存在的缝隙：wantHeal 的原料门判 `herbCost × HEAL_DURATION`
+   * （medicine.ts 的模块常量 8），而预留判 `herbCost × card.duration` —— 两个 8 各自硬编码，
+   * 谁只改一边就出现"门放行、预留失败"。改前 stepPawn 只有成功分支没有 else：卡已 commit、
+   * 预留静默失败，heal() 每 tick 因"无预留"直接 return，整张卡期原地空转到自然到期。
+   * 而 debugForceCard 那边（R2 修的）是"预留不足返回 false 不指派"—— 两条抽卡路径语义相反。
+   *
+   * 改前实测（本夹具 seed 40 跑 400 tick）：719 次 heal 全部无预留（100% 空转），
+   * 伤员只拿到自然恢复；改后 0 次无预留卡、库存一分未动。断言走**真实抽卡路径**
+   * （stepPawn → drawCard → wantHeal → commit），不绕过引擎。
+   */
+  it('R3 P1#1：真抽卡面预留失败降级为不派卡（不再静默失败后空转）', () => {
+    const mk = (drift: boolean) => {
+      const s = new Sim({ seed: 40, registry: reg(SOLO), pawnCount: 3 });
+      const m = s.tuning.medicine;
+      if (drift) s.cardById('heal')!.duration = 20; // 门仍判 8，预留要 20：只改一边
+      s.stockpile[K_STOCK_HERB] = m.herbCost * 8; // 8 份：wantHeal 判真
+      const ps = [...s.pawns()];
+      ps[2].hp = 20;
+      ps[2].holdUntil = 1e6;
+      ps[2].pos = { x: 0, y: 0 };
+      ps[0].pos = { x: 1, y: 0 };
+      ps[1].pos = { x: 2, y: 0 };
+      for (const p of ps) { p.path = []; p.holdUntil = 0; p.busyUntil = 0; }
+      expect(s.cardById('heal')!.condition!(ps[0], s), 'wantHeal 放行（库存=门检量）').toBe(true);
+      let healTicks = 0;
+      let unreserved = 0;
+      for (let t = 0; t < 120; t++) {
+        s.step(1);
+        for (const p of s.pawns()) {
+          if (p.cardId === 'heal') {
+            healTicks++;
+            if (!s.scratch[`medicine.herbReserved.${p.eid}`]) unreserved++;
+          }
+        }
+      }
+      return { s, healTicks, unreserved };
+    };
+    // 对照：量纲对齐时 heal 确实抽得上且带着预留（证明这个夹具真的能抽到 heal）
+    const aligned = mk(false);
+    expect(aligned.healTicks, '门/预留对齐时 heal 应真的被抽上').toBeGreaterThan(0);
+    expect(aligned.unreserved).toBe(0);
+    // 漂移：门放行但预留不足 → 必须降级为不派卡，绝不留一张没预留的 heal 空转
+    const drift = mk(true);
+    expect(drift.unreserved, '不该留下无预留的 heal 卡（改前 100% 都是这样）').toBe(0);
+    expect(drift.healTicks, '预留不足时应降级为不派卡，而不是留下空转卡').toBe(0);
+    expect(drift.s.stockpile[K_STOCK_HERB], '预留失败不该扣草药').toBe(drift.s.tuning.medicine.herbCost * 8);
+  });
+
+  /**
+   * R3 审计 P1 #2：预留是「秒」量纲，heal() 的消费曾经是「每 tick 一份」——
+   * 生产走 step(0.25)（client/main.ts）时 8 秒卡期 = 32 tick，预留的 8 份只够 8 tick，
+   * 其余 24 tick 因"无预留"直接 return，整卡 75% 空转、只回 25% 的血。
+   * 改成 herbCost × dt 后 8 份正好覆盖 8 秒；测试走的 step(1) 行为与改前等价。
+   */
+  it('R3 P1#2：按秒消费与 step(0.25) 对齐——半卡期只花一半预留，卡期回血覆盖率 ≈100%', () => {
+    const s = new Sim({ seed: 41, registry: reg(SOLO), pawnCount: 2 });
+    const [a, b] = setupPair(s, 1);
+    b.hp = 20;
+    const m = s.tuning.medicine;
+    const dur = s.cardById('heal')!.duration ?? s.tuning.pawn.defaultCardSec;
+    const total = m.herbCost * dur;
+    const dt = 0.25; // 生产步进：client/main.ts 的 sim.step(0.25)
+    const herbKey = `medicine.herbReserved.${a.eid}`;
+    s.stockpile[K_STOCK_HERB] = total;
+    s.debugForceCard(a.eid, 'heal');
+    expect(s.stockpile[K_STOCK_HERB]).toBe(0);
+    expect(s.scratch[herbKey]).toBe(total);
+    const hp0 = b.hp;
+    // 半卡期（4 秒 = 16 tick）：按秒扣应只花掉一半
+    for (let i = 0; i < 16; i++) s.step(dt);
+    expect(s.scratch[herbKey],
+      '4 秒应花掉 4 份；改前按 tick 每 tick 1 份 → 16 份早就扣空（reserved=0）')
+      .toBeCloseTo(total / 2, 5);
+    // 跑满整张卡期：回血覆盖率应接近 100%（改前只有 25%）
+    for (let i = 0; i < 16; i++) s.step(dt);
+    const care = b.hp - hp0 - m.naturalHealPerSec * dur;
+    expect(care / (m.healPerSec * dur), '卡期回血覆盖率（改前 0.25）').toBeGreaterThan(0.9);
+  });
+
+  /**
+   * R3 审计 P2 #3：killPawn 不走 finishCard/clearTarget（卡没到期就被打死），
+   * 预留量会一直挂在 scratch 上永不归还 stockpile；指向死鼠的照料目标键也不会被清。
+   */
+  it('R3 P2#3：鼠死亡时释放自己的预留，并清掉指向它的照料目标键', () => {
+    const s = new Sim({ seed: 42, registry: reg(SOLO), pawnCount: 3 });
+    const [a, b] = setupPair(s, 1);
+    b.hp = 20;
+    s.stockpile[K_STOCK_HERB] = 50;
+    s.debugForceCard(a.eid, 'heal');
+    const reserved = s.tuning.medicine.herbCost * (s.cardById('heal')!.duration ?? s.tuning.pawn.defaultCardSec);
+    expect(s.stockpile[K_STOCK_HERB], '预留应已扣出库存').toBe(50 - reserved);
+    // a 正记着要照顾 b；第三只鼠 c 正记着要照顾 a；另有一条存数字但不是鼠目标的键
+    s.scratch[`medicine.target.${a.eid}`] = b.eid;
+    const c = [...s.pawns()][2];
+    s.scratch[`medicine.target.${c.eid}`] = a.eid;
+    s.scratch['factions.name.3'] = a.eid;
+    s.killPawn(a.eid, '测试击杀');
+    expect(s.stockpile[K_STOCK_HERB], '死亡不该吞掉预留，剩余量要回库存').toBe(50);
+    expect(s.scratch[`medicine.target.${a.eid}`], '死鼠自己的目标键要清掉').toBeUndefined();
+    expect(s.scratch[`medicine.target.${c.eid}`], '指向死鼠的照料目标键要一并清掉').toBeUndefined();
+    expect(s.scratch['factions.name.3'], '存数字但不是鼠目标的键不该被误删').toBe(a.eid);
+  });
+
+  /**
+   * R3 审计 P2 #4 组合：闸关（healRequireHerb=0）+ 无料。
+   * 闸关时内核不写预留，改前 heal() 只认 scratch → 连"有料"都回不了血（反向死锁）；
+   * 无料时旧语义是"留着等料"，不该崩也不该凭空回血。
+   */
+  it('R3 P2#4：闸关+无料不崩也不凭空回血（只拿自然恢复）', () => {
+    const r = ModRegistry.mountPacks(SOLO);
+    r.overrideTuning((t) => { t.medicine.healRequireHerb = 0; });
+    const s = new Sim({ seed: 43, registry: r, pawnCount: 2 });
+    const [a, b] = setupPair(s, 1);
+    b.hp = 20;
+    expect(s.stockpile[K_STOCK_HERB] ?? 0, '夹具默认无料').toBe(0);
+    expect(s.cardById('heal')!.condition!(a, s), '闸关后无料也放行').toBe(true);
+    expect(s.debugForceCard(a.eid, 'heal'), '不该写预留时仍应能派卡').toBe(true);
+    expect(s.scratch[`medicine.herbReserved.${a.eid}`], '闸关时不该写预留').toBeUndefined();
+    const hp0 = b.hp;
+    expect(() => { for (let i = 0; i < 8; i++) s.step(1); }, '闸关+无料跑满卡期不该抛').not.toThrow();
+    expect(b.hp, '无料时只有自然恢复，不会凭空回血')
+      .toBeCloseTo(hp0 + s.tuning.medicine.naturalHealPerSec * 8, 5);
+    expect(s.stockpile[K_STOCK_HERB] ?? 0, '无料时不该扣出负数库存').toBe(0);
   });
 });

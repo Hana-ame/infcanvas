@@ -319,11 +319,30 @@ function heal(p: PawnState, ctx: SimContext, dt: number): void {
     return; // 路上，引擎 moveStep 推进
   }
   p.path = []; // 停到伤员身旁别乱走
-  // ---- 到身旁了：消耗预留的草药（每 tick 1 份 herbCost）----
+  // ---- 到身旁了：按**秒**扣这一拍的草药费，扣不动就等下一拍（不 finishCard，见区块头注释）----
+  // R3 审计 P1 #2（量纲失配）：改前"每 tick 扣 1 份 herbCost"，而预留是 herbCost × duration **秒**
+  // ——生产走 step(0.25)（client/main.ts）时 8 秒卡期 = 32 tick，预留的 8 份只够 8 tick，
+  // 其余 24 tick 因"无预留"直接 return，整卡 75% 空转（回血只出 25%）。
+  // 改成 herbCost × dt 后，预留 8 份正好覆盖 8 秒（32 × 0.25 = 8），与 wantHeal 的原料门
+  // （herbCost × HEAL_DURATION）同一量纲，卡期被完整利用；测试走 step(1) 时行为与改前等价。
+  const need = m.herbCost * dt;
   const herbKey = `medicine.herbReserved.${p.eid}`;
   const reserved = ctx.scratch[herbKey];
-  if (!reserved || reserved < m.herbCost) return; // 没预留或不足（异常情况）：等下一 tick
-  ctx.scratch[herbKey] = reserved - m.herbCost; // 消费 1 tick 的预留
+  if (reserved && reserved >= need) {
+    ctx.scratch[herbKey] = reserved - need; // 从预留扣
+  } else if (reserved) {
+    return; // 预留不足（异常：预留与消费不同步）：等下一拍
+  } else if (m.healRequireHerb > 0) {
+    return; // 该预留却没预留（异常）：不消耗，等下一拍
+  } else {
+    // R3 审计 P2 #4（反向死锁）：原料闸关掉（healRequireHerb=0）时**不会写预留**，
+    // 改前这里只认 scratch → 关闸后这张卡抽得到却永远扣不动、永远回不了血
+    // （"无料时抽到必然空转"被放大成"有料也必然空转"，比开闸更糟）。
+    // 退回 Round 57 之前的旧语义：直接扣库存。真没钱照样 return 等下一拍（区块头注释的理由）。
+    const herbs = ctx.stockpile[K_STOCK_HERB] ?? 0;
+    if (herbs < need) return;
+    ctx.stockpile[K_STOCK_HERB] = herbs - need;
+  }
   // 病榻旁：以**病人**位置判「在床旁」（床位是给病人的，语义锚点是病人，不是照料者）
   const bed = ctx.nearestBuildingByTag(K_TAG_BED, target.pos.x, target.pos.y, m.bedWorkRadius);
   const mult = bed ? m.bedBonus : 1;

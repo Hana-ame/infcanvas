@@ -305,7 +305,10 @@ export interface Tuning {
     bedBonus: number;
     /** 「在病榻旁」的判定半径：病人距病榻这么近就算有床位加成（以病人位置为锚点） */
     bedWorkRadius: number;
-    /** 每次照料 tick 消耗的草药数（份/次照料，不是每秒——每 tick 动手一次就扣一次） */
+    /** 照料每秒消耗的草药数（份/秒）。R3 审计 P1 #2 起按秒扣（herbCost × dt）而非按 tick：
+     *  预留量是 herbCost × duration（秒），而生产按 step(0.25) 推进（client/main.ts）——
+     *  若每 tick 扣 1 份，8 秒卡期 = 32 tick，预留的 8 份只够前 8 tick，其余 24 tick
+     *  因"无预留"直接 return，整卡 75% 空转。按秒扣后 8 份正好覆盖 8 秒，量纲自洽。 */
     herbCost: number;
     /** 照料到位半径（「伸手可及」）：走到伤员这么近才真的开始照料。
      *  与 healMagnetRadius 是**两个量**，不可复用同一个数——
@@ -318,12 +321,17 @@ export interface Tuning {
     naturalHealPerSec: number;
     /** 磁铁半径内有重伤同伴时 SER_HEAL 系列的权重乘数（"为什么去照料"的唯一实现处） */
     healWeightWounded: number;
-    /** heal 卡是否要求「库存草药 ≥ herbCost」才进候选池（默认 1 = 要求）。
+    /** heal 卡是否要求「库存草药 ≥ herbCost × 卡时长」才进候选池（默认 1 = 要求）。
+     *  门检量必须与 systems.tryReserveHerb 的预留量同量纲（R1 审计 P1 #1 的根因就是
+     *  门判 herbCost(1)、预留要 herbCost×duration(8)，herbs=1~7 时门放行、预留失败）。
      *  ⚠ Round 57 A/B 定案项：无料时这张卡抽中后必然空转（`heal()` 直接 return），
      *  condition 不判它自己的原料 = 抽卡硬闸不纯（对照 wantNewBed / wantNewField
      *  都先判木料）。本闸与 `heal()` 第 4 步「没料不 finishCard、留着等料」原方向
      *  相反，故默认开是有代价的；12 seed×900 tick 实测代价与收益均已在
-     *  medicine.ts 的 wantHeal 注释里记明（医疗未牺牲、木料 +178%）。 */
+     *  medicine.ts 的 wantHeal 注释里记明（医疗未牺牲、木料 +178%）。
+     *  ⚠ 关闸（=0）不是"免费回血"：此时不写预留，heal() 退回直接扣库存（Round 57 之前
+     *  的旧语义）——有料照常回血、无料才空转。R3 审计 P2 #4 修的就是"关闸后连有料
+     *  也回不了血"的反向死锁。 */
     healRequireHerb: number;
     /** 自己重伤时 SER_REST 系列的权重乘数（想躺下歇着，不是去送死）。
      *  为什么进 tuning 而不是写死包内：它是权重乘数（可 A/B 的玩法量），
@@ -842,7 +850,7 @@ export const DEFAULT_TUNING: Tuning = {
     healPerSec: 2.0,         // 无病榻时每秒回 2 点；×duration 8s ≈ 满卡回 16 点
     bedBonus: 2.0,           // 病榻旁照料效率翻倍：4 hp/s
     bedWorkRadius: 4,        // 病人距病榻 ≤4 格算"在病榻旁"
-    herbCost: 1,             // 每次照料 tick 扣 1 份草药
+    herbCost: 1,             // 每秒照料 1 份草药（×dt 扣；与"预留 = herbCost × duration 秒"同量纲）
     healWorkRadius: 2.5,     // 到位半径（伸手可及），与 needs 的 FIRE_SIDE_R 同量
     healMagnetRadius: 24,    // 磁铁半径：与 sleepMagnetRadius / newFireRadius 同锚点
     naturalHealPerSec: 0.05, // 自然恢复：每 100s 回 5 点，慢但不停（防"永久停血"死状态）
