@@ -16,7 +16,7 @@ import type { SimContext, CardWeightHook } from './context';
 import type { CardDef } from './cards';
 import { behaviorCtor, commit, releaseHerbReservation, tryReserveHerb, type GameSystem } from './systems';
 import type { BuildingState, Eid, FeatureHit, Hostile, LogEvent, PawnState, Pos } from './types';
-import type { SaveData } from './sim-save';
+import type { SaveData } from './schema';
 import type { ModRegistry } from '../mods/registry';
 import { K_TAG_WAYPOINT } from '../mods/contracts';
 
