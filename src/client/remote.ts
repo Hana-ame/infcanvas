@@ -19,7 +19,8 @@
 import { World } from '../sim/world';
 import type { BuildingState, Eid, Hostile, LogEvent, PawnState, Pos } from '../sim/types';
 import { DEFAULT_TUNING, type Tuning } from '../sim/tuning';
-import { TERRAIN_NAME, type TileInspect, type WorldView } from './view';
+import type { TileInspect, WorldView } from './view';
+import { TERRAIN_NAME } from './presentation';
 import { buildBuildingDetail, buildColonySummary, buildHostileDetail, buildPawnDetail } from './hud-faces';
 import { K_TAG_FIRE } from '../mods/contracts';
 import type { ClientMsg, FullState, ServerMsg } from '../shared/protocol';

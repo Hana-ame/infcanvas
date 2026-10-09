@@ -4,6 +4,11 @@
  * 为什么：本地模式直接读 Sim，联机模式读"服务端快照合入层"（RemoteSim）——
  * 两者必须对渲染/HUD 长同一张脸，render/hud 才能零分支复用（技术规格：双端复用）。
  * 视图是**只读快照**：渲染层不持任何逻辑状态（原则：色值等表现数据归本层，逻辑层数据归 sim）。
+ *
+ * 本文件只放**契约**：WorldView 接口 + 展示模型（ColonySummary / PawnDetail /
+ * BuildingDetail / HostileDetail / TechProgressRow / TileInspect / HudSlot）。
+ * 表现数据表（CARD_LABEL / TRAIT_COLOR / TERRAIN_NAME / cardLabel）在 ./presentation.ts——
+ * 契约与"画成什么样"分文件，新增卡片图标不必改接口文件（2026-10-08 hud 维度拆分）。
  */
 import type { BuildingState, Hostile, LogEvent, PawnState } from '../sim/types';
 import type { BuildingTuningEntry, Tuning } from '../sim/tuning';
@@ -168,60 +173,4 @@ export interface TileInspect {
   treeCanopy: boolean;
   feature: { kind: 'tree' | 'berry'; amount: number; label: string } | null;
   buildingName: string | null;
-}
-
-/** 卡牌 → 图标+短标签：表现层数据，客户端唯一权威（逻辑层的 card.label 不下发也够用，
- *  这里本地化图标让画面更可读）。 */
-export const CARD_LABEL: Record<string, string> = {
-  gather_berry: '🍓采野果',
-  chop_tree: '🪓砍树',
-  eat: '🍎吃饭',
-  sleep: '😴睡觉',
-  wander: '🚶闲逛',
-  chat: '💬闲聊',
-  fight: '⚔迎战',
-  flee: '🏃撤退',
-  build_campfire: '🔥搭篝火',
-  build_hut: '🏠盖棚屋',
-  build_field: '🪏开垦农田',
-  sow_field: '🌱播种',
-  harvest_field: '🌾收割',
-  cook: '🍖生火烤熟',
-  build_store: '📦建仓库',
-  // ↓ 种子句 R4 一轮新增（hunting/medicine/fortify/combat/factions 五包）：
-  //   漏标的话 HUD 会显示原始 id（用户已指认过 3 次同类缺口，这里一次补齐）
-  hunt: '🏹追猎',
-  heal: '🩹照料',
-  build_bed: '🛏盖病榻',
-  build_wall: '🧱砌墙',
-  build_tower: '🗼造哨塔',
-  build_trap: '🕳挖陷阱',
-  hold: '🛡据守',
-  focus: '🎯集火',
-  flank: '↩迂回',
-  rally: '📣集结',
-  trade: '🤝贸易',
-  sample_pick_berry: '🫐摘蓝莓',
-  _stun: '…愣住',
-};
-
-/** 特质 → 显示色（表现层数据；逻辑层特质表只有 name 与 seriesMul 权重） */
-export const TRAIT_COLOR: Record<string, string> = {
-  strong: '#c96f4a',
-  lazy: '#7d9c5a',
-  owl: '#8a7fc9',
-  workaholic: '#c9b24a',
-  cheerful: '#d98aa6',
-};
-
-export const TERRAIN_NAME: Record<string, string> = {
-  grass: '草地',
-  dirt: '泥地',
-  stone: '岩层',
-  water: '水域',
-};
-
-export function cardLabel(id: string | null | undefined): string {
-  if (!id) return '';
-  return CARD_LABEL[id] ?? id;
 }

@@ -1738,3 +1738,38 @@ in the same commit and cites its facts entry"。）
 resolvePacks 五条规则、`dlc_load.json` 解析含坏配置）。全量 42 文件 / 405 用例全绿。
 完整设计（7 点 + HOI4 四原则 + 最小示例方案）见 KB
 `/mnt/e/knowledge-base/notes/proj-infcanvas-dlc-design-2026-10-07.md`。
+
+---
+
+## 模块边界：HUD / sim / chunks（2026-10-08 追加，拆分线）
+
+> 本节的三条红线都配了**结构性扫描测试**（`src/__tests__/view-boundary.test.ts`）：
+> 拆开的层一旦被人"顺手"混回去，测试会直接红——不依赖 review 记得这件事。
+> 每轮只拆一个维度、独立 commit，行为等价（golden 指纹不变）。
+
+### 一、HUD 层：契约 ≠ 表现（`client/view.ts` / `client/presentation.ts`）
+
+**为什么拆**：`view.ts` 之前同时装两样东西——**视图契约**（`WorldView` 接口 +
+`ColonySummary`/`PawnDetail`/`BuildingDetail`/`HostileDetail`/`TechProgressRow`/`TileInspect`/
+`HudSlot`）与**表现数据表**（`CARD_LABEL`/`TRAIT_COLOR`/`TERRAIN_NAME`/`cardLabel`）。
+两者性质不同：契约是 sim 与渲染/HUD 之间的**接口**，加一个方法就是改架构；
+数据表是"画成什么样"的**实现细节**，加一张卡的图标只是改文案。混在一个文件里，
+改图标要动接口文件，读者分不清自己在改哪一层。
+
+**现状**：契约全在 `client/view.ts`，表现数据表全在 `client/presentation.ts`。
+依赖方向单向：`presentation → view`（只 `import type`），`view` 不反向依赖任何表现数据。
+
+**HUD 只订阅快照**：`client/hud.ts`、`client/hud/*`、`client/hud-faces.ts` 一律
+只读 `WorldView` 的展示面，**不得 import sim 本体**——只允许 `../sim/types`（纯类型）
+与 `../mods/contracts`（跨层词汇表常量）。`LocalView`/`RemoteSim` 两个适配器各自把
+Sim 与快照翻译成 `WorldView`，HUD 因此本地/联机零分支复用。
+
+**库存键必须走契约常量**：HUD 取库存一律 `view.stockpile[K_STOCK_*]`，不许字面量。
+按字面量取键等于与 sim 词汇表**隐式耦合**——mod 改键名时 HUD 会**静默显示 0**，
+玩家看不到熟食/肉/草药，机制等于不存在，而且不会有任何报错。
+
+**边界红线由 `view-boundary.test.ts` 守住**（4 条结构断言 + 契约键字面值锁定）：
+① `view.ts` 不再定义表现数据表；② 四张表确实在 `presentation.ts`（不是删了没搬家）；
+③ `presentation.ts` 零逻辑依赖（不 import sim/server/registry）；
+④ HUD 各文件的 import 白名单 + 无字面量库存键 + `K_STOCK_*` 字面值不变。
+

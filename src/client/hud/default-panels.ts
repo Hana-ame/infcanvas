@@ -14,8 +14,10 @@
  *  - detail  选中详情（鼠/建筑/敌人三合一）—— 高信息密度，点开才看。
  *  - log     事件流（保留原有 feed，搬到分区里统一治理）。
  */
-import { TRAIT_COLOR, type WorldView } from '../view';
+import type { WorldView } from '../view';
+import { TRAIT_COLOR } from '../presentation';
 import { fuelLabel } from '../hud-faces';
+import { K_STOCK_FOOD, K_STOCK_WOOD, K_STOCK_MEAL, K_STOCK_MEAT, K_STOCK_HERB } from '../../mods/contracts';
 import { barRow, esc, keyOf, type PanelDef } from './panels';
 
 /** 选中上下文：HUD 每帧传入（选中集是玩家的交互态，不是模拟状态）。 */
@@ -67,17 +69,19 @@ function statusBar(getSel: () => SelectionCtx): PanelDef {
     render(view: WorldView) {
       const s = getSel();
       const c = view.colony();
-      const food = view.stockpile['food'] ?? 0;
-      const wood = view.stockpile['wood'] ?? 0;
+      const food = view.stockpile[K_STOCK_FOOD] ?? 0;
+      const wood = view.stockpile[K_STOCK_WOOD] ?? 0;
+      // ⚠ 键一律走 contracts K_STOCK_*：HUD 按字面量取库存键 = 与 sim 词汇表隐式耦合，
+      //   mod 改键名时 HUD 会静默显示 0（用户看不到熟食/肉/草药，机制等于不存在）。
       // 熟食（R3-4 K_STOCK_MEAL）：并列的第二种食物，eat 卡优先吃它。
       // 为什么必须显示：R3-4 的机制是"熟食更划算"，玩家要能看到自己攒了多少
       // 熟食才能判断"要不要花时间烤"——它是 R3-4 唯一的可观测反馈。
-      const meal = view.stockpile['meal'] ?? 0;
+      const meal = view.stockpile[K_STOCK_MEAL] ?? 0;
       // 生肉/草药（R4-GEN hunting + medicine）：肉是第三种食物（饱食 50，介于生食 40
       // 与熟食 55 之间），草药是医疗包的治疗材料（deer 掉落）。与熟食同理由——
       // 攒了多少决定了"要不要花时间狩猎/值不值得照料"，不可观测 = 机制不存在。
-      const meat = view.stockpile['meat'] ?? 0;
-      const herb = view.stockpile['herb'] ?? 0;
+      const meat = view.stockpile[K_STOCK_MEAT] ?? 0;
+      const herb = view.stockpile[K_STOCK_HERB] ?? 0;
       // key 用定长标量：任一变化才重画；纯读取无 DOM
       const key = keyOf(
         Math.floor(s.time),

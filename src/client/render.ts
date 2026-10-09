@@ -11,7 +11,7 @@
  */
 import { Application, Container, Graphics, Sprite, Text, Texture } from 'pixi.js';
 import type { WorldView } from './view';
-import { TRAIT_COLOR, cardLabel } from './view';
+import { TRAIT_COLOR, cardLabel } from './presentation';
 import { eidsInRect } from './selection';
 
 const TILE_COLORS: Record<string, string> = {

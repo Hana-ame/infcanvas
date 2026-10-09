@@ -2,7 +2,8 @@
  * client/local-view.ts —— 本地模式视图适配器：直接包 Sim 实现 WorldView。
  * （联机模式对应物是 remote.ts 的 RemoteSim——两者对渲染/HUD 长同一张脸。）
  */
-import { CARD_LABEL, TERRAIN_NAME, type TileInspect, type WorldView } from './view';
+import type { TileInspect, WorldView } from './view';
+import { CARD_LABEL, TERRAIN_NAME } from './presentation';
 import { buildBuildingDetail, buildColonySummary, buildHostileDetail, buildPawnDetail } from './hud-faces';
 import { K_TAG_FIRE } from '../mods/contracts';
 import type { Sim } from '../sim';

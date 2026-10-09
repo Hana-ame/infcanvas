@@ -13,7 +13,8 @@
  *
  * 纯函数、零 DOM、零 Pixi —— node 环境可直接单测。
  */
-import { cardLabel, type BuildingDetail, type ColonySummary, type HostileDetail, type PawnDetail } from './view';
+import type { BuildingDetail, ColonySummary, HostileDetail, PawnDetail } from './view';
+import { cardLabel } from './presentation';
 import type { BuildingState, Hostile, PawnState } from '../sim/types';
 import type { Tuning } from '../sim/tuning';
 import { K_STOCK_WOOD } from '../mods/contracts';
