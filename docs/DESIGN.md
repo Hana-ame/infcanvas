@@ -1773,3 +1773,35 @@ Sim 与快照翻译成 `WorldView`，HUD 因此本地/联机零分支复用。
 ③ `presentation.ts` 零逻辑依赖（不 import sim/server/registry）；
 ④ HUD 各文件的 import 白名单 + 无字面量库存键 + `K_STOCK_*` 字面值不变。
 
+### 二、区块索引：状态 vs 派生视图（`sim/world.ts` → `sim/chunk-index.ts`）
+
+**为什么拆**：区块索引此前 150 行与"地形哈希推导 + 建筑真源表 + 占位索引 +
+tag 倒排索引"挤在一个 `World` 类里，而两者的性质相反：
+地形/真源表是**状态**（存档认它、读档还它），区块索引是**可丢弃的派生视图**
+（错了就重建，永不需要随档）。混在一起时最坏的是那 7 处增量维护点各自带着一个
+`if (this.chunkIndexReady)` 守卫——"哪个写入点忘了同步索引"的沉默故障面有 7 处。
+
+**现状**：
+- 实现 → `sim/chunk-index.ts` 的 `ChunkIndex`（三张桶 + `buildingChunkOf` 反查 +
+  `ensure()` 惰性派生 + `invalidate()`）。只依赖 `ChunkSources`（三张真源表的**访问器**）
+  与 `shared/chunks`，**不**依赖 World / tuning / rng。
+- World → 只留薄委托门面（`buildingsInChunk` / `buildingsInChunks` /
+  `featureLeftInChunks` / `harvestCdInChunks` / `activeChunkKeys` / `exportChunks` /
+  `invalidateChunkIndex`），调用方（game-server 分区块下发、存档导出、测试）**零改动**。
+- 字符串瓦片键 → 区块键的解码收口到 `shared/chunks.ts` 的 `tileKeyChunk`（原为 world.ts
+  两个私有函数 `featureChunksKeyOf` / `harvestChunksKeyOf`，后者只是转发）。
+
+**三个必须守住的理由写进代码**：
+1. `ChunkSources` 用**访问器函数**而不是 Map 引用——`World.importState` 会整包**替换**
+   `featureLeft` / `harvestCd` 对象，构造期捕获的引用会在读档后指向旧表，
+   症状是"读档后某些区块收不到同步"。
+2. 索引**不得成为第二事实来源**：读取面对每个 id 回查真源表，查不到就跳过。
+   最坏只是漏发一块，绝不产生"幽灵实体"。
+3. 惰性建立的增量守卫收口在 `ChunkIndex` 内部（`if (!this.ready) return`）——
+   索引未建立时增量调用是 no-op，因为首次 `ensure()` 会按真源表全量派生并覆盖。
+   World 那 7 处守卫因此全部消失，攻击面从 7 处缩到 1 处。
+
+**边界红线**：`chunk-index-direct.test.ts` 用**假的三张真源表**（普通 Map，
+无任何 World 依赖）直接驱动 `ChunkIndex`——这份测试**只有当 ChunkIndex 真的只依赖
+`ChunkSources` 形状时才编译通过**，所以它是"依赖方向"的编译期证据，
+而不只是行为证据（走 World 门面的 `chunk-index.test.ts` 证明不了这一点）。

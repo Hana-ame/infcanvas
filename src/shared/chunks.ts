@@ -231,3 +231,18 @@ export function parseTileKey(key: string): { x: number; y: number } {
 export function tileKey(x: number, y: number): string {
   return `${x},${y}`;
 }
+
+/**
+ * "x,y" 字符串键 → 它所属的 chunkKey（唯一入口）。
+ *
+ * 为什么值得单独立一个函数（2026-10-08 chunk 维度拆分）：这个组合此前藏在
+ * world.ts 的两个私有函数里（`featureChunksKeyOf` / `harvestChunksKeyOf`，后者
+ * 只是前者的转发），属于**区块几何**而不是世界状态。区块索引模块（sim/chunk-index.ts）
+ * 也需要它，若各写一份就回到"每处一份解码"的老坑（本文件头部已记录 17 处内联
+ * `%` 各自出错的教训）。收口成唯一入口后，`parseTileKey` + `tileChunkKey` 的组合
+ * 只存在一处。
+ */
+export function tileKeyChunk(tileKeyStr: string): number {
+  const { x, y } = parseTileKey(tileKeyStr);
+  return tileChunkKey(x, y).key;
+}

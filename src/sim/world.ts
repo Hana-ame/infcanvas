@@ -13,24 +13,9 @@
  * （≤15 格）下足够快；空间索引留到性能回归再加，接口不变。
  */
 import { hash2 } from './rng';
-import { parseTileKey, tileChunkKey } from '../shared/chunks';
+import { ChunkIndex } from './chunk-index';
 import type { BuildingState, FeatureHit, Pos } from './types';
 import type { Tuning } from './tuning';
-
-/**
- * featureLeft / harvestCd 的 "x,y" 键 → 所属 chunkKey（索引维护用）。
- *
- * 为什么单独包一层而不是在 addBuilding 里内联 `tileChunkKey(parseTileKey(k).x, ...)`：
- * 索引维护散落到多处就等于"每处一份解码"，而 2026-08-14 的旧坑正是 17 处内联
- * `k % width` 各自出错。收口成两个具名函数后，`%` / split 只在这里出现一次。
- */
-function featureChunksKeyOf(tileKeyStr: string): number {
-  const { x, y } = parseTileKey(tileKeyStr);
-  return tileChunkKey(x, y).key;
-}
-function harvestChunksKeyOf(tileKeyStr: string): number {
-  return featureChunksKeyOf(tileKeyStr);
-}
 
 /** 本模块瓦片缓存键（与寻路编码同式） */
 function key2(x: number, y: number): number {
@@ -58,6 +43,22 @@ export class World {
   /** 采空再生冷却：key "x,y" → 恢复时刻。到期视为重新长满 */
   private harvestCd = new Map<string, number>();
   private nextBuildingId = 1;
+
+  /**
+   * 分区块派生索引（2026-10-08 chunk 维度：从 World 剥出到 sim/chunk-index.ts）。
+   *
+   * 它是**派生视图**而非状态：真源表（buildings / featureLeft / harvestCd）是存档唯一
+   * 认可的事实，索引丢了随手重建，绝不进存档。World 仍持有它的公开门面
+   * （buildingsInChunk 等），因为读档/整包替换需要 World 统一触发 invalidate。
+   *
+   * 构造时传**访问器函数**而不是 Map 引用：importState 会整包替换
+   * featureLeft / harvestCd 对象，构造期捕获的引用会在读档后指向旧表。
+   */
+  readonly chunkIndex = new ChunkIndex({
+    buildings: () => this.buildings,
+    featureLeft: () => this.featureLeft,
+    harvestCd: () => this.harvestCd,
+  });
 
   /**
    * 建筑 tag 倒排索引（2026-10-06 性能线新增）：tag → 该标签下的建筑数组。
@@ -433,9 +434,7 @@ export class World {
     if (readyAt !== undefined) {
       if (this.now < readyAt) return null;
       this.harvestCd.delete(k); // 到期惰性清除
-      // 索引同步出桶：不同步的话该块会一直挂着一个空壳成员，
-      // 客户端同步 harvestCd 时会收到一条指向已删除 key 的记录（无害但脏，且掩盖真 bug）
-      if (this.chunkIndexReady) this.unbucket(this.harvestChunks, harvestChunksKeyOf(k), k);
+      this.chunkIndex.featureRegrown(k); // 索引同步出桶（漏掉会挂着空壳成员，见 chunk-index.ts）
     }
     const left = this.featureLeft.get(k) ?? this.fullAmount(kind, tx, ty);
     if (left <= 0) return null;
@@ -491,7 +490,7 @@ export class World {
     if (readyAt !== undefined) {
       if (this.now < readyAt) return -1;
       this.harvestCd.delete(k);
-      if (this.chunkIndexReady) this.unbucket(this.harvestChunks, harvestChunksKeyOf(k), k);
+      this.chunkIndex.featureRegrown(k); // 索引同步出桶（同 featureAt）
     }
     const kind = this.featureKind(x, y);
     if (!kind) return -1;
@@ -499,18 +498,11 @@ export class World {
     if (left <= 0) {
       this.featureLeft.delete(k); // 再生时从满额重新开始（增量表只记"被采过的"）
       this.harvestCd.set(k, this.now + this.tuning.world.harvestRegenSec);
-      if (this.chunkIndexReady) {
-        // 两个桶同步维护：余量删除后要出桶，冷却是新成员要入桶。
-        // 漏任何一侧的后果不同但同样沉默——只删余量→远端仍显示"剩 N 份"；
-        // 只加冷却→远端显示树不见了（其实只是进冷却）。故两行必须成对。
-        const ck = featureChunksKeyOf(k);
-        this.unbucket(this.featureChunks, ck, k);
-        this.bucket(this.harvestChunks, ck, k);
-      }
+      this.chunkIndex.featureDepleted(k);
       return 0;
     }
     this.featureLeft.set(k, left);
-    if (this.chunkIndexReady) this.bucket(this.featureChunks, featureChunksKeyOf(k), k);
+    this.chunkIndex.featureTaken(k);
     return left;
   }
 
@@ -557,10 +549,10 @@ export class World {
     // 两个索引各自同步（2026-10-06 性能线 + 联机分区块线），互不替代：
     //  - tag 倒排：nearestBuildingByTag 与 Sim 的火堆锚点缓存靠它。漏登记不是
     //    "性能退化"，是**静默玩法回归**（新篝火立刻不可见，鼠不会去火边睡）。
-    //  - 区块索引：分区块同步按块裁剪下发靠它；未建立时由 ensureChunkIndex 补建。
+    //  - 区块索引：分区块同步按块裁剪下发靠它；未建立时由索引内部惰性补建。
     this.pushIndex(nb);
     this.tagVersion++;
-    if (this.chunkIndexReady) this.indexBuilding(nb.id);
+    this.chunkIndex.buildingAdded(nb.id);
     if (!def.passable) {
       for (let dy = 0; dy < h; dy++) {
         for (let dx = 0; dx < w; dx++) this.occupied.set(key2(x + dx, y + dy), nb.id);
@@ -581,11 +573,7 @@ export class World {
     // 或者已删建筑继续被分区块下发到客户端。
     this.popIndex(b);
     this.tagVersion++;
-    if (this.chunkIndexReady) {
-      const ck = this.buildingChunkOf.get(id);
-      if (ck !== undefined) this.unbucket(this.buildingChunks, ck, id);
-      this.buildingChunkOf.delete(id);
-    }
+    this.chunkIndex.buildingRemoved(id);
   }
 
   buildingAt(ix: number, iy: number): BuildingState | undefined {
@@ -621,29 +609,6 @@ export class World {
     };
   }
 
-  /**
-   * 区块归属导出（存档 diff 面）：每块只记"该块有哪些实体 id"。
-   *
-   * 与归档旧实现 serializeChunks 的差别（有意为之）：旧实现导出的是**覆盖层
-   * tile 索引**，因为旧世界模型里玩家能改写地形，必须把差异存下来。
-   * v3 没有那条路径（砍树只加冷却，见文件头），所以这里没有 tile 差异可存，
-   * 导出 tile 只会得到"每块 4096 个数字"的巨档（64×64 布局下 3×3 块 = 36864 项），
-   * 而信息量与全量 buildings 段完全重复。故只记实体归属。
-   *
-   * 输出**确定性**：按 key 升序（Map 插入序依赖历史，会让同一世界导出两种字节序，
-   * 存档对拍与 git diff 会变得不可用）。
-   */
-  exportChunks(): { key: number; buildingIds: string[] }[] {
-    this.ensureChunkIndex();
-    const out: { key: number; buildingIds: string[] }[] = [];
-    for (const ck of [...this.buildingChunks.keys()].sort((a, b) => a - b)) {
-      const ids = this.buildingChunks.get(ck);
-      if (!ids || ids.size === 0) continue;
-      // id 排序：建筑表是 Map，插入序=建造序；跨存档对比需要稳定序
-      out.push({ key: ck, buildingIds: [...ids].sort() });
-    }
-    return out;
-  }
   importState(st: {
     buildings: import('./types').BuildingState[];
     featureLeft: [string, number][];
@@ -752,150 +717,57 @@ export class World {
   // ==================================================================
   // 分区块索引（line/net 2026-10-06）
   // ==================================================================
+  // 分区块索引门面（line/net 2026-10-06；2026-10-08 实现拆到 sim/chunk-index.ts）
+  // ==================================================================
   //
-  // **不改动地形推导模型**：地形仍是 hash 纯函数（零存储），区块化只作用在
-  // *落在地上的实体状态*上——建筑、被采过的特征余量、再生冷却。
-  // 理由：v3 的 hash 推导已经是 O(1) 空间无限地图，给它套一层"生成层+覆盖层"
-  // 双图层（归档旧实现的做法）只会把 O(1) 变成 O(已访问面积)，是倒退而非进步。
-  // 双图层的价值在"地形可被建造/挖掘改写"的玩法里——v3 没有那条路径（砍树只加冷却，
-  // 绝不改 tile 哈希，见文件头"旧项目踩坑结论"），所以这里只需要**索引**，不需要**存储**。
+  // 为什么这里只留薄委托、不让调用方直接用 this.chunkIndex：
+  //   1. 读档/整包替换时 World 必须统一触发 invalidate——索引是 World 状态的一部分，
+  //      生命周期由 World 管，不能让 server/测试各自记得调 chunkIndex.invalidate()；
+  //   2. 对外调用点（game-server 的分区块下发、chunk-index.test.ts、存档导出）
+  //      保持「问 World 要区块视图」的形状不变，本次拆分不改动任何调用方；
+  //   3. 增量维护端（addBuilding/removeBuilding/takeOne）已换成直接调
+  //      this.chunkIndex.*，那 7 处 `if (this.chunkIndexReady)` 守卫因此从 World 消失，
+  //      "漏同步索引"的沉默故障攻击面收口到 chunk-index.ts 内部一处。
   //
-  // 索引是**惰性派生 + 增量维护**的：
-  //  - 派生：从 buildings / featureLeft / harvestCd 三个真源表按区块分组；
-  //  - 增量：addBuilding/removeBuilding/takeOne 各自更新所属区块的桶。
-  // 真源表仍是唯一事实（存档/确定性续跑只认它们），索引丢��可随时重建——
-  // 索引**不得**成为状态的第二来源，否则索引与真源不一致时行为不可复现。
-
-  /** chunkKey → 该块内的建筑 id 集合。decode 只走 tileChunkKey（见 shared/chunks 纪律段）。 */
-  private buildingChunks = new Map<number, Set<string>>();
-  /** chunkKey → 该块内 featureLeft 的 "x,y" 键集合 */
-  private featureChunks = new Map<number, Set<string>>();
-  /** chunkKey → 该块内 harvestCd 的 "x,y" 键集合 */
-  private harvestChunks = new Map<number, Set<string>>();
-  /** 建筑 id → 它所属的 chunkKey（移动/删除时反查用，避免重算坐标） */
-  private buildingChunkOf = new Map<string, number>();
-
-  /** 惰性建立索引：首次访问区块视图时从真源表全量派生一次，之后走增量维护 */
-  private ensureChunkIndex(): void {
-    if (this.chunkIndexReady) return;
-    this.chunkIndexReady = true;
-    for (const id of this.buildings.keys()) this.indexBuilding(id);
-    for (const k of this.featureLeft.keys()) this.bucket(this.featureChunks, featureChunksKeyOf(k), k);
-    for (const k of this.harvestCd.keys()) this.bucket(this.harvestChunks, harvestChunksKeyOf(k), k);
-  }
-  private chunkIndexReady = false;
-
-  /** 桶写入：空桶用完即删（不给 map 留 0-size 的空壳——数量上界=实体数，不是区块数） */
-  private bucket(map: Map<number, Set<string>>, ck: number, member: string): void {
-    let s = map.get(ck);
-    if (!s) {
-      s = new Set();
-      map.set(ck, s);
-    }
-    s.add(member);
-  }
-
-  private unbucket(map: Map<number, Set<string>>, ck: number, member: string): void {
-    const s = map.get(ck);
-    if (!s) return;
-    s.delete(member);
-    if (s.size === 0) map.delete(ck);
-  }
-
-  private indexBuilding(id: string): void {
-    const b = this.buildings.get(id);
-    if (!b) return;
-    const { key } = tileChunkKey(b.pos.x, b.pos.y);
-    this.bucket(this.buildingChunks, key, id);
-    this.buildingChunkOf.set(id, key);
-  }
+  // 索引本体不是第二事实来源（真源表才是存档唯一认可的事实），所以它不进 toSaveData，
+  // 只在 importState 整包替换后被 invalidate（理由见 chunk-index.ts 的 invalidate 注释）。
+  // 区块化为什么不改地形推导模型（哈希纯函数 vs 双图层），理由同见 chunk-index.ts 文件头。
 
   /** 单个区块的建筑视图（按需派生，不缓存数组——每帧调用会重复分配） */
   buildingsInChunk(ck: number): BuildingState[] {
-    this.ensureChunkIndex();
-    const ids = this.buildingChunks.get(ck);
-    if (!ids) return [];
-    const out: BuildingState[] = [];
-    for (const id of ids) {
-      const b = this.buildings.get(id);
-      if (b) out.push(b);
-    }
-    return out;
+    return this.chunkIndex.buildingsInChunk(ck);
   }
 
-  /** 一批区块的建筑（**热路径**：delta 500ms 一次 × 连接数；先去重再取，避免
-   *  同一栋建筑在边界区块被算两次——既省 structuredClone 也防客户端重复投影） */
+  /** 一批区块的建筑（热路径：delta 500ms 一次 × 连接数；去重避免边界区块重复投影） */
   buildingsInChunks(cks: Iterable<number>): BuildingState[] {
-    this.ensureChunkIndex();
-    const seen = new Set<string>();
-    const out: BuildingState[] = [];
-    for (const ck of cks) {
-      const ids = this.buildingChunks.get(ck);
-      if (!ids) continue;
-      for (const id of ids) {
-        if (seen.has(id)) continue;
-        seen.add(id);
-        const b = this.buildings.get(id);
-        if (b) out.push(b);
-      }
-    }
-    return out;
+    return this.chunkIndex.buildingsInChunks(cks);
   }
 
-  /** 一批区块的特征余量增量（featureLeft 同样要分区同步：采过的树在远端也要显示"剩 2 木"） */
+  /** 一批区块的特征余量增量（采过的树在远端也要显示"剩 N 木"） */
   featureLeftInChunks(cks: Iterable<number>): [string, number][] {
-    this.ensureChunkIndex();
-    const seen = new Set<string>();
-    const out: [string, number][] = [];
-    for (const ck of cks) {
-      const ks = this.featureChunks.get(ck);
-      if (!ks) continue;
-      for (const k of ks) {
-        if (seen.has(k)) continue;
-        seen.add(k);
-        const v = this.featureLeft.get(k);
-        if (v !== undefined) out.push([k, v]);
-      }
-    }
-    return out;
+    return this.chunkIndex.featureLeftInChunks(cks);
   }
 
   /** 一批区块的再生冷却（决定 featureAt 返回 null——不同步则客户端会显示已采空的树） */
   harvestCdInChunks(cks: Iterable<number>): [string, number][] {
-    this.ensureChunkIndex();
-    const seen = new Set<string>();
-    const out: [string, number][] = [];
-    for (const ck of cks) {
-      const ks = this.harvestChunks.get(ck);
-      if (!ks) continue;
-      for (const k of ks) {
-        if (seen.has(k)) continue;
-        seen.add(k);
-        const v = this.harvestCd.get(k);
-        if (v !== undefined) out.push([k, v]);
-      }
-    }
-    return out;
+    return this.chunkIndex.harvestCdInChunks(cks);
   }
 
   /** 当前所有"有内容的区块"的键集合（服务器调度/tick 分片要用的调度单位集合） */
   activeChunkKeys(): number[] {
-    this.ensureChunkIndex();
-    const out = new Set<number>();
-    for (const ck of this.buildingChunks.keys()) out.add(ck);
-    for (const ck of this.featureChunks.keys()) out.add(ck);
-    for (const ck of this.harvestChunks.keys()) out.add(ck);
-    return [...out];
+    return this.chunkIndex.activeChunkKeys();
+  }
+
+  /** 区块归属导出（存档 diff 面；只记实体归属不存 tile 差异，理由见 chunk-index.ts） */
+  exportChunks(): { key: number; buildingIds: string[] }[] {
+    return this.chunkIndex.exportChunks();
   }
 
   /** 丢弃派生索引（读档/整包替换后调用，下次访问自动重建）。 */
   invalidateChunkIndex(): void {
-    this.chunkIndexReady = false;
-    this.buildingChunks.clear();
-    this.featureChunks.clear();
-    this.harvestChunks.clear();
-    this.buildingChunkOf.clear();
+    this.chunkIndex.invalidate();
   }
+
 }
 
 /** 空桶共享常量：避免每次未命中都 new 一个空数组（热路径上的零分配）。 */

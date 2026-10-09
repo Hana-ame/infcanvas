@@ -20,6 +20,7 @@ import {
   tileChunk,
   tileChunkKey,
   tileKey,
+  tileKeyChunk,
   toChunkCoords,
   TILES_PER_CHUNK,
 } from '../shared/chunks';
@@ -209,5 +210,38 @@ describe('"x,y" 瓦片键解析', () => {
     expect(parseTileKey('junk')).toEqual({ x: 0, y: 0 });
     const bad = parseTileKey('a,1');
     expect(Number.isFinite(bad.x)).toBe(true);
+  });
+
+  /**
+   * tileKeyChunk —— 字符串瓦片键 -> 所属 chunkKey（2026-10-08 chunk 维度新增）。
+   *
+   * 为什么单独测：区块索引模块（sim/chunk-index.ts）用它给 featureLeft/harvestCd
+   * 的 "x,y" 键分组，此前这段组合逻辑藏在 world.ts 的两个私有函数里。收口成
+   * 唯一入口后必须**与坐标版 tileChunkKey 逐点一致**——两处不一致 = 索引桶和
+   * 增量维护分家，表现为"读档后某些区块收不到同步"这种沉默故障。
+   */
+  it('tileKeyChunk 与坐标版 tileChunkKey 逐点一致（含负坐标与异号组合）', () => {
+    for (const [x, y] of [
+      [0, 0],
+      [3, 4],
+      [-3, 4],
+      [3, -4],
+      [-3, -4],
+      [-128, 512],
+      [63, 63],
+      [64, 0],
+      [70, -70],
+      [-2000, 3000],
+    ] as [number, number][]) {
+      const k = tileKey(x, y);
+      expect(tileKeyChunk(k), `键 ${k} 的区块归属必须与坐标版一致`).toBe(tileChunkKey(x, y).key);
+    }
+  });
+
+  it('tileKeyChunk 对坏键回落到原点区块（与 parseTileKey 的容错一致，不抛错）', () => {
+    for (const bad of ['', 'junk', 'a,1']) {
+      expect(() => tileKeyChunk(bad)).not.toThrow();
+      expect(tileKeyChunk(bad)).toBe(tileChunkKey(0, 0).key);
+    }
   });
 });
