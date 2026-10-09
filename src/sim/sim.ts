@@ -11,14 +11,13 @@
 import { mulberry32, type RngFn } from './rng';
 import { DEFAULT_TUNING, type Tuning } from './tuning';
 import { World } from './world';
-import { findPath, planRoute } from './pathfinding';
+import { RoutePlanner } from './path-plan';
 import type { SimContext, CardWeightHook } from './context';
 import type { CardDef } from './cards';
 import { behaviorCtor, commit, releaseHerbReservation, tryReserveHerb, type GameSystem } from './systems';
 import type { BuildingState, Eid, FeatureHit, Hostile, LogEvent, PawnState, Pos } from './types';
 import type { SaveData } from './schema';
 import type { ModRegistry } from '../mods/registry';
-import { K_TAG_WAYPOINT } from '../mods/contracts';
 
 export interface SimConfig {
   seed?: number;
@@ -32,6 +31,19 @@ export interface SimConfig {
 
 export class Sim implements SimContext {
   readonly world: World;
+  /**
+   * 路径规划策略（2026-10-08 sim 维度：从 Sim 容器剥出到 sim/path-plan.ts）。
+   *
+   * 它持有两个私有缓存（航点列表按 world.tagVersion 判过期、起终点对段缓存随
+   * 建筑增删清空）+ 双档迭代预算 + 长距标志位导航的分派规则。这些是**纯计算**，
+   * 与「谁是实体」无关，所以放进 Sim 里只会让实体容器变厚。
+   *
+   * Sim 仍负责两件事（因为它们属于实体/状态层）：
+   *   - addBuilding/removeBuilding 时调 `planner.clearRoutes()`（缓存失效是状态事件）；
+   *   - `setPath` 里构造 canStep/canStand 闭包（依赖 `p.climb`）并给路径**取副本**——
+   *     规划层可能返回 routeCache 的本体，实体状态绝不能共享它。
+   */
+  readonly planner: RoutePlanner;
   readonly reg: ModRegistry;
   tuning: Tuning;
   time = 0;
@@ -58,33 +70,6 @@ export class Sim implements SimContext {
   private nextEid = 1;
   private nextHostileId = 1;
   private relations = new Map<string, number>(); // pairKey → -100..100
-  /** 锚点对段缓存（篝火航点中转）：键=起终点，值=拼好的路径或 null(不可达)。
-   *  建筑增删即清空——火堆网络变了旧段作废。 */
-  private routeCache = new Map<string, Pos[] | null>();
-  /**
-   * 火堆锚点列表缓存（2026-10-06 性能线新增）+ 它对应的 world.tagVersion。
-   *
-   * 原缺陷（现象/根因）：setPath **每次调用**都重新遍历整个建筑表重建锚点数组：
-   *   `for (const b of this.world.buildings.values()) if (tags.includes('fire')) anchors.push({...})`
-   *   而 setPath 是行为系统里最热的入口（采/砍/走/跑/睡五类卡动作都会调它），
-   *   每只鼠每 tick 可达 1 次。建筑数随局增长（实测 900s 局里 7~14 座），
-   *   于是"为了取 1~3 个火堆坐标"每次都付一次全表扫描 + N 次 tags.includes
-   *   + 每座一个新对象分配。
-   *
-   * 优化思路：锚点列表**只依赖建筑表**，而建筑表变更频率极低
-   *   （建造卡才增删，实测 900 tick 里 7~14 次），天敌是"高频读 / 低频写"。
-   *   所以缓存一份 + 用 world.tagVersion()（每次建筑增删 +1）判过期，
-   *   变了才重建。读侧 O(1)，写侧 O(建筑数) 但极少发生。
-   *
-   * 为什么不是"每次都重建"就够用：旧项目回退空间索引的原因正是
-   * 「索引构建开销 > 节省」。这里的差别是**构建频率**：空间索引每 tick 重建
-   * （×900 = 900 次），这份锚点表 900 tick 只重建 ~10 次，相差两个数量级。
-   *
-   * 与 routeCache 的分工：routeCache 缓存的是"起终点对 → 路径"，
-   * 本缓存是"锚点列表"本身。前者建筑增删就清空，后者跟着 tagVersion 走。
-   */
-  private fireAnchors: Pos[] = [];
-  private fireAnchorsVersion = -1;
 
   constructor(cfg: SimConfig) {
     this.reg = cfg.registry;
@@ -93,6 +78,9 @@ export class Sim implements SimContext {
     const seed = cfg.restore?.seed ?? cfg.seed ?? 20260821;
     this.rngImpl = mulberry32(seed);
     this.world = new World(this.tuning, seed, { x: 0, y: 0 });
+    // 不能写成字段初始化器：字段初始化器在构造函数体之前执行，那时 world 还没赋值
+    // （useDefineForClassFields 下直接报 used before its initialization）
+    this.planner = new RoutePlanner(this.world);
     // 装配系统（类别序×注册序）→ 全部 ctor 后再统一 init（出生引导能看到完整装配）
     this.systems = this.reg.assemble(this);
     const restoring = cfg.restore !== undefined;
@@ -286,11 +274,11 @@ export class Sim implements SimContext {
     return this.world.buildings.values();
   }
   addBuilding(defId: string, x: number, y: number): BuildingState | null {
-    this.routeCache.clear(); // 火堆网络变化→航点段落全部作废
+    this.planner.clearRoutes(); // 火堆网络变化→航点段落全部作废
     return this.world.addBuilding(defId, x, y);
   }
   removeBuilding(id: string): void {
-    this.routeCache.clear();
+    this.planner.clearRoutes();
     this.world.removeBuilding(id);
   }
 
@@ -350,91 +338,35 @@ export class Sim implements SimContext {
 
   // ---- 移动服务 ----
   /**
-   * 火堆航点锚点列表（性能线缓存版）。
+   * 规划一条路径并写进实体状态。
    *
-   * 走 world 的 tag 倒排桶而不是重扫全表 —— 语义与原实现逐字一致：
-   * 原代码 `for (b of buildings.values()) if (tags.includes('fire')) push({x,y})`，
-   * 现在 `buildingsByTag('fire')` 的桶就是同一个集合（桶序 = 插入序 = 原迭代序），
-   * 只是把"过滤"提前到建筑增删时做了一次。planRoute 对锚点做 sort+slice(0,2)
-   * 取最近两个，**并列时的胜出者依赖迭代序** —— 桶序与原序一致，所以结果不变。
+   * 策略本体（双档迭代预算 / 长距标志位分段导航 / 航点与段缓存的失效规则）
+   * 在 sim/path-plan.ts 的 RoutePlanner（2026-10-08 sim 维度拆分）。
    *
-   * 返回的是缓存数组本体（不给副本）：planRoute 只读它
-   * （`[...anchors].sort()` 自己会拷），给副本等于把这次优化又抵消掉。
+   * Sim 这里只保留三件属于「实体/状态层」的事：
+   *   1. **整数量化**：小人坐标是连续的（moveStep 在格心之间插值），浮点进 A*
+   *      会解码错位甚至整条返回空路径（真实踩坑：半路重规划全部静默失败）。
+   *      findPath 内部也会兜底 round。
+   *   2. **按边注入 z 判定**：|Δz| ≤ 该鼠攀爬（岩层上不去就是上不去，A* 自动绕行）。
+   *      这是 per-pawn 的，所以闭包只能在这里造。
+   *   3. **取副本**：`p.path` **绝不能**直接引用规划层返回的数组——长距命中段缓存时
+   *      返回的是缓存本体，moveStep 靠 `shift()` 推进（见下），会把缓存里同一条路线
+   *      掏空：同起终点下一次命中缓存拿到空数组，可达路线被判「不可达」，小人原地空转；
+   *      存档/读档后缓存重建，同一局「直跑」与「续跑」从此分叉。（golden 真实踩坑 2026-10-06）
    */
-  private fireAnchorsList(): readonly Pos[] {
-    const v = this.world.tagVersionNow();
-    if (v !== this.fireAnchorsVersion) {
-      // 航点 = fire 桶 ∪ waypoint 桶（K_TAG_WAYPOINT，见 contracts.ts 注释）。
-      // 顺序刻意固定为「fire 先、waypoint 后」，各自保持插入序：planRoute 内部按到
-      // 起点/终点的距离排序，等距时 Array.sort 稳定保留输入序 ⇒ 输入序必须确定。
-      // fire 排在前面保证**无 waypoint 建筑时与改动前逐位相同**（golden 基线不动）。
-      // 去重：篝火同时挂两个标签，会在两个桶各出现一次。
-      const out: Pos[] = [];
-      const seen = new Set<string>();
-      for (const b of this.world.buildingsByTag('fire')) {
-        const k = `${b.pos.x},${b.pos.y}`;
-        if (!seen.has(k)) {
-          seen.add(k);
-          out.push({ x: b.pos.x, y: b.pos.y });
-        }
-      }
-      for (const b of this.world.buildingsByTag(K_TAG_WAYPOINT)) {
-        const k = `${b.pos.x},${b.pos.y}`;
-        if (!seen.has(k)) {
-          seen.add(k);
-          out.push({ x: b.pos.x, y: b.pos.y });
-        }
-      }
-      this.fireAnchors = out;
-      this.fireAnchorsVersion = v;
-    }
-    return this.fireAnchors;
-  }
-
   setPath(p: PawnState, txRaw: number, tyRaw: number): boolean {
-    // 双档迭代上限：近距离低预算快速失败，远距离高预算。两档是搜索预算（实现参数）
-    // 不是玩法数值，故内联于此；玩法数值一律进 tuning。
-    // 起终点整数量化：小人坐标连续（moveStep 插值），浮点进 A* 会解码错位/返回空
-    // （真实踩坑：半路重规划全部静默失败）。findPath 内部也会兜底 round。
     const tx = Math.round(txRaw);
     const ty = Math.round(tyRaw);
     const sx = Math.round(p.pos.x);
     const sy = Math.round(p.pos.y);
-    const dist = Math.abs(tx - sx) + Math.abs(ty - sy);
-    // 按边注入 z 判定：|Δz| ≤ 该鼠攀爬（岩层上不去就是上不去，A* 自动绕行）
-    const stepOk = (fx: number, fy: number, ax: number, ay: number): boolean =>
-      this.world.canStep(fx, fy, ax, ay, p.climb);
-    const goalOk = (ax: number, ay: number): boolean => this.world.canStand(ax, ay);
-
-    // ⚡ R4-Battle 有限范围 A* + 标志位导航（用户架构指令 2026-10-06：
-    //   「使用有限范围的 A* 为了无限地图支撑。地图上会设置大坐标标志位置点」）。
-    //
-    // 原缺陷（现象/根因）：长距（>24 格）时直连 A* 用 8000 迭代上限——实测
-    //   长距单次 1.6ms（64 鼠下 setPath 占 45% 耗时），且 8000 迭代上限意味着
-    //   搜索范围随地图变大而变贵 = **依赖地图尺寸**，撑不起无限地图。
-    // 修法：**长距默认走标志位导航**（planRoute：起点→最近标志位→…→目标的分段
-    //   有限 A*，每段 1500 迭代），直连 A* 只用于短距（≤24 格）。
-    //   标志位 = 火堆锚点（fireAnchors，已有 tag 倒排 + tagVersion 缓存）。
-    //   行为差异：长距路径会绕标志位（分段最优 ≠ 全局直连最优），属架构性变更，
-    //   golden 换血时记录。
-    const anchors = this.fireAnchorsList();
-    const isLong = dist > 24;
-    let path: Pos[];
-    if (isLong && anchors.length > 0) {
-      // 长距 + 有标志位：直接走分段导航（不再先试 8000 迭代直连）
-      path = planRoute(stepOk, goalOk, sx, sy, tx, ty, anchors, 1500, 1500, this.routeCache);
-    } else {
-      const maxIter = isLong ? 8000 : 1500;
-      path = findPath(stepOk, goalOk, sx, sy, tx, ty, maxIter);
-      // 直连失败 → 借火堆锚点分段中转（远距离/隔地形时是唯一可行路径）
-      if (path.length === 0 && !(sx === tx && sy === ty)) {
-        path = planRoute(stepOk, goalOk, sx, sy, tx, ty, anchors, maxIter, 1500, this.routeCache);
-      }
-    }
-    // p.path **绝不能**直接引用 planRoute 返回的缓存数组：moveStep 靠 shift() 推进
-    // （见下），会把 routeCache 里同一条路线掏空——同起终点下一次命中缓存拿到空数组，
-    // 可达路线被判"不可达"，小人原地空转；存档/读档后缓存重建，同一局"直跑"与
-    // "续跑"从此分叉。故这里取副本，缓存本体永不共享。（golden 真实踩坑 2026-10-06）
+    const path = this.planner.plan({
+      canStep: (fx, fy, ax, ay) => this.world.canStep(fx, fy, ax, ay, p.climb),
+      canStand: (ax, ay) => this.world.canStand(ax, ay),
+      sx,
+      sy,
+      tx,
+      ty,
+    });
     p.path = path.length > 0 ? path.slice() : path;
     const ok = path.length > 0 || (sx === tx && sy === ty);
     return ok;

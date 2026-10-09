@@ -1805,3 +1805,43 @@ tag 倒排索引"挤在一个 `World` 类里，而两者的性质相反：
 无任何 World 依赖）直接驱动 `ChunkIndex`——这份测试**只有当 ChunkIndex 真的只依赖
 `ChunkSources` 形状时才编译通过**，所以它是"依赖方向"的编译期证据，
 而不只是行为证据（走 World 门面的 `chunk-index.test.ts` 证明不了这一点）。
+### 三、路径规划：实体容器 vs 计算策略（`sim/sim.ts` → `sim/path-plan.ts`）
+
+**为什么拆**：`Sim` 是实体容器（pawnMap / hostilesList / stockpile / events /
+scratch / techsUnlocked），此前它还内联持有三样东西：`routeCache`、
+`fireAnchors`/`fireAnchorsVersion` 两个缓存字段 + `fireAnchorsList()` + `setPath()`。
+两类代码性质相反——容器是**状态**（存档认它、命令改它、玩法包通过 SimContext 读它），
+规划策略是**纯计算**（输入 = 可走判定 + 起终点，输出 = 路径序列），
+它带着自己的私有缓存，与"谁是实体"无关。混在一起时真正需要审视的策略决策
+（"长距为什么走标志位"、"8000 迭代预算的边界在哪"）埋在实体的增删查改中间，
+`Sim` 620 行里能单测的纯函数只剩 `moveStep`/`adjacent`。
+
+**现状**：
+- 策略 → `sim/path-plan.ts` 的 `RoutePlanner`：`routeCache` + `anchorList`
+  （按 `tagVersionNow()` 判过期）+ `plan(input)`（双档预算分派 + 长距标志位）。
+  预算提成命名常量 `LONG_DIST` / `SHORT_MAX_ITER` / `LONG_MAX_ITER` /
+  `SEGMENT_MAX_ITER`——原来是散在 setPath 里的 24 / 1500 / 8000 / 1500 字面量，
+  静默调参从此无处藏身。
+- 算法与策略分离：`pathfinding.ts` 是**算法**（A* + 二叉堆 + 斜角禁切 + planRoute 拼接），
+  `path-plan.ts` 是**策略**（用什么预算、何时走锚点、锚点从哪来、缓存怎么失效）。
+- Sim → 只留 `setPath()`（整数量化 + per-pawn 的 canStep/canStand 闭包 + **取副本**）
+  与 `addBuilding`/`removeBuilding` 里的 `planner.clearRoutes()`（缓存失效是状态事件）。
+
+**三个必须守住的理由写进代码**：
+1. `planner` 只能在**构造函数**里随 `world` 一起构造，不能写在字段初始化器上——
+   字段初始化器在构造函数体之前执行，那时 `this.world` 还没赋值
+   （`useDefineForClassFields` 下会报 "used before its initialization"）。
+2. `AnchorSource` 的方法名**刻意与 World 的既有名字一致**（`tagVersionNow` /
+   `buildingsByTag`），这样 `new RoutePlanner(sim.world)` 零适配器即可；
+   加一层适配反而制造出第二处需要同步的命名。
+3. **取副本不可省**：长距命中段缓存时 `plan()` 返回的是缓存本体，`moveStep` 靠
+   `shift()` 推进，原地走完一条路线会把缓存掏空——同起终点下一次命中缓存拿到
+   空数组，可达路线被永久判成"不可达"，小人原地空转；存档/读档后缓存重建，
+   同一局"直跑"与"续跑"从此分叉。（golden 真实踩坑 2026-10-06）
+
+**边界红线**：`path-plan.test.ts` 用**假的 canStep/canStand + 假的 AnchorSource**
+（可变的墙集合 + 版本号）直接驱动 `RoutePlanner`——该测试只有当 `path-plan.ts`
+真的不依赖 Sim/World 时才编译通过，是"依赖方向"的编译期证据；同时它把拆分前
+`setPath` 内联的策略与拆分后 `plan()` 的输出**逐用例对拍**（预算常量、
+Manhattan 24/25 边界、长距 planRoute 对拍、锚点去重与 tagVersion 缓存、
+clearRoutes 后的绕行、缓存别名掏空后果）。golden 指纹是端到端护栏，这份是策略层护栏。
