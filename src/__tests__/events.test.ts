@@ -470,3 +470,67 @@ describe('向后兼容', () => {
     expect(s.events.some((e) => e.text.includes('向后兼容测试事件'))).toBe(true);
   });
 });
+
+// ---- R4 审计 P3：handleExpiry 反向效果到期重新求值（P3 测试场景）----
+//
+// 现状（events.ts:313）：handleExpiry 在到期时执行
+//   const e = typeof seed.effects === 'function' ? seed.effects(ctx) : seed.effects;
+// 即 effects 为函数时，到期重新求值——用的是 **到期时** 的 tuning 值，不是 apply 时缓存的值。
+//
+// 当前无实际影响：只有 tempShift 有 durationSec，且 tempShift 是静态 tuning 常量。
+// 但语义必须钉住：未来若加动态 effects（读运行时状态），反向效果用哪个值是设计决策。
+// 本测试钉住"到期重新求值"这条路径，若未来改为缓存 apply 值，此测试应同步修改。
+
+describe('R4 P3: handleExpiry 反向效果到期重新求值', () => {
+  it('到期重新求值：tuning 变更后反向效果用新值（非 apply 时缓存）', () => {
+    // 场景：coldsnap 的 tempShift 在 apply 时为 -12（出厂默认），到期前 tuning 改为 -20。
+    // apply：tempMod = 0 + (-12) = -12
+    // 到期：tempMod = -12 - (-20) = 8  ← 不是 0！因为反向用的是到期时求值的新 tempShift。
+    //
+    // 这钉住当前语义（到期重新求值）。若未来改为"缓存 apply 时的 effects"，
+    // 反向应为 tempMod = -12 - (-12) = 0，此时此断言应改为 toBeCloseTo(0)。
+    const s = eventSim({
+      seed: 7,
+      pawnCount: 2,
+      withBuilding: true,
+      food: 35,
+      wood: 100000,
+      envTemp: 20,
+      coldsnapMinPawns: 999,
+    });
+    s.run(3); // 触发 coldsnap，tempMod = -12
+    expect(s.scratch['env.tempMod']).toBeCloseTo(-12, 0);
+
+    // 到期前修改 tuning：tempShift 从 -12 改为 -20
+    s.tuning.events.effects.coldsnapTempShift = -20;
+
+    // 掐断触发条件（加篝火），然后跑到到期时刻（coldsnap.durationSec=60）
+    s.addBuilding('campfire', 0, 0);
+    s.run(70); // 跑到 t=73，确保到期（到期时刻 ≤ 63）
+
+    // 反向效果减去的是到期时的 tempShift(-20)，不是 apply 时的(-12)：
+    //   tempMod = -12 - (-20) = 8
+    // 若改为缓存 apply 值，此值应为 0。
+    expect(s.scratch['env.tempMod'], '到期重新求值：反向用新 tempShift(-20)，tempMod = -12-(-20)=8')
+      .toBeCloseTo(8, 0);
+  });
+
+  it('到期重新求值：tuning 未变更时反向效果归零（出厂值自洽）', () => {
+    // 对照组：不改 tuning，反向应精确归零。
+    const s = eventSim({
+      seed: 7,
+      pawnCount: 2,
+      withBuilding: true,
+      food: 35,
+      wood: 100000,
+      envTemp: 20,
+      coldsnapMinPawns: 999,
+    });
+    s.run(3); // tempMod = -12
+    expect(s.scratch['env.tempMod']).toBeCloseTo(-12, 0);
+    s.addBuilding('campfire', 0, 0);
+    s.run(70); // 到期
+    expect(s.scratch['env.tempMod'], 'tuning 未变：反向精确归零')
+      .toBeCloseTo(0, 0);
+  });
+});
