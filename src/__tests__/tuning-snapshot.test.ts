@@ -11,6 +11,8 @@
  */
 import { describe, expect, it } from 'vitest';
 import { readFileSync, existsSync } from 'fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 import { DEFAULT_TUNING } from '../sim/tuning';
 import {
   SIM_DT_SEC, CLIENT_STEP_MULT, CLIENT_STEP_SEC,
@@ -70,4 +72,52 @@ describe('golden 指纹不变量（拆分后行为等价）', () => {
     // golden 基线指纹（与 __tests__/golden.test.ts 的 GOLDEN['2026@900'] 一致）
     expect(fp).toBe('fp_122ecc8d');
   });
+});
+
+// ---- R4 模块化审查剩余：defaults/*.ts 结构扫描护栏 ----
+//
+// tuning-snapshot.test.ts 已有：§0 常数、DEFAULT_TUNING 深比较、键顺序、golden 指纹。
+// 缺失：defaults/*.ts 各文件的"只导出本段"结构扫描。
+// 若有人把 env 的数值写到 core.ts（跨域污染），本测试会红——
+// 这是"模块化拆分纪律"的最后一道防线（深比较只验值，不验归属）。
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+function src(rel: string): string {
+  return readFileSync(join(HERE, rel), 'utf-8');
+}
+
+/** 各 defaults 文件的合法导出段（与 index.ts 的 import 列表一致） */
+const DEFAULTS_EXPORTS: Record<string, string[]> = {
+  'core.ts': ['world', 'pawn', 'needs', 'build', 'gathering'],
+  'food.ts': ['farming', 'cooking', 'medicine'],
+  'combat.ts': ['social', 'raid', 'hunting', 'combat', 'fortify'],
+  'env.ts': ['env'],
+  'meta.ts': ['factions', 'techs', 'techPool', 'bootstrap', 'events', 'tiles', 'buildings', 'enemies', 'traits'],
+};
+
+describe('defaults/*.ts 结构扫描：只导出本段（防跨域污染）', () => {
+  for (const [file, allowed] of Object.entries(DEFAULTS_EXPORTS)) {
+    it(`${file} 只导出本段：${allowed.join(', ')}`, () => {
+      const code = src(`../sim/tuning/defaults/${file}`);
+      // 提取所有 export const 名称
+      const exportNames = Array.from(
+        code.matchAll(/export const (\w+)/g),
+        (m) => m[1],
+      );
+      // 只允许本段声明的导出
+      for (const name of exportNames) {
+        expect(
+          allowed,
+          `${file} 导出了非本段内容 "${name}"（跨域污染）`,
+        ).toContain(name);
+      }
+      // 本段声明的每个导出都存在
+      for (const name of allowed) {
+        expect(
+          exportNames,
+          `${file} 缺少本段导出 "${name}"`,
+        ).toContain(name);
+      }
+    });
+  }
 });
