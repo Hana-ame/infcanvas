@@ -10,6 +10,7 @@ import './style.css';
 import { Application } from 'pixi.js';
 import { Sim } from '../sim';
 import { snapshotOf, loadSim, type SaveData } from '../sim/sim-save';
+import { encodeSaveDataToFile, decodeSaveDataFromFile } from '../shared/bigint-json';
 import { ModRegistry } from '../mods';
 import { DEFAULT_PORT, DEFAULT_SEED, CLIENT_STEP_SEC, RENDER_DT_CLAMP_SEC } from '../sim/tuning';
 import { Renderer } from './render';
@@ -90,7 +91,7 @@ async function boot(): Promise<void> {
     const savedRaw = params.get('save') === '1' ? localStorage.getItem(SAVE_KEY) : null;
     let sim: Sim;
     if (savedRaw) {
-      sim = loadSim(JSON.parse(savedRaw), ModRegistry.default());
+      sim = loadSim(decodeSaveDataFromFile(JSON.parse(savedRaw)), ModRegistry.default());
       history.replaceState(null, '', location.pathname + location.search.replace(/[?&]save=1/, ''));
     } else {
       sim = new Sim({ seed: Number(params.get('seed') ?? DEFAULT_SEED), registry: ModRegistry.default() });
@@ -184,7 +185,9 @@ async function boot(): Promise<void> {
     },
     onSave() {
       if (!(ctrl.view instanceof Sim)) return; // 联机模式存档权在服务器
-      localStorage.setItem(SAVE_KEY, JSON.stringify(snapshotOf(ctrl.view)));
+      // quantity 字段编码为 bigint JSON 包装（{_B:"42"}），存档不残留浮点数
+      const encoded = encodeSaveDataToFile(snapshotOf(ctrl.view) as unknown as Record<string, unknown>);
+      localStorage.setItem(SAVE_KEY, JSON.stringify(encoded));
       flash('💾 已保存到浏览器');
     },
     onLoad() {

@@ -13,7 +13,8 @@ import { createGameServer, type GameServerHandle } from '../server/game-server';
 import { SaveStore, isSafeSaveName, timestampName } from '../server/save-store';
 import { ModRegistry } from '../mods';
 import { Sim } from '../sim';
-import { snapshotOf } from '../sim/sim-save';
+import { loadSim, snapshotOf } from '../sim/sim-save';
+import { encodeSaveDataToFile, decodeSaveDataFromFile, isBigintJson } from '../shared/bigint-json';
 
 interface TestClient {
   ws: WebSocket;
@@ -89,12 +90,44 @@ describe('R1-5 SaveStore 读写往返', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it('写入后可读回，JSON 内容一致', () => {
+  it('写入后可读回，JSON 内容一致；quantity 字段在文件存储时为 bigint JSON 包装', () => {
     const real = new Sim({ seed: 3, registry: ModRegistry.default() });
     const st = new SaveStore(dir);
     const p = st.write('t1', snapshotOf(real));
     expect(existsSync(p)).toBe(true);
+    // seed 不是 quantity 字段，保持原始 number
     expect(JSON.parse(readFileSync(p, 'utf8')).seed).toBe(3);
+    // stockpile 的 value 侧应为 bigint JSON 包装
+    const raw = JSON.parse(readFileSync(p, 'utf8'));
+    for (const v of Object.values(raw.stockpile as Record<string, unknown>)) {
+      expect(isBigintJson(v)).toBe(true);
+    }
+  });
+
+  it('quantity 字段 bigint JSON 编码/解码往返：文件写→读后运行时仍是 number', () => {
+    const real = new Sim({ seed: 7, registry: ModRegistry.default() });
+    real.run(120);
+    const data = snapshotOf(real);
+    const st = new SaveStore(dir);
+    const p = st.write('bigint-test', data);
+    // 读回后 decodeSaveDataFromFile 把 bigint 包装恢复为 number
+    const restored = decodeSaveDataFromFile(JSON.parse(readFileSync(p, 'utf8')));
+    // 所有 quantity 字段应恢复为 number 而非包装对象
+    for (const v of Object.values(restored.stockpile as Record<string, unknown>)) {
+      expect(typeof v).toBe('number');
+    }
+    for (const [k, v] of restored.relations as [string, unknown][]) {
+      expect(typeof v).toBe('number');
+    }
+    for (const v of Object.values(restored.scratch as Record<string, unknown>)) {
+      expect(typeof v).toBe('number');
+    }
+    // 非 quantity 字段保持原样
+    expect(typeof restored.seed).toBe('number');
+    expect(typeof restored.time).toBe('number');
+    // loadSim 正常运作
+    const sim = loadSim(restored, ModRegistry.default());
+    expect(sim.time).toBe(real.time);
   });
 
   it('读不存在的档抛错（响亮失败，不静默当新局）', () => {
