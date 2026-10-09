@@ -10,6 +10,7 @@
  * 渲染层零逻辑：只读 WorldView 快照 + 把输入翻译成回调（onSelect/onCommand）。
  */
 import { Application, Container, Graphics, Sprite, Text, Texture } from 'pixi.js';
+import { RenderCache } from './render-cache';
 import type { WorldView } from './view';
 import { TRAIT_COLOR, cardLabel } from './presentation';
 import { eidsInRect } from './selection';
@@ -48,7 +49,10 @@ export interface RenderInput {
 export class Renderer {
   private world = new Container();
   private gameContainer = new Container();
-  private terrainG = new Graphics();
+  /** 地形缓存层：RenderCache 管理的烘焙块挂在此下（取代 redrawTerrain 的 terrainG） */
+  private terrainLayer = new Container();
+  /** 残留 Graphics：浆果丛、非块级 overlay（块级地形底色 + z 阴影已由 RenderCache 烘焙） */
+  private overlayG = new Graphics();
   private floorG = new Graphics();
   private entityLayer = new Container();
   /** 框选矩形图层（R1-4）：单独一层，画在实体之上且不参与 y 排序 */
@@ -62,6 +66,9 @@ export class Renderer {
   private visibleTrees = new Set<string>();
   private treeTexture: Texture | null = null;
 
+  /** 渲染缓存（整块烘焙 + LRU + 懒加载） */
+  private renderCache: RenderCache;
+
   private TILE = 20;
   private cam = { x: 0, y: 0 };
   /** 选中高亮集合（HUD 层维护选择状态，渲染只照做） */
@@ -72,7 +79,12 @@ export class Renderer {
     private view: WorldView,
     private input: RenderInput,
   ) {
-    this.gameContainer.addChild(this.terrainG);
+    this.renderCache = new RenderCache(this.view, this.terrainLayer, {
+      tilePx: this.TILE,
+      maxZ: this.view.tuning?.world?.maxZ ?? 4,
+    });
+    this.gameContainer.addChild(this.terrainLayer);
+    this.gameContainer.addChild(this.overlayG);
     this.gameContainer.addChild(this.floorG);
     this.entityLayer.sortableChildren = true;
     this.gameContainer.addChild(this.entityLayer);
@@ -334,16 +346,57 @@ export class Renderer {
       -this.cam.x * this.TILE + appWidth() / 2,
       -this.cam.y * this.TILE + appHeight() / 2,
     );
-    // 全部三件套每帧重画——此前 viewKey 节流（半格才更新）导致地形/底座
-    // 与实体层（每帧更新）错位，拖拽时"飘移"（用户反馈「svg拖动的时候都会飘」）。
-    // 地形 ~2000 rects + 特征哈希，实测 <1ms/帧，无需节流。
-    this.redrawTerrain();
+    // 地形按块渲染：RenderCache 负责视口内块的懒加载 / 卸载 / 平移（整块烘焙代替每帧 2000 rects）
+    this.renderTerrain();
     this.redrawFloors();
     this.scanVisibleTrees();
     this.syncEntities(nowMs);
     // 选框层每帧重画：内容只有一条矩形，开销可忽略（Graphics.clear 后重画）
     this.boxG.clear();
     this.drawBox(this.boxG);
+  }
+
+  /**
+   * 渲染视口内地形（缓存层 + overlay）。
+   *
+   * 与旧的 redrawTerrain 等价：
+   *   ① 缓存层烘焙不可变的地形底色 + z 阴影（整块懒加载，进出视口才做 Graphics 操作）
+   *   ② overlayG 画浆果丛（运行态数据，每帧重查）
+   *   ③ z 数字标签（TILE ≥ 24 时可见）
+   */
+  private renderTerrain(): void {
+    const halfW = Math.ceil(appWidth() / 2 / this.TILE) + 2;
+    const halfH = Math.ceil(appHeight() / 2 / this.TILE) + 2;
+    const x0 = Math.round(this.cam.x) - halfW;
+    const y0 = Math.round(this.cam.y) - halfH;
+    const x1 = x0 + 2 * halfW;
+    const y1 = y0 + 2 * halfH;
+
+    // ① 缓存层同步：懒加载视口内的块，驱逐视口外的块
+    this.renderCache.sync(x0, y0, x1, y1);
+    // 缓存层位置由 gameContainer 统一变换，reposition 返回 (0,0) 即正确
+    this.renderCache.reposition(this.cam.x, this.cam.y, this.TILE);
+
+    // ② 浆果丛 overlay（运行态 amount，每帧重画）
+    const g = this.overlayG;
+    g.clear();
+    for (let ty = y0; ty <= y1; ty++) {
+      for (let tx = x0; tx <= x1; tx++) {
+        const f = this.view.featureAt(tx, ty);
+        if (!f || f.kind === 'tree') continue;
+        const px = tx * this.TILE;
+        const py = ty * this.TILE;
+        const ccx = px + this.TILE / 2;
+        const ccy = py + this.TILE / 2;
+        g.circle(ccx, ccy, this.TILE * 0.36).fill('#35502a');
+        for (let i = 0; i < f.amount; i++) {
+          g.rect(ccx - 4 + i * 3.2, ccy - 2 + (i % 2) * 4, 2.4, 2.4).fill('#c9403a');
+        }
+      }
+    }
+
+    // ③ z 数字标签
+    this.syncZLabels(x0, y0, halfW, halfH);
   }
 
   /** 扫描视口内树锚点，更新 visibleTrees 集合 */
@@ -362,45 +415,7 @@ export class Renderer {
     this.visibleTrees = next;
   }
 
-  private redrawTerrain(): void {
-    const g = this.terrainG;
-    g.clear();
-    const halfW = Math.ceil(appWidth() / 2 / this.TILE) + 2;
-    const halfH = Math.ceil(appHeight() / 2 / this.TILE) + 2;
-    const x0 = Math.round(this.cam.x) - halfW;
-    const y0 = Math.round(this.cam.y) - halfH;
-    const maxZ = this.view.tuning?.world?.maxZ ?? 4;
-    // 第一趟：只画地形底色 + z 高度阴影（高处亮、低处暗）
-    for (let ty = y0; ty <= y0 + 2 * halfH; ty++) {
-      for (let tx = x0; tx <= x0 + 2 * halfW; tx++) {
-        const kind = this.view.tileAt(tx, ty);
-        g.rect(tx * this.TILE, ty * this.TILE, this.TILE + 0.5, this.TILE + 0.5).fill(TILE_COLORS[kind] ?? '#7a7a7a');
-        // z 高度明暗叠加：z 越大越亮（白色 alpha 随 z 线性增长）
-        const z = this.view.zAt(tx, ty);
-        if (z > 0) {
-          g.rect(tx * this.TILE, ty * this.TILE, this.TILE + 0.5, this.TILE + 0.5)
-            .fill({ color: 0x000000, alpha: Math.max(0, ((maxZ - z) / maxZ) * 0.22) });
-        }
-      }
-    }
-    // 第二趟：浆果丛画在地形之上（树已是 Sprite 实体层，不在 terrainG 里画）
-    for (let ty = y0; ty <= y0 + 2 * halfH; ty++) {
-      for (let tx = x0; tx <= x0 + 2 * halfW; tx++) {
-        const f = this.view.featureAt(tx, ty);
-        if (!f || f.kind === 'tree') continue;
-        const px = tx * this.TILE;
-        const py = ty * this.TILE;
-        const ccx = px + this.TILE / 2;
-        const ccy = py + this.TILE / 2;
-        g.circle(ccx, ccy, this.TILE * 0.36).fill('#35502a');
-        for (let i = 0; i < f.amount; i++) {
-          g.rect(ccx - 4 + i * 3.2, ccy - 2 + (i % 2) * 4, 2.4, 2.4).fill('#c9403a');
-        }
-      }
-    }
-    // 第三趟：z 数字标签（只在放大到能看清时显示）
-    this.syncZLabels(x0, y0, halfW, halfH);
-  }
+
 
   /** z 数字标签池：只在 TILE ≥ 24 时可见，Text 对象复用避免每帧重建 */
   private zLabelLayer = new Container();
