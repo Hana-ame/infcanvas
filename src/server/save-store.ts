@@ -11,6 +11,7 @@
 import { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { SaveData } from '../sim/sim-save';
+import { encodeSaveDataToFile, decodeSaveDataFromFile } from '../shared/bigint-json';
 
 /** 存档名安全校验，与 protocol 的同规则校验一致（两处独立实现互为纵深防御）。 */
 export function isSafeSaveName(name: string): boolean {
@@ -43,22 +44,24 @@ export class SaveStore {
     return join(this.dir, stem + '.json');
   }
 
-  /** 落盘：先 mkdir 再写。返回实际写入的绝对路径。 */
+  /** 落盘：先 mkdir 再写。quantity 字段编码为 bigint JSON 包装（{_B:"42"}）防浮点误差。
+   *  返回实际写入的绝对路径。 */
   write(name: string, data: SaveData): string {
     const p = this.pathFor(name);
     mkdirSync(this.dir, { recursive: true });
     // 临时文件 + rename：写到一半崩溃不会留下半个坏档（load 读到坏档会直接炸）
     const tmp = p + '.tmp';
-    writeFileSync(tmp, JSON.stringify(data), 'utf8');
+    writeFileSync(tmp, JSON.stringify(encodeSaveDataToFile(data as unknown as Record<string, unknown>), null, 2), 'utf8');
     renameSync(tmp, p);
     return p;
   }
 
-  /** 读档；文件不存在或 JSON 损坏都抛错（坏档必须响亮失败，不静默当新局开） */
+  /** 读档；文件不存在或 JSON 损坏都抛错（坏档必须响亮失败，不静默当新局开）。
+   *  自动解码 bigint JSON 包装为 number。兼容旧档的原始 number。 */
   read(name: string): unknown {
     const p = this.pathFor(name);
     if (!existsSync(p)) throw new Error('存档不存在：' + name);
-    return JSON.parse(readFileSync(p, 'utf8'));
+    return decodeSaveDataFromFile(JSON.parse(readFileSync(p, 'utf8')));
   }
 
   /** 该存档是否存在（load 前预检，避免把「不存在」报成「解析失败」） */
