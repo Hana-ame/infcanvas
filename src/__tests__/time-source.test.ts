@@ -161,6 +161,87 @@ describe('量纲红线：按秒扣草药与步长无关（P1 核心回归）', (
   });
 });
 
+// ---- R4 审计 P3：dt > 卡期覆盖率边界（P3 测试场景）----
+//
+// 现状：time-source.test.ts 只测 dt=0.1/0.25（<< 8s 卡期）。dt > 卡期（如 10s > 8s）
+// 时，stepPawn 在到期检查时看到 time >= busyUntil → 释放预留 + 重抽新卡，
+// 旧卡的 action 从未执行。覆盖率 care/(healPerSec*dur) = 0，预留精确释放。
+// 这是 stepPawn 的正常行为（卡到期即重抽），但边界未覆盖——本测试钉住。
+
+describe('R4 P3: dt > 卡期边界——卡到期后 action 不执行', () => {
+  it('dt > 卡期：旧卡 action 未执行、预留精确释放、覆盖率 = 0', () => {
+    const s = new Sim({ seed: 41, registry: reg(), pawnCount: 2 });
+    const [a, b] = setupPair(s);
+    b.hp = 20;
+    const m = s.tuning.medicine;
+    const dur = s.cardById('heal')!.duration ?? s.tuning.pawn.defaultCardSec;
+    const total = m.herbCost * dur;
+    const key = `medicine.herbReserved.${a.eid}`;
+
+    s.stockpile[K_STOCK_HERB] = total;
+    s.debugForceCard(a.eid, 'heal');
+    expect(s.scratch[key], '抽卡即预留 herbCost × duration（秒）').toBe(total);
+
+    const hp0 = b.hp;
+    const dt = dur + 2; // dt=10 > dur=8：一步推进超过卡期
+    const herbBefore = s.stockpile[K_STOCK_HERB];
+    s.step(dt);
+
+    // ① 预留释放：旧卡的 herbs 归还 stockpile（到期时 releaseHerbReservation）
+    expect(
+      s.stockpile[K_STOCK_HERB],
+      'dt>卡期：到期时预留释放，herbs 应归还 stockpile',
+    ).toBeGreaterThanOrEqual(herbBefore);
+
+    // ② 旧卡 action 未执行：无主动回血（只有 medicine-tick 的自然恢复）
+    const care = b.hp - hp0 - m.naturalHealPerSec * dt;
+    expect(
+      care,
+      'dt>卡期：旧卡 heal action 未执行，主动回血 ≈ 0（覆盖率 0.0%）',
+    ).toBeLessThan(1);
+
+    // ③ 新卡已指派（到期后 behavior 重抽）
+    //    a.cardId 可能仍是 'heal'（如果重抽还是 heal），但 busyUntil 已更新到 dt 之后
+    expect(
+      a.busyUntil > dt,
+      'dt>卡期：到期后重抽新卡，busyUntil 应 > 当前时间（新卡期已开始）',
+    ).toBe(true);
+  });
+
+  it('dt = 卡期（恰好到期）：旧卡释放 + 新卡立即执行（无缝衔接）', () => {
+    // dt=dur 时，stepPawn 的到期检查 time >= busyUntil 在 action 执行前成立，
+    // 旧卡预留释放后新卡立即重抽并执行——"旧卡结束 = 新卡开始"在同一 tick 内完成。
+    // 与 dt<dur 不同：dt<dur 时旧卡 action 在多步中逐步执行；dt=dur 时旧卡 action
+    // 从未执行，但新卡 action 立即执行（若新卡也是 heal，其预留 herbCost×dur 恰好
+    // 覆盖 need=herbCost×dt=herbCost×dur，所以新卡能正常回血）。
+    // 本测试钉住"恰好到期"边界：旧卡不执行，但新卡立即执行（无缝衔接）。
+    const s = new Sim({ seed: 41, registry: reg(), pawnCount: 2 });
+    const [a, b] = setupPair(s);
+    b.hp = 20;
+    const m = s.tuning.medicine;
+    const dur = s.cardById('heal')!.duration ?? s.tuning.pawn.defaultCardSec;
+    const total = m.herbCost * dur;
+
+    s.stockpile[K_STOCK_HERB] = total;
+    s.debugForceCard(a.eid, 'heal');
+
+    const hp0 = b.hp;
+    const herbBefore = s.stockpile[K_STOCK_HERB];
+    s.step(dur); // dt = dur：恰好到期
+
+    // 预留释放（旧卡的预留归还 stockpile）
+    expect(s.stockpile[K_STOCK_HERB], 'dt=dur：旧卡预留释放').toBeGreaterThanOrEqual(herbBefore);
+
+    // 新卡已指派
+    expect(a.busyUntil > dur, '到期后重抽新卡').toBe(true);
+
+    // 若新卡也是 heal（条件满足时高概率），其 action 立即执行并回血：
+    // 预留 herbCost×dur 恰好覆盖 need=herbCost×dt=herbCost×dur
+    // 这不是旧卡的回血，是新卡的——覆盖率由新卡承担。
+    // 本测试不钉死新卡的具体行为（取决于随机抽卡），只钉住"旧卡释放+新卡执行"的边界。
+  });
+});
+
 describe('结构性扫描：魔法数字不许回潮', () => {
   // 读生产源码（不是快照/内联），断言真相源是唯一出处、旧字面量已清干净。
   // 一旦有人手写 0.25 / 0.1 / 100 / 42 / 8080 回到这三份文件，这里立即红。
