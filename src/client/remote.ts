@@ -19,14 +19,17 @@
 import { World } from '../sim/world';
 import type { BuildingState, Eid, Hostile, LogEvent, PawnState, Pos } from '../sim/types';
 import { DEFAULT_TUNING, type Tuning } from '../sim/tuning';
-import type { TileInspect, WorldView } from './view';
+import type { TileInspect, ChunkTerrain, WorldView } from './view';
 import { TERRAIN_NAME } from './presentation';
 import { buildBuildingDetail, buildColonySummary, buildHostileDetail, buildPawnDetail } from './hud-faces';
 import { K_TAG_FIRE } from '../mods/contracts';
 import type { ClientMsg, FullState, ServerMsg } from '../shared/protocol';
 import { WATCHDOG_MS } from '../shared/protocol';
 import {
+  CHUNK_SIZE,
   chunksForInterest,
+  chunkBounds,
+  chunkKeyToXY,
   fromChunkCoords,
   tileChunkKey,
   type ChunkCoord,
@@ -600,5 +603,55 @@ export class RemoteSim implements WorldView {
     const h = this.hostileList.find((x) => x.id === id);
     if (!h) return null;
     return buildHostileDetail(h, this.hostileList, this.pawnMap.values(), this._tuning);
+  }
+
+  // ---- 区块协议面（渲染按块）----
+  // 联机模式：地形走本地推导 World（同 seed + tuning 的纯函数，零流量），
+  // 建筑/敌袭走服务端投影的 buildingList / hostileList。
+
+  terrainChunk(cx: number, cy: number): ChunkTerrain {
+    const size = CHUNK_SIZE;
+    const w = this.world;
+    const x0 = cx * size;
+    const y0 = cy * size;
+    const kinds: string[] = new Array(size * size);
+    const zs: number[] = new Array(size * size);
+    for (let ly = 0; ly < size; ly++) {
+      const y = y0 + ly;
+      const row = ly * size;
+      for (let lx = 0; lx < size; lx++) {
+        const i = row + lx;
+        const x = x0 + lx;
+        kinds[i] = w.tileAt(x, y);
+        zs[i] = w.zAt(x, y);
+      }
+    }
+    return { cx, cy, size, kinds, zs };
+  }
+
+  buildingsInChunks(keys: Iterable<number>): BuildingState[] {
+    const wanted = new Set(keys);
+    return this.buildingList.filter((b) => wanted.has(tileChunkKey(b.pos.x, b.pos.y).key));
+  }
+
+  hostilesInChunks(keys: Iterable<number>): Hostile[] {
+    const wanted = new Set(keys);
+    return this.hostileList.filter((h) => wanted.has(tileChunkKey(h.pos.x, h.pos.y).key));
+  }
+
+  featuresInChunks(keys: Iterable<number>): Map<string, import('../sim/types').FeatureHit> {
+    const out = new Map<string, import('../sim/types').FeatureHit>();
+    const w = this.world;
+    for (const key of keys) {
+      const { cx, cy } = chunkKeyToXY(key);
+      const b = chunkBounds(cx, cy);
+      for (let y = b.y0; y <= b.y1; y++) {
+        for (let x = b.x0; x <= b.x1; x++) {
+          const f = w.featureAt(x, y);
+          if (f) out.set(`${x},${y}`, f);
+        }
+      }
+    }
+    return out;
   }
 }

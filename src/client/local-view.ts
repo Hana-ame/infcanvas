@@ -2,13 +2,14 @@
  * client/local-view.ts —— 本地模式视图适配器：直接包 Sim 实现 WorldView。
  * （联机模式对应物是 remote.ts 的 RemoteSim——两者对渲染/HUD 长同一张脸。）
  */
-import type { TileInspect, WorldView } from './view';
+import type { TileInspect, ChunkTerrain, WorldView } from './view';
 import { CARD_LABEL, TERRAIN_NAME } from './presentation';
 import { buildBuildingDetail, buildColonySummary, buildHostileDetail, buildPawnDetail } from './hud-faces';
 import { K_TAG_FIRE } from '../mods/contracts';
 import type { Sim } from '../sim';
 import type { Tuning } from '../sim/tuning';
-import type { BuildingState, LogEvent, PawnState } from '../sim/types';
+import type { BuildingState, FeatureHit, Hostile, LogEvent, PawnState } from '../sim/types';
+import { CHUNK_SIZE, chunkBounds, chunkKeyToXY, tileChunkKey } from '../shared/chunks';
 
 export class LocalView implements WorldView {
   constructor(private sim: Sim) {}
@@ -134,5 +135,61 @@ export class LocalView implements WorldView {
     const h = this.sim.hostiles().find((x) => x.id === id);
     if (!h) return null;
     return buildHostileDetail(h, this.sim.hostiles(), this.sim.pawns(), this.sim.tuning);
+  }
+
+  // ---- 区块协议面（渲染按块）----
+  // 本地模式：块内数据全在 World 里，直接推导。地形是纯函数，所以整块可以一次取完
+  // 让渲染层烘焙缓存；建筑走 chunk-1 拆出的区块索引（World 已有门面）。
+
+  terrainChunk(cx: number, cy: number): ChunkTerrain {
+    const size = CHUNK_SIZE;
+    const w = this.sim.world;
+    const x0 = cx * size;
+    const y0 = cy * size;
+    const kinds: string[] = new Array(size * size);
+    const zs: number[] = new Array(size * size);
+    for (let ly = 0; ly < size; ly++) {
+      const y = y0 + ly;
+      const row = ly * size;
+      for (let lx = 0; lx < size; lx++) {
+        const i = row + lx;
+        const x = x0 + lx;
+        kinds[i] = w.tileAt(x, y);
+        zs[i] = w.zAt(x, y);
+      }
+    }
+    return { cx, cy, size, kinds, zs };
+  }
+
+  /** 走 chunk-1 拆出的区块索引（真源表 → 派生视图），不自扫建筑表 */
+  buildingsInChunks(keys: Iterable<number>): BuildingState[] {
+    return [...this.sim.world.buildingsInChunks(keys)];
+  }
+
+  hostilesInChunks(keys: Iterable<number>): Hostile[] {
+    const wanted = new Set(keys);
+    return this.sim.hostiles().filter((h) => wanted.has(tileChunkKey(h.pos.x, h.pos.y).key));
+  }
+
+  /**
+   * 一批区块内的特征锚点。
+   * ⚠ 这是**全块枚举**（每块 4096 格），不是增量索引——特征锚点是哈希推导的，
+   * 不存在"只登记被采过的"这种真源表。因此本面**不可每帧调用**：
+   * 渲染层要缓存时须配特征版本号（采收/再生驱动），那是下一阶段的事（见 DESIGN.md）。
+   */
+  featuresInChunks(keys: Iterable<number>): Map<string, FeatureHit> {
+    const out = new Map<string, FeatureHit>();
+    const w = this.sim.world;
+    for (const key of keys) {
+      const { cx, cy } = chunkKeyToXY(key);
+      const b = chunkBounds(cx, cy);
+      for (let y = b.y0; y <= b.y1; y++) {
+        for (let x = b.x0; x <= b.x1; x++) {
+          const f = w.featureAt(x, y);
+          if (f) out.set(`${x},${y}`, f);
+        }
+      }
+    }
+    return out;
   }
 }

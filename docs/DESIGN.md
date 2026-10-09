@@ -1845,3 +1845,83 @@ scratch / techsUnlocked），此前它还内联持有三样东西：`routeCache`
 `setPath` 内联的策略与拆分后 `plan()` 的输出**逐用例对拍**（预算常量、
 Manhattan 24/25 边界、长距 planRoute 对拍、锚点去重与 tagVersion 缓存、
 clearRoutes 后的绕行、缓存别名掏空后果）。golden 指纹是端到端护栏，这份是策略层护栏。
+
+---
+
+## 模块边界：渲染按块（r 线：2026-10-08 拆分深化）
+
+### WorldView 块协议面（第一刀）
+
+WorldView 新增 4 个块级面，与既有扁平面（buildings()/pawns()/hostiles()）**并存而非替代**：
+
+| 面 | 用途 | 实现方 | 为何不是 per-tile 封装 |
+|---|---|---|---|
+| `terrainChunk(cx, cy)` → ChunkTerrain | 一整块 64×64 的地形 + 高度 | LocalView/RemoteSim 同构 | 地形是纯函数（seed+tuning），每帧重查 4096 格 ≈ 12000 次函数调用；整块烘焙一次永久缓存 |
+| `buildingsInChunks(keys)` | 按块裁剪的建筑（渲染用） | 本地走 chunk-index 桶，联机过滤 buildingList | HUD 聚合用扁平全量面，渲染只要看得见的几块——两者不是冗余，读者不同 |
+| `hostilesInChunks(keys)` | 按块裁剪的敌袭 | 本地遍历 hostile 列表，联机过滤 hostileList | 同上 |
+| `featuresInChunks(keys)` | 一批块内的特征锚点 | 本地/联机都走 world featureAt 逐格枚举 | **不可每帧调用**——每块 4096 格全扫描；渲染层需配特征版本号缓存 |
+
+**ChunkTerrain 契约**（`client/view.ts`）：
+- `kinds[]` / `zs[]` 行主序 64×64 = 4096 元素
+- 渲染层只读不写（写了也不会影响 sim，只会让缓存与真相分家）
+
+**双模同构验证**：`chunk-surface.test.ts` 用同一份 Sim 快照喂给 LocalView 与 RemoteSim，
+16 条断言逐字段对拍 terrainChunk / buildingsInChunks / featuresInChunks 全等。
+
+### 渲染缓存层（第二刀）
+
+`client/render-cache.ts` —— 渲染缓存层骨架，3A 地图渲染的地基：
+
+- **sync(x0,y0,x1,y1)** 每帧由 Renderer.frame 调用，只做三件事：
+  1. 懒加载视口内的新块（terrainChunk → bakeChunk → addChild）
+  2. 驱逐 LRU 块（超出 `maxChunks=256` 的 cap 时）
+  3. 驱逐本帧完全不在视口的块（防止"走远后回头看旧块"的堆积）
+- **bakeChunk**：把一整块烘焙成 Graphics（4096 格的地形底色 + z 阴影一次画完，
+  之后只平移不重绘；相机的放大/缩放由 Renderer 的 container 统一处理）
+- **clear**：全量释放（换世界/重建时）
+- 设计权衡：Phase ① 用 Graphics 而非 RenderTexture（块少时创建/销毁便宜）；
+  Phase ② 升级到 RenderTexture + Sprite（更 GPU 友好）；Phase ③ 加入特征采收版本号缓存
+
+**渲染按块的阶段划分（2026-10-08）**：
+1. ✅ **块协议面 + 缓存层骨架**（本批完成）：terrainChunk 整块返回 + RenderCache sync/烘焙/驱逐
+2. ⏳ **RenderCache 接入 render.ts 的 frame()**：`redrawTerrain` → `cache.sync + reposition`
+3. ⏳ **特征锚点缓存 + 按采收版本失效**
+4. ⏳ **建筑底座烘焙缓存**
+
+### 计算层：事件效果 resolve/apply 分离（calc 线）
+
+`mods/packs/events-effects.ts`：
+
+- **resolveEffects(seed, ctx)** → EventEffects：纯函数（只读 ctx，无写操作）。
+  不论 effects 是静态对象还是函数形式，统一 resolve 成确定的效果表。
+- **applyResolvedEffects(ctx, e, expiryKey?)**：把已确定的 effects 写到 ctx（纯副作用）。
+  与旧 applyEffects 逐字段语义一致（钳制 ≥0 / 复制 pawns 列表 / 能力探测）。
+- **applyReverseEffects(ctx, e)**：持续效果到期时的反向操作（当前仅 tempShift）。
+
+价值：resolve 可单独断言（不依赖 mock ctx 的完整实现）；
+apply 与 resolve 解耦后，同一效果表可多次 apply / 回放 / 测试。
+
+### 单向数据流：选择态不可变快照（flow 线）
+
+`client/selection.ts` 新增 `SelectionSnapshot` 接口 + 三个纯函数构建器
+（`selectPawns` / `selectBuilding` / `selectHostile`）：
+
+- `SelectionSnapshot` = { pawns, buildingId, hostileId } 三者互斥
+- 每帧生成一次、全量替换，不与 renderer/HUD 共享可变引用
+- `EMPTY_SELECTION` 被 Object.freeze 锁定
+
+### 文件清单（本轮新增）
+
+| 文件 | 行数 | 职责 |
+|---|---|---|
+| `client/view.ts` | 176→~210 | ChunkTerrain 接口 + 块协议面 4 方法声明 |
+| `client/local-view.ts` | 138→~200 | LocalView 块面实现 |
+| `client/remote.ts` | 607→~657 | RemoteSim 块面实现 |
+| `client/render-cache.ts` | ~245 | 渲染缓存层（烘焙/同步/驱逐） |
+| `client/selection.ts` | 57→~90 | 选择态不可变快照 |
+| `mods/packs/events-effects.ts` | ~120 | 事件效果 resolve/apply 分离 |
+| `__tests__/chunk-surface.test.ts` | ~230 | 块协议面 16 条测试 |
+| `__tests__/render-cache.test.ts` | ~200 | 渲染缓存层 6 条测试（mock pixi） |
+| `__tests__/events-effects.test.ts` | ~130 | 效果分离 10 条测试 |
+| `__tests__/selection-flow.test.ts` | ~90 | 选择快照 9 条测试 |
+| `docs/PROGRESS.md` | 追加 | 本轮完整笔记 |

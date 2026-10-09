@@ -10,13 +10,38 @@
  * 表现数据表（CARD_LABEL / TRAIT_COLOR / TERRAIN_NAME / cardLabel）在 ./presentation.ts——
  * 契约与"画成什么样"分文件，新增卡片图标不必改接口文件（2026-10-08 hud 维度拆分）。
  */
-import type { BuildingState, Hostile, LogEvent, PawnState } from '../sim/types';
+import type { BuildingState, FeatureHit, Hostile, LogEvent, PawnState } from '../sim/types';
 import type { BuildingTuningEntry, Tuning } from '../sim/tuning';
 
 /** HUD 面板挂载位：结构化分区（style.css 按 slot 定屏幕位置与视觉层级）。
  *  为什么是枚举而不是散落的 DOM id：HUD 要有明确的信息层级，且**可扩展**——
  *   新玩法包能声明自己的面板并挂到既有分区，而不用改 hud.ts 硬编码（见 hud/panels.ts）。 */
 export type HudSlot = 'status' | 'vitals' | 'colony' | 'threat' | 'detail' | 'log';
+
+/**
+ * 区块地形快照（渲染按块的地基，2026-10-08 r 线拆分）。
+ *
+ * 一次取出整块 64×64 的地形与高度，渲染层据此把一块烘焙成一个 Graphics 常驻缓存，
+ * 而不是每帧对可视区 ~2000 格各调一次 tileAt/zAt（那是 3 趟遍历 × 6000 次跨层调用/帧）。
+ *
+ * 地形是 (seed, tuning) 的**纯函数**——同坐标恒同结果、永不改变，所以这份快照
+ * 生命周期内可永久缓存（缓存失效只需跟"世界被换掉"对齐，而换世界 = 页面重载）。
+ * 特征余量（被采过的树剩几根）是**运行态**，不走这里——它随 full/delta 走协议同步。
+ */
+export interface ChunkTerrain {
+  /** 区块坐标（tile 空间的 64 格边长块） */
+  readonly cx: number;
+  readonly cy: number;
+  /** 块内每格边长（CHUNK_SIZE=64） */
+  readonly size: number;
+  /**
+   * 行主序：`kinds[ly * size + lx]` = 地形种类（'grass'|'dirt'|'stone'|'water'）。
+   * 只读契约：渲染层不得写回（写了也不会影响 sim，只会让缓存与真相分家）。
+   */
+  readonly kinds: string[];
+  /** 行主序：`zs[ly * size + lx]` = 海拔（z 高度模型的明暗叠加依据） */
+  readonly zs: number[];
+}
 
 export interface WorldView {
   readonly time: number;
@@ -78,6 +103,36 @@ export interface WorldView {
   inspectPawn(eid: number): PawnDetail | null;
   inspectBuilding(id: string): BuildingDetail | null;
   inspectHostile(id: number): HostileDetail | null;
+
+  // ---- 区块协议面（渲染按块的地基，2026-10-08 r 线拆分）----
+  //
+  // 为什么单开一组块面而不是让渲染层自己算：
+  //  ① **裁剪是渲染的唯一正确来源**——视口覆盖哪几块是 Renderer 的私有知识（相机 + 缩放），
+  //     块集合交给渲染层自己推导就等于把"世界有多少东西"的判定权下放给表现层。
+  //  ② 本地与联机的取数路径不同（本地查 World、联机查合入层），块面收口在实现方，
+  //     与 inspect / colony / techProgress 同一设计动机：render 才能零分支复用。
+  //  ③ 与既有 `buildings()` / `pawns()` 的分工：**扁平全量面给 HUD 用**（HUD 要聚合全局事实），
+  //     **块面给渲染用**（渲染只要看得见的那几块）。两者并存不是冗余，是读者不同。
+
+  /**
+   * 一整块的地形与高度（渲染按块烘焙用）。
+   *
+   * 为什么是"一整块一次返回"而不是继续 per-tile 查询：地形是 (seed, tuning) 的纯函数，
+   * 一块 4096 格的数据烘焙成一张图后**永不再变**，缓存收益是数量级的；per-tile 查询
+   * 则每帧重复付 4096 次函数调用的代价。这是 3A 地图渲染的基础设施：
+   * 大规模世界不整块画，只有可视区块进渲染管线。
+   */
+  terrainChunk(cx: number, cy: number): ChunkTerrain;
+  /** 一批区块内的建筑（渲染按块裁剪；HUD 用 buildings() 全量面，两者并存） */
+  buildingsInChunks(keys: Iterable<number>): BuildingState[];
+  /** 一批区块内的敌袭单位（渲染按块裁剪） */
+  hostilesInChunks(keys: Iterable<number>): Hostile[];
+  /**
+   * 一批区块内的特征锚点：键 "x,y" → FeatureHit。
+   * 树锚点是 (seed, tuning) 的纯函数（位置永不改），余量是运行态（被采过会变）。
+   * 渲染层用锚点集合建/清 Sprite 池，用 amount 画浆果点数——两件事各自只依赖自己需要的部分。
+   */
+  featuresInChunks(keys: Iterable<number>): Map<string, FeatureHit>;
 }
 
 /** 殖民地汇总（R3-HUD）。所有数值都是**已存在**的世界事实的聚合，不引入新模拟。 */

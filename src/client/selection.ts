@@ -1,16 +1,53 @@
 /**
- * client/selection.ts —— 框选的**纯几何判定**（R1-4）。
+ * client/selection.ts —— 框选的**纯几何判定**（R1-4） + 选择态不可变快照（flow 线）。
  *
- * 为什么要独立成模块：框选判定是 R1-4 里最容易出错的部分，而且错法很隐蔽——
- * 反向拖拽、零面积框、框住世界原点这些情况肉眼看画面几乎发现不了，
- * 表现只是「好像少选了一只」。把判定抽成不依赖 DOM/Pixi 的纯函数后，
- * 可以直接断言选中的 eid 集合，比截图对比可靠得多。
+ * ## 为什么需要不可变快照（2026-10-08 flow 线拆分）
  *
- * 坐标约定：函数收到的是**世界坐标**的矩形，已由调用方从屏幕坐标换算完毕。
- * 换算留在 render.ts 是因为它依赖相机/缩放这些表现层状态；
- * 「哪些点落在矩形里」则是纯几何，没有理由沾上表现层。
+ * 之前 main.ts 用 `selected = new Set<number>()` 作为共享可变引用，
+ * 被 Renderer 的 onSelect/HUD 的 frame/ctrl.move 三方同时读写，时序不可控。
+ *
+ * 修法：每帧生成一个不可变 SelectionSnapshot，只在事件处理器收口处一次性替换。
+ * 渲染/HUD/ctrl 每帧读的是同一份快照，谁也不改它。
+ *
+ * 与既有 eidsInRect 的关系：
+ *   eidsInRect 是"框出哪些鼠"的纯几何函数，返回原始的 eid 数组；
+ *   本层是"把这些 eid 包装成不可变选择态"，是流向上游到下游的契约载体。
+ *
+ * ## 坐标约定
+ *   函数收到的是**世界坐标**的矩形，已由调用方从屏幕坐标换算完毕。
+ *   换算留在 render.ts 中因它依赖相机/缩放这些表现层状态；
+ *   「哪些点落在矩形里」则是纯几何，没有理由沾上表现层。
  */
 import type { Eid, Pos } from '../sim/types';
+
+/** 选择快照：每帧不变，一次性替换。含鼠/建筑/敌袭三方互斥语义。 */
+export interface SelectionSnapshot {
+  readonly pawns: ReadonlySet<Eid>;
+  readonly buildingId: string | null;
+  readonly hostileId: number | null;
+}
+
+/** 空选择（无选中对象） */
+export const EMPTY_SELECTION: SelectionSnapshot = Object.freeze({
+  pawns: new Set<Eid>(),
+  buildingId: null,
+  hostileId: null,
+});
+
+/** 纯函数：生成新快照（只替换鼠选取，清空建筑/敌袭） */
+export function selectPawns(eids: Iterable<Eid>): SelectionSnapshot {
+  return { pawns: new Set(eids), buildingId: null, hostileId: null };
+}
+
+/** 纯函数：选中建筑（清鼠选） */
+export function selectBuilding(buildingId: string | null): SelectionSnapshot {
+  return { pawns: new Set(), buildingId, hostileId: null };
+}
+
+/** 纯函数：选中敌袭（清鼠选） */
+export function selectHostile(hostileId: number | null): SelectionSnapshot {
+  return { pawns: new Set(), buildingId: null, hostileId };
+}
 
 /** 轴对齐矩形（世界坐标；允许 x0>x1 / y0>y1，反向拖拽也能正确处理） */
 export interface WorldRect {
