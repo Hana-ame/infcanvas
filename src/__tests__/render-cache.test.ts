@@ -24,7 +24,7 @@ vi.mock('pixi.js', () => {
 
   class _Container {
     children: any[] = [];
-    _px = 0; _py = 0; _destroyed = false; parent: any = null;
+    _px = 0; _py = 0; parent: any = null;
     constructor() { Object.assign(this, eventMethods); }
     get position() { return { x: this._px, y: this._py, set: (x: number, y: number) => { this._px = x; this._py = y; } }; }
     addChild(c: any): any { this.children.push(c); c.parent = this; return c; }
@@ -33,19 +33,19 @@ vi.mock('pixi.js', () => {
       if (i >= 0) this.children.splice(i, 1);
       return c;
     }
-    destroy(_opts?: any) { this._destroyed = true; this.children = []; }
+    destroy(_opts?: any) { this.children = []; }
   }
 
   class _Graphics {
     children: any[] = [];
-    _px = 0; _py = 0; _destroyed = false; parent: any = null;
+    _px = 0; _py = 0; parent: any = null;
     constructor() { Object.assign(this, eventMethods); }
     get position() { return { x: this._px, y: this._py, set: (x: number, y: number) => { this._px = x; this._py = y; } }; }
     rect(_x: number, _y: number, _w: number, _h: number): this { return this; }
     fill(_color: any): this { return this; }
     circle(_x: number, _y: number, _r: number): this { return this; }
     clear(): this { return this; }
-    destroy(_opts?: any) { this._destroyed = true; }
+    destroy(_opts?: any) { /* noop */ }
     addChild(c: any): any { this.children.push(c); return c; }
     removeChild(c: any): any {
       const i = this.children.indexOf(c);
@@ -65,7 +65,7 @@ vi.mock('pixi.js', () => {
       get position() { return { x: this._px, y: this._py, set: (x: number, y: number) => { this._px = x; this._py = y; } }; }
       get anchor() { return { x: this._ax, y: this._ay, set: (x: number, y: number) => { this._ax = x; this._ay = y; } }; }
       addChild(c: any): any { this.children.push(c); return c; }
-      destroy(_opts?: any) { this._destroyed = true; }
+      destroy(_opts?: any) { /* noop */ }
     },
     Text: class {
       x = 0; y = 0; text = '';
@@ -75,7 +75,7 @@ vi.mock('pixi.js', () => {
       get position() { return { x: this._px, y: this._py, set: (x: number, y: number) => { this._px = x; this._py = y; } }; }
       get anchor() { return { x: this._ax, y: this._ay, set: (x: number, y: number) => { this._ax = x; this._ay = y; } }; }
       addChild(c: any): any { this.children.push(c); return c; }
-      destroy(_opts?: any) { this._destroyed = true; }
+      destroy(_opts?: any) { /* noop */ }
     },
     Texture: class {
       constructor() { Object.assign(this, eventMethods); }
