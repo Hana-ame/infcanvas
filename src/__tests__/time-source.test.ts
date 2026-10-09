@@ -198,7 +198,7 @@ describe('结构性扫描：魔法数字不许回潮', () => {
   });
 
   it('tuning.ts：SIM_DT_SEC 是唯一原始 dt，默认值也在此归口', () => {
-    const code = src('../sim/tuning.ts');
+    const code = src('../sim/tuning/index.ts');
     expect(code).toMatch(/export const SIM_DT_SEC\s*=\s*0\.1/);
     expect(code).toMatch(/export const SERVER_TICK_MS\s*=\s*SIM_DT_SEC\s*\*\s*1000/);
     expect(code).toMatch(/export const CLIENT_STEP_SEC\s*=\s*CLIENT_STEP_MULT\s*\*\s*SIM_DT_SEC/);
@@ -211,9 +211,9 @@ describe('结构性扫描：魔法数字不许回潮', () => {
     // 原缺陷：medicine.ts 与 tuning.ts 各有一处注释拿 client 的 step(0.25)
     // 当"秒/tick 量纲"的论证基准，而服务器权威侧跑的是 0.1。这里钉住订正后的措辞。
     expect(src('../mods/packs/medicine.ts')).not.toMatch(/生产走 step\(0\.25\)/);
-    expect(src('../sim/tuning.ts')).not.toMatch(/生产按 step\(0\.25\)/);
+    expect(src('../sim/tuning/index.ts')).not.toMatch(/生产按 step\(0\.25\)/);
     // 且两处都指明真实来源是 tuning §0 的 SIM_DT_SEC
     expect(src('../mods/packs/medicine.ts')).toContain('SIM_DT_SEC');
-    expect(src('../sim/tuning.ts')).toContain('SIM_DT_SEC');
+    expect(src('../sim/tuning/index.ts')).toContain('SIM_DT_SEC');
   });
 });
