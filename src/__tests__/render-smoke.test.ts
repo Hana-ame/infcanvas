@@ -221,12 +221,14 @@ import { Renderer } from '../client/render';
 import { Application } from 'pixi.js';
 import type { WorldView } from '../client/view';
 import type { Tuning } from '../sim/tuning';
+import { CHUNK_SIZE } from '../shared/chunks';
 
 // ---------------------------------------------------------------------
 // 4. Mock WorldView
 // ---------------------------------------------------------------------
 
 function makeMockView(): WorldView {
+  const ch = CHUNK_SIZE;
   return {
     time: 0,
     stockpile: {},
@@ -258,6 +260,15 @@ function makeMockView(): WorldView {
     inspectPawn: () => null,
     inspectBuilding: () => null,
     inspectHostile: () => null,
+    // 块协议面（渲染按块需要）
+    terrainChunk: (_cx: number, _cy: number) => ({
+      cx: _cx, cy: _cy, size: ch,
+      kinds: new Array(ch * ch).fill('grass'),
+      zs: new Array(ch * ch).fill(0),
+    }),
+    buildingsInChunks: () => [],
+    hostilesInChunks: () => [],
+    featuresInChunks: () => new Map(),
   };
 }
 

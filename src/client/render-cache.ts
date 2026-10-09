@@ -63,6 +63,10 @@ export interface RenderCacheOptions {
   maxChunks?: number;
   /** 区块的 tile 边长（缺省 CHUNK_SIZE=64） */
   chunkSize?: number;
+  /** 每 tile 像素数（与 Renderer.TILE 对齐；缺省 20；变化时清空缓存重建） */
+  tilePx?: number;
+  /** 世界最大 z 高度（缺省 4；与 tuning.world.maxZ 对齐） */
+  maxZ?: number;
 }
 
 export class RenderCache {
@@ -70,6 +74,8 @@ export class RenderCache {
   private frameN = 0;
   readonly maxChunks: number;
   readonly chunkSize: number;
+  readonly tilePx: number;
+  readonly maxZ: number;
 
   constructor(
     /** WorldView 块协议面 */
@@ -80,6 +86,8 @@ export class RenderCache {
   ) {
     this.maxChunks = opts.maxChunks ?? 256;
     this.chunkSize = opts.chunkSize ?? CHUNK_SIZE;
+    this.tilePx = opts.tilePx ?? 20;
+    this.maxZ = opts.maxZ ?? 4;
   }
 
   /** 区块键 */
@@ -202,10 +210,8 @@ export class RenderCache {
   private bakeChunk(t: ChunkTerrain, cx: number, cy: number): Graphics {
     const g = new Graphics();
     const size = t.size;
-    const tilePx = 20; // 与 render.ts 的 TILE 常量对齐（实际值由 Renderer 持有，缓存层存 1:1
-    //   比例，Renderer 的 container 缩放会统一处理）
-
-    const maxZ = 4; // 缺省；实际值应从 view.tuning 取，但块缓存不依赖 tuning 运行时变化
+    const tilePx = this.tilePx;
+    const maxZ = this.maxZ;
     for (let ly = 0; ly < size; ly++) {
       const y = cy * size + ly;
       const row = ly * size;
