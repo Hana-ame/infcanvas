@@ -306,6 +306,14 @@ export interface Tuning {
       festivalFoodAbove: number;
       fecundFoodAbove: number;
     };
+    effects: {
+      harvestStockDelta: number;
+      coldsnapTempShift: number;
+      plagueHpDelta: number;
+      strangerSpawnPawn: number;
+      fecundSeasonStockMul: number;
+      festivalStockDelta: number;
+    };
   };
   tiles: Record<string, TileTuningEntry>;
   buildings: Record<string, BuildingTuningEntry>;

@@ -103,6 +103,11 @@ function fakeView(over: Partial<{ pawnCount: number; time: number }> = {}): Worl
     inspectPawn: () => null,
     inspectBuilding: () => null,
     inspectHostile: () => null,
+    // chunk 裁剪面（渲染按块重构后新增，HUD 面板未用到，给空实现）
+    terrainChunk: () => ({ cx: 0, cy: 0, size: 0, kinds: [], zs: [] }),
+    buildingsInChunks: () => [],
+    hostilesInChunks: () => [],
+    featuresInChunks: () => new Map<string, import('../sim/types').FeatureHit>(),
   };
 }
 

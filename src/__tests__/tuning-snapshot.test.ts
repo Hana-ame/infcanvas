@@ -58,6 +58,35 @@ describe('DEFAULT_TUNING 拆分后深比较（护栏）', () => {
       'tiles', 'buildings', 'enemies', 'traits',
     ]);
   });
+
+  /**
+   * Tuning 接口 ↔ DEFAULT_TUNING 键集合同步护栏（防拆分/搬迁时丢字段）。
+   *
+   * 背景（2026-10-08 事故）：c5cda95 把 events.effects 加到 DEFAULT_TUNING 但漏了
+   * Tuning interface，CI 红灯 15 次直到 issue #5 才修。本测试用运行时 Object.keys()
+   * 断言每个嵌套对象的键集合与预期一致——若有人删字段或加字段忘改另一边，立刻红。
+   *
+   * 注意：此护栏只验 DEFAULT_TUNING 侧（运行时可见）。interface 侧由 tsc 保证
+   * （DEFAULT_TUNING: Tuning 类型注解 = 编译期互检）。两侧同时满足即无脱节。
+   */
+  it('Tuning.events 键集合与 interface 同步（含 effects 子对象）', () => {
+    const evKeys = Object.keys(DEFAULT_TUNING.events).sort();
+    expect(evKeys).toEqual([
+      'checkSec', 'cooldownSec', 'effects', 'maxLog', 'thresholds',
+    ]);
+    expect(Object.keys(DEFAULT_TUNING.events.thresholds).sort()).toEqual([
+      'coldsnapMinPawns', 'fecundFoodAbove', 'festivalFoodAbove',
+      'harvestFoodBelow', 'plagueMinPawns', 'strangerFoodAbove',
+    ]);
+    expect(Object.keys(DEFAULT_TUNING.events.effects).sort()).toEqual([
+      'coldsnapTempShift', 'fecundSeasonStockMul', 'festivalStockDelta',
+      'harvestStockDelta', 'plagueHpDelta', 'strangerSpawnPawn',
+    ]);
+    // effects 子值全为 number（interface 声明全为 number）
+    for (const v of Object.values(DEFAULT_TUNING.events.effects)) {
+      expect(typeof v).toBe('number');
+    }
+  });
 });
 
 describe('golden 指纹不变量（拆分后行为等价）', () => {
