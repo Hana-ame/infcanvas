@@ -343,3 +343,4 @@
 | **文档同步：DESIGN.md追加模块边界小节（2026-10-08）** | 四线拆分成果需记录 | ✅ DESIGN.md文件尾追加「模块边界：渲染按块(r线) / 计算层(calc线) / 单向数据流(flow线)」整节，含文件清单与阶段划分表 |
 
 **当前装配态（2026-10-08 拆分深化完成）**：52 文件 / **514 用例全绿**（基线473 + chunk-surface 16 + render-cache 6 + events-effects 10 + selection-flow 9 = +41，factions 12复跑稳定）。golden 指纹零变化（纯架构拆分，不改 sim 行为）。
+| CI 红灯修复：Tuning 接口缺 `effects` 字段 + 3 处测试 stale（2026-10-12，issue #5） | CI 连续 15 次 failure（c5cda95 起），`typecheck + build` 必挂；test/golden/bench 全绿，纯类型层断裂 | ✅ **根因**：c5cda95 把 `events.effects` 加到 `DEFAULT_TUNING` 但漏了 `Tuning` interface，c2c1ba2 拆分 tuning.ts 时继续丢失。修法：① `tuning/types.ts` 补 `effects` 子对象（6 个字段，与 defaults 对齐）；② `events.test.ts` 加 union 收窄（`typeof seed.effects === 'function'`）；③ `hud-panels.test.ts` fakeView 补 4 个 chunk 字段；④ `render-smoke.test.ts` pixi mock 修 `_px/_py`；⑤ 新增 guardrail 测试断言 `Tuning.events` 键集合与 interface 同步。**tsc 25→0 错**、516 用例全绿、golden 指纹零变化。PR: Closes #5 |

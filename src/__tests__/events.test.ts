@@ -451,7 +451,8 @@ describe('向后兼容', () => {
             update() {
               for (const seed of mySeeds) {
                 if (!seed.when(ctx)) continue;
-                const e = seed.effects;
+                // union 收窄：effects 可为函数（运行时读 tuning）或静态对象（向后兼容）
+                const e = typeof seed.effects === 'function' ? seed.effects(ctx) : seed.effects;
                 ctx.log(e.log);
                 if (e.stock) for (const [k, v] of Object.entries(e.stock)) ctx.stockpile[k] = (ctx.stockpile[k] ?? 0) + v;
                 if (e.stockMul) for (const [k, m2] of Object.entries(e.stockMul)) ctx.stockpile[k] = (ctx.stockpile[k] ?? 0) * m2;

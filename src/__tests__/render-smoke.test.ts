@@ -28,7 +28,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 vi.mock('pixi.js', () => {
   // 所有 Pixi 显示对象共享的混入：position/scale/anchor 等
   const posMixin = {
-    get position() { return { x: 0, y: 0, set: (x: number, y: number) => { this._px = x; this._py = y; } }; }
+    get position() { return { x: 0, y: 0, set: (_x: number, _y: number) => {} }; }
   };
 
   class FakeContainer {
