@@ -1925,3 +1925,18 @@ apply 与 resolve 解耦后，同一效果表可多次 apply / 回放 / 测试�
 | `__tests__/events-effects.test.ts` | ~130 | 效果分离 10 条测试 |
 | `__tests__/selection-flow.test.ts` | ~90 | 选择快照 9 条测试 |
 | `docs/PROGRESS.md` | 追加 | 本轮完整笔记 |
+
+## P1 主角直接操控（2026-10-13 追加，v3 章节续）
+
+**改版背景**：用户 2026-10-13 拍板暗黑-like 改版（KB `proj-infcanvas-direct-control-proposal-2026-10-13`）。终版操控口径 = **以人操纵为主 + 成功率判定，可跳过抽卡**（覆盖更早"每次操作过卡"转述）；多人选型 A（同世界各自控角色）、权威侧上行下发（P3 落地）。P1 只做**本地闭环**（本地 Sim 即权威，联机 input 上行通道在 P3）。
+
+**直接操控四件套（与自主抽卡并存）**：
+
+1. **输入层** `client/input.ts`：键盘状态机（WASD/方向键双套）+ 触屏虚拟摇杆；纯函数 `moveVector`/`joystickVector`（对角归一化 + 死区）与 DOM 接线分离（node 可单测）。产出**方向意图**，不直写坐标。
+2. **移动原语** `Sim.moveDir`：方向意图 → 分轴位移 + 格心碰撞（复用 `World.canStep/canStand`，含 z 高差攀爬）；被挡轴贴当前格边界钳制（贴墙滑动）。**移动本体无成功率**（成功率只挂动作，避免"每次按键被判定拦截"的手感碎裂）；不消费 rng（直接移动不进确定性随机序列）。
+3. **成功率判定** `Sim.rollSuccess(rate)`：`rng() < rate`，复用权威 rng 单流（随档 → 确定性续跑）；失败语义由调用动作声明。**示例动作** `Sim.directAttack(eid)`：冷却闸 → attackRange 内最近敌袭 → 命中率判定——命中 = damageHostile（打死即 despawn，与 raid 同出口）、失败 = 无伤害但进冷却；无目标/冷却中不消费 rng。**成功率判定不是抽卡**：不占 cardId/busyUntil、不走 drawCard 权重。
+4. **主角归属** `PawnState.controlledBy?`（可选字段，P3 server 认领写入；P1 客户端本地指定 `?hero=`，序列化向后兼容，不 bump SAVE_VERSION）。**相机跟随主角**（复用中心 lerpCam；主角死亡回退全鼠质心）。
+
+**数据**：`tuning.hero`（speed 4.5 / attackHitChance 0.8 / attackRange 1.75，与 pawn 同值起步，mod 可覆盖）。
+
+**边界（P1 明确不做）**：联机 input 上行通道（P3，协议 InputMsg + server 抽卡处理 + 结果下行）、NPC 对话与环境交互（P2）、房间制（R2+ 候选）。自主鼠行为/抽卡引擎零改动（golden 指纹不变是验收）。

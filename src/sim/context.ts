@@ -119,6 +119,14 @@ export interface SimContext extends DrawSurface {  // ---- 时钟与随机（见
   moveStep(p: PawnState, dt: number): void; // 沿 path 推进 speed*dt
   adjacent(p: PawnState, x: number, y: number, r?: number): boolean;
 
+  // ---- 直接操控面（P1 2026-10-13：以人操纵为主 + 成功率判定，可跳过抽卡）----
+  /** 方向意图 → 分轴位移 + 格心碰撞（复用 canStep/canStand）；移动本体无成功率。 */
+  moveDir(p: PawnState, dx: number, dy: number, dt: number): boolean;
+  /** 成功率判定（0..1）：消费权威 rng 单流（确定性续跑）。失败语义由调用动作声明。 */
+  rollSuccess(rate: number): boolean;
+  /** 主角攻击示例动作：范围内最近敌袭单位近战，命中率 rollSuccess，失败=无伤害但进冷却。 */
+  directAttack(eid: Eid): boolean;
+
   // ---- 决策引擎面（内核 behavior 消费；玩法包经此注册内容）----
   // cards() / weightHooks() 已在 DrawSurface 中声明（抽卡引擎的窄依赖）。
   cardById(id: string): CardDef | undefined;

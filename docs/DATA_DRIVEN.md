@@ -841,3 +841,17 @@ O(整张地图) 的遍历——正是本轮要消除的那类成本。所以它�
 **存档侧**：`SaveData.world.worldChunks`（区块→建筑 id 归属）随 `SAVE_VERSION` 3→4
 落盘，迁移 `[3→4]` 只补空数组，**不回算**——派生数据进存档等于制造第二事实来源，
 是确定性隐患。真源仍是 `world.buildings`。
+
+## P1 主角直接操控数据面（2026-10-13 追加）
+
+**新增 `tuning.hero` 段**（`defaults/core.ts`，`Tuning` 接口同步 `types.ts`，键序镜像于 `pawn` 之后）：
+
+| 键 | 出厂值 | 语义 |
+|---|---|---|
+| `hero.speed` | 4.5 | 主角直接操控位移速率（格/秒），与 `pawn.speed` 同值起步，mod 可覆盖 |
+| `hero.attackHitChance` | 0.8 | 主角近战命中率 0..1（成功率判定示例：`rollSuccess(rate)`，失败 = 无伤害但进冷却） |
+| `hero.attackRange` | 1.75 | 主角近战判定半径（格），与 raid/combat 的 attackRange 同量纲 |
+
+**新增运行时字段**：`PawnState.controlledBy?: string`（玩家归属预留，可选字段 = 旧档/自主鼠缺省 undefined，序列化向后兼容，不 bump SAVE_VERSION；P3 多人认领写入）。
+
+**新增原语（内核，SimContext 面见 v3 章节）**：`moveDir`（方向意图 → 分轴位移 + 碰撞，无成功率、不消费 rng）/ `rollSuccess(rate)`（成功率判定，消费权威 rng 单流，随档确定性续跑）/ `directAttack(eid)`（成功率判定动作示例）。成功率数值全走 `tuning.hero`，系统只读数据——数据驱动纪律不变。

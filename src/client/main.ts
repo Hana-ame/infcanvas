@@ -17,6 +17,7 @@ import { Renderer } from './render';
 import { Hud } from './hud';
 import { RemoteSim } from './remote';
 import { LocalView } from './local-view';
+import { KeyboardInput, VirtualJoystick } from './input';
 import type { WorldView } from './view';
 
 const SAVE_KEY = 'infcanvas-save-v3';
@@ -60,6 +61,15 @@ async function boot(): Promise<void> {
   // 联机句柄提到外层：渲染循环每帧要用它上报视口（setInterest 内部有指纹节流）。
   // 本地单机模式恒为 null —— 单机不需要裁剪，本地进程本来就持有全部世界。
   let remoteCtl: RemoteSim | null = null;
+  // ---- P1 直接操控（2026-10-13）：本地模式专用状态 ----
+  // localSim：本地权威 Sim（联机模式为 null，直接操控在 P3 接上行下发后才进联机）。
+  // heroEid：当前主角（?hero= 或第一只鼠）；死亡后判空回退质心相机。
+  // keyboard/joystick/joyVec：输入源（键盘 + 触屏摇杆合成方向向量）。
+  let localSim: Sim | null = null;
+  let heroEid: number | null = null;
+  const keyboard = new KeyboardInput();
+  let joystick: VirtualJoystick | null = null;
+  let joyVec = { x: 0, y: 0 };
   if (remoteArg) {
     document.title = 'infcanvas · 联机观察/指挥';
     // 本地专属按钮在联机模式是哑按钮：存档权在服务器侧，直接隐藏防误导
@@ -95,6 +105,26 @@ async function boot(): Promise<void> {
       history.replaceState(null, '', location.pathname + location.search.replace(/[?&]save=1/, ''));
     } else {
       sim = new Sim({ seed: Number(params.get('seed') ?? DEFAULT_SEED), registry: ModRegistry.default() });
+    }
+    localSim = sim;
+    // P1 主角：?hero=<eid> 指定，缺省 = 第一只鼠（4 鼠出生第一只）。
+    // 主角死亡后 heroEid 指向失效实体 → 后续帧自动判空回退质心相机（见 ticker）。
+    const heroParam = Number(params.get('hero'));
+    const firstPawn = [...sim.pawns()][0];
+    heroEid =
+      Number.isFinite(heroParam) && sim.pawnMap.has(heroParam)
+        ? heroParam
+        : firstPawn
+          ? firstPawn.eid
+          : null;
+    // 直接操控输入：键盘（WASD/方向键）+ 触屏摇杆（仅触摸设备挂摇杆层）
+    keyboard.attach();
+    if ('ontouchstart' in window) {
+      const joyEl = document.getElementById('joy');
+      if (joyEl) {
+        joyEl.hidden = false;
+        joystick = new VirtualJoystick(joyEl as HTMLElement, { onVector: (v) => (joyVec = v) });
+      }
     }
     let acc = 0;
     const view = new LocalView(sim);
@@ -217,6 +247,10 @@ async function boot(): Promise<void> {
       e.preventDefault();
       paused = !paused;
     }
+    // P1 攻击示例动作（成功率判定演示）：J 键对范围内最近敌袭单位近战
+    if (e.code === 'KeyJ' && localSim && heroEid !== null) {
+      localSim.directAttack(heroEid);
+    }
   });
   function flash(text: string): void {
     const el = document.getElementById('hud-hint')!;
@@ -225,7 +259,8 @@ async function boot(): Promise<void> {
       el.textContent = HINT;
     }, 2000);
   }
-  const HINT = '左键点鼠选中 → 点地面/右键指挥移动｜拖拽平移·滚轮缩放｜空格暂停｜移动鼠标看左下角地块信息';
+  const HINT =
+    'WASD/方向键/摇杆 直接操控主角（相机跟随）｜J 攻击｜左键点鼠选中 → 点地面/右键指挥｜拖拽平移·滚轮缩放｜空格暂停｜悬停看地块信息';
 
   // ---- 地块信息面板：固定在左下角，不跟随鼠标；可开关隐藏 ----
   const tip = document.getElementById('hud-tip')!;
@@ -263,7 +298,24 @@ async function boot(): Promise<void> {
     const dt = Math.min(RENDER_DT_CLAMP_SEC, (now - last) / 1000);
     last = now;
     ctrl.tick(dt);
-    if (followCam) {
+    // P1 直接操控（本地模式）：合成键盘+摇杆向量 → moveDir（本地 Sim 即权威）。
+    // 键盘向量优先；摇杆仅在键盘为空时兜底（触屏设备）。
+    if (localSim && heroEid !== null) {
+      const kv = keyboard.vector();
+      const v = kv.x !== 0 || kv.y !== 0 ? kv : joyVec;
+      const hero = localSim.pawnMap.get(heroEid);
+      if (hero && (v.x !== 0 || v.y !== 0)) {
+        localSim.moveDir(hero, v.x, v.y, dt);
+      }
+      // 相机跟随主角（死亡后 hero 判空 → 回退质心）
+      if (followCam) {
+        if (hero) renderer.lerpCam(hero.pos.x, hero.pos.y);
+        else {
+          const [cx, cy] = centroid(ctrl.view);
+          renderer.lerpCam(cx, cy);
+        }
+      }
+    } else if (followCam) {
       const [cx, cy] = centroid(ctrl.view);
       renderer.lerpCam(cx, cy);
     }

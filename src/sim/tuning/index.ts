@@ -55,7 +55,7 @@ export type { TileTuningEntry, BuildingTuningEntry, TechTuningEntry, EnemyTuning
 
 // ===== §2+§3 组装 DEFAULT_TUNING =====
 import type { Tuning } from './types';
-import { world, pawn, needs, build, gathering } from './defaults/core';
+import { world, pawn, hero, needs, build, gathering } from './defaults/core';
 import { farming, cooking, medicine } from './defaults/food';
 import { social, raid, hunting, combat, fortify } from './defaults/combat';
 import { env } from './defaults/env';
@@ -65,14 +65,14 @@ import { factions, techs, techPool, bootstrap, events, tiles, buildings, enemies
  * 出厂数值：所有注释即语义来源。
  *
  * 键顺序镜像 Tuning 接口（§2）：
- *   world → pawn → needs → build → gathering → farming → cooking → medicine →
+ *   world → pawn → hero → needs → build → gathering → farming → cooking → medicine →
  *   social → raid → hunting → combat → env → factions → fortify →
  *   techs → techPool → bootstrap → events → tiles → buildings → enemies → traits
  *
  * 拆后行为不变：见 __tests__/tuning-snapshot.test.ts 的深比较契约测试。
  */
 export const DEFAULT_TUNING: Tuning = {
-  world, pawn, needs, build, gathering,
+  world, pawn, hero, needs, build, gathering,
   farming, cooking, medicine,
   social, raid, hunting, combat, env,
   factions, fortify,
