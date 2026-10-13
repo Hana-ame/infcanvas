@@ -251,6 +251,11 @@ async function boot(): Promise<void> {
     if (e.code === 'KeyJ' && localSim && heroEid !== null) {
       localSim.directAttack(heroEid);
     }
+    // P2 环境/NPC 交互：E 键（对话中 = 关闭对话）
+    if (e.code === 'KeyE' && localSim) {
+      if (localSim.dialogue) localSim.closeDialogue();
+      else if (heroEid !== null) localSim.interact(heroEid);
+    }
   });
   function flash(text: string): void {
     const el = document.getElementById('hud-hint')!;
@@ -260,7 +265,7 @@ async function boot(): Promise<void> {
     }, 2000);
   }
   const HINT =
-    'WASD/方向键/摇杆 直接操控主角（相机跟随）｜J 攻击｜左键点鼠选中 → 点地面/右键指挥｜拖拽平移·滚轮缩放｜空格暂停｜悬停看地块信息';
+    'WASD/方向键/摇杆 操控主角｜E 交互（拾取/使用/传送/对话）｜J 攻击｜空格暂停｜拖拽平移·滚轮缩放｜悬停看地块信息';
 
   // ---- 地块信息面板：固定在左下角，不跟随鼠标；可开关隐藏 ----
   const tip = document.getElementById('hud-tip')!;
@@ -299,12 +304,12 @@ async function boot(): Promise<void> {
     last = now;
     ctrl.tick(dt);
     // P1 直接操控（本地模式）：合成键盘+摇杆向量 → moveDir（本地 Sim 即权威）。
-    // 键盘向量优先；摇杆仅在键盘为空时兜底（触屏设备）。
+    // 键盘向量优先；摇杆仅在键盘为空时兜底（触屏设备）。对话打开时抑制移动输入。
     if (localSim && heroEid !== null) {
       const kv = keyboard.vector();
       const v = kv.x !== 0 || kv.y !== 0 ? kv : joyVec;
       const hero = localSim.pawnMap.get(heroEid);
-      if (hero && (v.x !== 0 || v.y !== 0)) {
+      if (hero && (v.x !== 0 || v.y !== 0) && localSim.dialogue === null) {
         localSim.moveDir(hero, v.x, v.y, dt);
       }
       // 相机跟随主角（死亡后 hero 判空 → 回退质心）
@@ -322,6 +327,8 @@ async function boot(): Promise<void> {
     renderer.frame(now);
     // R3-HUD：把非鼠选中一并喂给 HUD（详情面板同时只描述一个对象）
     hud.frame(paused, selected, selBuilding, selHostile);
+    // P2 对话面板：本地模式读 sim.dialogue 渲染（对话状态机在 sim 权威侧）
+    renderDialogue(localSim);
     // 联机分区块同步（line/net 收尾）：把当前视口上报给服务端做快照裁剪。
     //
     // 为什么放在这里而不是镜头事件里：视口同时受**平移、缩放、窗口 resize** 三者影响，
@@ -335,6 +342,49 @@ async function boot(): Promise<void> {
     }
   });
   void flash;
+}
+
+/** P2 对话面板渲染（本地模式）：读 sim.dialogue + tuning.dialogues 刷 DOM。
+ *  用定长 key（npcEid+dialogueId+line 数）做差分，状态没变不碰 DOM（与 HUD 面板同款纪律）。 */
+let dialogueRenderKey = '';
+function renderDialogue(sim: Sim | null): void {
+  const el = document.getElementById('hud-dialogue')!;
+  if (!sim || sim.dialogue === null) {
+    el.hidden = true;
+    dialogueRenderKey = '';
+    return;
+  }
+  const d = sim.dialogue;
+  const def = sim.tuning.dialogues[d.dialogueId];
+  const key = `${d.npcEid}:${d.dialogueId}:${def?.lines.length ?? 0}:${def?.options.length ?? 0}`;
+  if (key === dialogueRenderKey) return; // 无变化，跳过 DOM 重建
+  dialogueRenderKey = key;
+  el.hidden = false;
+  const npc = sim.pawnMap.get(d.npcEid);
+  const name = def?.name ?? npc?.name ?? 'NPC';
+  const line = def?.lines[0] ?? '';
+  (el.querySelector('.dlg-name') as HTMLElement).textContent = `💬 ${name}`;
+  (el.querySelector('.dlg-line') as HTMLElement).textContent = line;
+  const box = el.querySelector('.dlg-options')!;
+  box.innerHTML = '';
+  for (let i = 0; i < (def?.options.length ?? 0); i++) {
+    const opt = def.options[i];
+    const btn = document.createElement('button');
+    btn.className = 'dlg-opt';
+    btn.textContent = opt.label;
+    btn.onclick = () => {
+      sim.chooseOption(i);
+      dialogueRenderKey = ''; // 立即重绘（关对话/换行）
+      renderDialogue(sim);
+    };
+    box.appendChild(btn);
+  }
+  const close = el.querySelector('.dlg-close') as HTMLElement;
+  close.onclick = () => {
+    sim.closeDialogue();
+    dialogueRenderKey = '';
+    renderDialogue(sim);
+  };
 }
 
 boot().catch((err) => {

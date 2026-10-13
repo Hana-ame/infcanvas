@@ -44,6 +44,15 @@ export interface PawnState {
    * 可选字段 = 旧档/自主鼠缺省 undefined，序列化向后兼容（不 bump SAVE_VERSION）。
    */
   controlledBy?: string;
+  /**
+   * NPC 标记（P2 2026-10-13）：带 dialogueId 的鼠可被玩家对话（E 键）。
+   * 缺省 = 任何非受控鼠都可用默认对话 'colony'（自主殖民地鼠 = 现成 NPC）；
+   * 指定 id 覆盖为专属对话（tuning.dialogues 表键）。可选字段 = 旧档兼容。
+   */
+  npc?: { dialogueId?: string };
+  /** 交互冷却（P2）：interact 动作（拾取/使用/传送/对话）的全局防连点冷却。
+   *  可选字段 = 旧档/自主鼠缺省 undefined（>0 判式为 false，零行为影响）。 */
+  interactCd?: number;
   // ---- 抽卡决策引擎状态（内核所有，玩法包只读/经 ctx 操作）----
   cardId: string | null; // 当前执行卡
   busyUntil: number; // 到期后重新抽卡
@@ -85,4 +94,28 @@ export interface FeatureHit {
 export interface LogEvent {
   time: number;
   text: string;
+}
+
+// ===== P2 交互/对话（2026-10-13）=====
+
+/** interact 的结果类型（P2）：sim 权威判定后的交互结果，客户端据此给反馈。 */
+export type InteractOutcome =
+  /** 命中 NPC → 打开对话（sim.dialogue 已置位，客户端读它渲染面板） */
+  | { kind: 'npc'; npcEid: Eid }
+  /** 拾取成功：item = 入库键（'food' 浆果 / 'wood' 木材，与 contracts K_STOCK_* 对齐） */
+  | { kind: 'pickup'; item: string; gained: number }
+  /** 拾取失败（成功率判定不过）：本次不采到，进交互冷却 */
+  | { kind: 'pickup-fail' }
+  /** 使用建筑（fire 取暖 / shelter 休整）：需求小幅恢复 */
+  | { kind: 'use'; tag: string }
+  /** 传送：从 waypoint 建筑 A 传送到另一座 waypoint B */
+  | { kind: 'teleport'; from: Pos; to: Pos }
+  /** 范围内无任何可交互对象 */
+  | { kind: 'none' };
+
+/** 对话状态（P2 MVP，sim 运行态不入档）：当前打开的一次 NPC 对话。 */
+export interface DialogueState {
+  npcEid: Eid;
+  /** tuning.dialogues 表键 */
+  dialogueId: string;
 }

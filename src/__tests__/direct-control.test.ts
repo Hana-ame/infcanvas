@@ -163,7 +163,7 @@ describe('directAttack 主角攻击示例（成功率判定落地，失败语义
     const reg = ModRegistry.mountPacks([raidPack]); // 只挂 raid 拿 'cat' 敌人表
     if (hitChance !== undefined) {
       reg.overrideTuning((t) => {
-        t.hero.attackHitChance = hitChance;
+        t.successRate.attack = hitChance; // P2：命中率收编进成功率表
       });
     }
     return new Sim({ seed, registry: reg, pawnCount: 0 });

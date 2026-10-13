@@ -855,3 +855,23 @@ O(整张地图) 的遍历——正是本轮要消除的那类成本。所以它�
 **新增运行时字段**：`PawnState.controlledBy?: string`（玩家归属预留，可选字段 = 旧档/自主鼠缺省 undefined，序列化向后兼容，不 bump SAVE_VERSION；P3 多人认领写入）。
 
 **新增原语（内核，SimContext 面见 v3 章节）**：`moveDir`（方向意图 → 分轴位移 + 碰撞，无成功率、不消费 rng）/ `rollSuccess(rate)`（成功率判定，消费权威 rng 单流，随档确定性续跑）/ `directAttack(eid)`（成功率判定动作示例）。成功率数值全走 `tuning.hero`，系统只读数据——数据驱动纪律不变。
+
+## P2 成功率表 + 对话数据表（2026-10-13 追加）
+
+**新增 `tuning.successRate` 段**（`defaults/core.ts`，`Tuning` 接口同步）：
+
+| 键 | 出厂值 | 语义 |
+|---|---|---|
+| `successRate.attack` | 0.8 | 主角近战命中率（**P1 的 `hero.attackHitChance` 收编迁移于此**；失败 = 无伤害但进冷却） |
+| `successRate.pickup` | 0.9 | 拾取成功率（失败 = 本次不采 + 交互冷却） |
+| `successRate.climb` | 0.7 | 攀爬/跳跃（表位预留，P2 未引入动作） |
+| `successRate.sprint` | 0.75 | 冲刺（表位预留，P2 未引入动作） |
+| `successRate.dialogue` | 0.65 | 对话说服判定（失败 = NPC 拒绝选项） |
+
+**`hero` 段更新**：移除 `attackHitChance`（收编进 successRate），新增 `interactRange = 2.5`（interact proximity 半径）。
+
+**新增 `tuning.dialogues` 段**（`defaults/meta.ts`）：`Record<dialogueId, {name, lines, options}>`；选项 = `{label, rollSuccess?, stock?, techFragment?, close?}`（见 `types.ts` 的 `DialogOptionEntry`）。出厂两条：`colony`（默认对话）+ `elder`（委托对话，techFragment 走科技抽卡池）。纯数据，mod 可覆盖。
+
+**新增运行时字段**：`PawnState.npc?: { dialogueId? }`（NPC 标记，缺省 'colony'）、`PawnState.interactCd?: number`（交互冷却）——均可选字段，旧档兼容，不 bump SAVE_VERSION。
+
+**新原语（内核）**：`interact(eid)`（proximity 解析 NPC→特征→建筑：拾取/使用/传送）、`openDialogue/chooseOption/closeDialogue`（对话状态机；`sim.dialogue` 运行态不入档）。
