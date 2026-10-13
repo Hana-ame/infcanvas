@@ -331,3 +331,32 @@ button:hover {
     bottom: 52px;
   }
 }
+/* ---- P1 触屏虚拟摇杆（2026-10-13）：右下角半透明圆盘 + 可拖动圆钮 ----
+   命中区独立于画布（见 index.html #joy 注释）；touch 设备才显示。 */
+#joy {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  width: 120px;
+  height: 120px;
+  z-index: 20;
+  touch-action: none; /* 摇杆手势不被浏览器平移/缩放吞掉 */
+}
+#joy-base {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  border: 2px solid rgba(255, 255, 255, 0.25);
+}
+#joy-knob {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 44px;
+  height: 44px;
+  margin: -22px 0 0 -22px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.35);
+  border: 2px solid rgba(255, 255, 255, 0.5);
+}

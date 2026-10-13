@@ -129,6 +129,16 @@ export interface Tuning {
     dmg: number;
     traitDmgMul: Record<string, number>; // 特质 → 伤害系数
   };
+  /** 主角直接操控（P1 2026-10-13）：与自主鼠共用世界观，移动/动作以人操纵为主。
+   *  出厂与 pawn 同值起步，mod 可覆盖；P1 只被客户端本地模式消费。 */
+  hero: {
+    /** 直接操控位移速率（格/秒）。移动本体无成功率（避免手感碎裂，见 rollSuccess）。 */
+    speed: number;
+    /** 主角攻击命中率 0..1（成功率判定示例：失败 = 无伤害但进冷却，可存档可回放）。 */
+    attackHitChance: number;
+    /** 主角近战判定半径（格），与 raid/combat 的 attackRange 同量纲。 */
+    attackRange: number;
+  };
   needs: {
     // 每秒衰减速率。食物最紧（约 8 分钟从满到空），睡眠次之，心情/理智缓慢
     foodDecay: number;

@@ -33,6 +33,14 @@ export const pawn = {
   traitDmgMul: { strong: 1.5 },
 };
 
+/** 主角直接操控（P1 2026-10-13）：出厂与自主鼠同值起步，mod 可覆盖。
+ *  命中率 0.8 是成功率判定示例的出厂值（失败语义 = 无伤害但进冷却）。 */
+export const hero = {
+  speed: 4.5,
+  attackHitChance: 0.8,
+  attackRange: 1.75,
+};
+
 export const needs = {
   foodDecay: 0.15,
   restDecay: 0.15,

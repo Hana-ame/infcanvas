@@ -38,6 +38,12 @@ export interface PawnState {
   /** 攀爬能力：可跨越的地形高差（tuning.pawn.climb 缺省，未来特质/mod 可改） */
   climb: number;
   trait: string; // tuning.traits 表键
+  /**
+   * 归属玩家 id（P1 预留，2026-10-13）：直接操控模式下被玩家认领的主角。
+   * P1 只在客户端本地指定主角（不写该字段）；P3 多人（方案 A）由 server 认领写入。
+   * 可选字段 = 旧档/自主鼠缺省 undefined，序列化向后兼容（不 bump SAVE_VERSION）。
+   */
+  controlledBy?: string;
   // ---- 抽卡决策引擎状态（内核所有，玩法包只读/经 ctx 操作）----
   cardId: string | null; // 当前执行卡
   busyUntil: number; // 到期后重新抽卡

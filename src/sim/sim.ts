@@ -19,6 +19,16 @@ import type { BuildingState, Eid, FeatureHit, Hostile, LogEvent, PawnState, Pos 
 import type { SaveData } from './schema';
 import type { ModRegistry } from '../mods/registry';
 
+/**
+ * 移动被阻挡时把坐标贴回当前格朝向移动方向的边界（P1 moveDir 用）。
+ * 格心为整数坐标，格占 [c-0.5, c+0.5]；朝 +dir 被挡 → 贴 +侧边界并留 0.01 裕量，
+ * 防浮点抖动把角色弹进下一格（否则贴墙时在格边界来回抖动）。
+ */
+function clampTileEdge(v: number, dir: number): number {
+  const c = Math.round(v);
+  return dir > 0 ? c + 0.5 - 0.01 : c - 0.5 + 0.01;
+}
+
 export interface SimConfig {
   seed?: number;
   /** 显式指定 = 跳过 bootstrap 出生引导（最小装配/单测用）；缺省交给 bootstrap 包 */
@@ -392,6 +402,92 @@ export class Sim implements SimContext {
   }
   adjacent(p: PawnState, x: number, y: number, r = 1.5): boolean {
     return Math.hypot(p.pos.x - x, p.pos.y - y) <= r;
+  }
+
+  // ---- 直接操控面（P1 2026-10-13：以人操纵为主 + 成功率判定，可跳过抽卡）----
+
+  /**
+   * 方向意图 → 分轴位移 + 格心碰撞（复用 world.canStep/canStand）。
+   *
+   * 与 moveStep（路径消费）**正交**：moveDir 是"每渲染帧喂一次方向意图"，
+   * 不经过寻路、不设目标点；移动本体**无成功率**（成功率只挂动作，见 rollSuccess）——
+   * 这是 2026-10-13 终版口径（可跳过抽卡），避免"每次按键都被判定拦截"的手感碎裂。
+   *
+   * 碰撞语义：逐轴独立尝试；目标格不可立足/高差超攀爬 → 该轴贴当前格边界钳制
+   * （贴墙滑动：另一轴照常移动，不整位移丢弃）。
+   *
+   * @param p   受控主角（PawnState）
+   * @param dx  x 方向分量（归一化向量，已由客户端 input 合成）
+   * @param dy  y 方向分量
+   * @param dt  真实经过秒（渲染帧 dt；钳制单帧位移防后台标签页突进）
+   * @returns 是否发生任何位移
+   */
+  moveDir(p: PawnState, dx: number, dy: number, dt: number): boolean {
+    const step = this.tuning.hero.speed * Math.min(dt, 0.25);
+    let moved = false;
+    if (dx !== 0) {
+      const nx = p.pos.x + dx * step;
+      if (this.world.canStep(p.pos.x, p.pos.y, nx, p.pos.y, p.climb)) {
+        p.pos.x = nx;
+        moved = true;
+      } else {
+        p.pos.x = clampTileEdge(p.pos.x, dx);
+      }
+    }
+    if (dy !== 0) {
+      const ny = p.pos.y + dy * step;
+      if (this.world.canStep(p.pos.x, p.pos.y, p.pos.x, ny, p.climb)) {
+        p.pos.y = ny;
+        moved = true;
+      } else {
+        p.pos.y = clampTileEdge(p.pos.y, dy);
+      }
+    }
+    return moved;
+  }
+
+  /**
+   * 成功率判定原语（0..1）：`rng() < rate` → true（成功）。
+   *
+   * 消费权威 rng 单流（mulberry32，随档）——确定性续跑与自主抽卡同一条流、
+   * 同一次序约束（调用发生在 tick 边界/动作触发点，顺序即消费顺序）。
+   * 失败语义由调用动作声明（如 directAttack：失败 = 无伤害但进冷却）。
+   */
+  rollSuccess(rate: number): boolean {
+    return this.rng() < rate;
+  }
+
+  /**
+   * 主角攻击示例动作（P1）：对范围内最近的敌袭单位发动一次近战。
+   *
+   * 流程：冷却闸 → 找 attackRange 内最近敌袭 → rollSuccess(attackHitChance)：
+   *  - 成功：damageHostile（打死即 despawn，语义与 raid 的伤害出口一致）；
+   *  - 失败：无伤害但消耗 atkCd（失败语义可存档可回放——rng 状态随档，续跑同结果）。
+   * 无目标/冷却中 → 不动手（return false，不消耗 rng）。
+   */
+  directAttack(eid: Eid): boolean {
+    const p = this.pawnMap.get(eid);
+    if (!p || p.atkCd > 0) return false;
+    let best: Hostile | null = null;
+    let bestD = this.tuning.hero.attackRange;
+    for (const h of this.hostilesList) {
+      const d = Math.hypot(h.pos.x - p.pos.x, h.pos.y - p.pos.y);
+      if (d <= bestD) {
+        bestD = d;
+        best = h;
+      }
+    }
+    if (!best) return false;
+    p.atkCd = this.tuning.pawn.atkCd;
+    const def = this.tuning.enemies[best.kind];
+    const name = def ? def.name : best.kind;
+    if (this.rollSuccess(this.tuning.hero.attackHitChance)) {
+      this.damageHostile(best.id, this.tuning.pawn.dmg);
+      this.log(`⚔ ${p.name} 命中 ${name}`);
+    } else {
+      this.log(`⚔ ${p.name} 攻击 ${name} 落空`);
+    }
+    return true;
   }
 
   // ---- 决策引擎面 ----
