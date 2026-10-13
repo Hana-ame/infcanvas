@@ -15,7 +15,7 @@ import { RoutePlanner } from './path-plan';
 import type { SimContext, CardWeightHook } from './context';
 import type { CardDef } from './cards';
 import { behaviorCtor, commit, releaseHerbReservation, tryReserveHerb, type GameSystem } from './systems';
-import type { BuildingState, Eid, FeatureHit, Hostile, LogEvent, PawnState, Pos } from './types';
+import type { BuildingState, DialogueState, Eid, FeatureHit, Hostile, InteractOutcome, LogEvent, PawnState, Pos } from './types';
 import type { SaveData } from './schema';
 import type { ModRegistry } from '../mods/registry';
 
@@ -63,6 +63,10 @@ export class Sim implements SimContext {
   stockpile: Record<string, number> = {};
   events: LogEvent[] = [];
   selected: Eid[] = []; // 客户端选中（框选/点选），纯 UI 投影
+  /** P2 对话状态（运行态不入档，MVP）：当前打开的一次 NPC 对话，null = 未在对话。
+   *  为什么不入档：对话是即时交互而非世界事实；任务性奖励已落进 stock/techFragments
+   *  （随档），无需把"正在聊"存起来。P3+ 若要做持久剧情再升级。 */
+  dialogue: DialogueState | null = null;
   /** 玩法包运行态暂存（随档）：键 "<包>.<名>"。系统状态放这里而非闭包，存档才能还原 */
   readonly scratch: Record<string, number> = {};
   /**
@@ -481,13 +485,201 @@ export class Sim implements SimContext {
     p.atkCd = this.tuning.pawn.atkCd;
     const def = this.tuning.enemies[best.kind];
     const name = def ? def.name : best.kind;
-    if (this.rollSuccess(this.tuning.hero.attackHitChance)) {
+    if (this.rollSuccess(this.tuning.successRate.attack)) {
       this.damageHostile(best.id, this.tuning.pawn.dmg);
       this.log(`⚔ ${p.name} 命中 ${name}`);
     } else {
       this.log(`⚔ ${p.name} 攻击 ${name} 落空`);
     }
     return true;
+  }
+
+  // ---- 环境/NPC 交互 + 对话（P2 2026-10-13：以人操纵为主，任务借"抽卡"面子）----
+
+  /**
+   * 环境/NPC 交互：proximity 解析顺序 **NPC → 特征 → 建筑**（拾取/使用/传送）。
+   *
+   * 判定半径 = tuning.hero.interactRange；全部动作先过 interactCd 冷却闸
+   * （防连点刷屏；undefined = 0 对自主鼠零影响）。失败语义：
+   *  - 拾取失败（successRate.pickup 判定不过）= 本次不采到 + 较长冷却（可回放——
+   *    rng 随档，续跑同结果）；
+   *  - 移动本体无成功率（终版口径，P1 已定）。
+   *
+   * 键契约：item 返回 'food'/'wood' 与 mods/contracts.ts 的 K_STOCK_FOOD/WOOD 对齐
+   * （内核不反向依赖 mods，用字面量 + 此处注释钉死契约）。
+   */
+  interact(eid: Eid): InteractOutcome | null {
+    const p = this.pawnMap.get(eid);
+    if (!p || (p.interactCd ?? 0) > 0) return null;
+    const r = this.tuning.hero.interactRange;
+    const cd = (v: number) => {
+      p.interactCd = v;
+    };
+    // 1) NPC（非自身、非受控主角之外的鼠 = 自主殖民地鼠即 NPC）
+    const npc = this.nearestNPC(eid, r);
+    if (npc) {
+      this.openDialogue(npc.eid);
+      cd(0.5);
+      return { kind: 'npc', npcEid: npc.eid };
+    }
+    // 2) 特征拾取（树=2×2 贴边、浆果=单点；复用 featureRect/distToFeatureRect）
+    for (const kind of ['berry', 'tree'] as const) {
+      const f = this.nearestFeature(kind, p.pos.x, p.pos.y, r);
+      if (!f) continue;
+      if (this.distToFeatureRect(p.pos.x, p.pos.y, this.featureRect(f)) > r) continue;
+      const item = kind === 'berry' ? 'food' : 'wood';
+      if (this.rollSuccess(this.tuning.successRate.pickup)) {
+        const left = this.takeOne(f.x, f.y);
+        if (left >= 0) {
+          this.stockpile[item] = (this.stockpile[item] ?? 0) + 1;
+          cd(0.5);
+          return { kind: 'pickup', item, gained: 1 };
+        }
+        // 采空（left<0 防御分支，正常不会走到——takeOne 对已空特征返回 0）
+      }
+      cd(1.0); // 拾取判定失败：本次不采到 + 较长冷却
+      this.log(`🤚 ${p.name} 没采到（手慢了）`);
+      return { kind: 'pickup-fail' };
+    }
+    // 3) 建筑：waypoint 对传送 → fire/shelter 使用
+    // 键契约：'waypoint'/'fire'/'shelter' 与 mods/contracts.ts 的 K_TAG_* 对齐
+    // （内核不反向依赖 mods，用字面量 + 此处注释钉死契约）。
+    const wp = this.nearestBuildingByTag('waypoint', p.pos.x, p.pos.y, r);
+    if (wp) {
+      // 找另一座 waypoint（排除自身）：world.buildingsByTag 是 tag 倒排索引
+      const others = this.world.buildingsByTag('waypoint');
+      let other: BuildingState | null = null;
+      let bestD = Infinity;
+      for (const b of others) {
+        if (b.id === wp.id) continue;
+        const d = Math.hypot(b.pos.x - p.pos.x, b.pos.y - p.pos.y);
+        if (d < bestD) {
+          bestD = d;
+          other = b;
+        }
+      }
+      if (other) {
+        const from = { ...p.pos };
+        p.pos = { x: other.pos.x, y: other.pos.y };
+        p.path = [];
+        cd(1.0);
+        this.log(`🌀 ${p.name} 沿航点传送到了 ${other.pos.x},${other.pos.y}`);
+        return { kind: 'teleport', from, to: { ...p.pos } };
+      }
+    }
+    for (const tag of ['fire', 'shelter'] as const) {
+      const b = this.nearestBuildingByTag(tag, p.pos.x, p.pos.y, r);
+      if (!b) continue;
+      // 使用 = 取暖/休整：需求小幅恢复 + 叙事（MVP 演示语义，数值固定小幅）
+      p.needs.mood = Math.min(100, p.needs.mood + 3);
+      p.needs.san = Math.min(100, p.needs.san + 3);
+      cd(1.0);
+      this.log(`🔥 ${p.name} 在 ${b.defId} 旁歇了歇（心情/理智 +3）`);
+      return { kind: 'use', tag };
+    }
+    return { kind: 'none' };
+  }
+
+  /** 找 eid 邻近最近的 NPC（非自身、非受控鼠）：自主殖民地鼠 = 现成 NPC。 */
+  private nearestNPC(eid: Eid, r: number): PawnState | undefined {
+    const self = this.pawnMap.get(eid);
+    if (!self) return undefined;
+    let best: PawnState | undefined;
+    let bestD = r;
+    for (const p of this.pawnMap.values()) {
+      if (p.eid === eid || p.controlledBy !== undefined) continue;
+      const d = Math.hypot(p.pos.x - self.pos.x, p.pos.y - self.pos.y);
+      if (d <= bestD) {
+        bestD = d;
+        best = p;
+      }
+    }
+    return best;
+  }
+
+  // ---- 对话状态机（P2 MVP，单节点；nodeId 扩展预留）----
+
+  /** 打开与 npcEid 的对话：dialogueId = npc.npc?.dialogueId ?? 'colony'，表缺失回退默认。 */
+  openDialogue(npcEid: Eid): boolean {
+    const npc = this.pawnMap.get(npcEid);
+    if (!npc) return false;
+    const wanted = npc.npc?.dialogueId ?? 'colony';
+    const dialogueId = this.tuning.dialogues[wanted] ? wanted : 'colony';
+    if (!this.tuning.dialogues[dialogueId]) return false; // 连默认表都没有（测试最小装配）
+    this.dialogue = { npcEid, dialogueId };
+    return true;
+  }
+
+  /**
+   * 玩家选择选项 i（**给玩家里子**：选项 = 玩家选择，不是抽卡）。
+   * - rollSuccess 选项：过 tuning.successRate.dialogue（说服检定）；失败 = NPC 拒绝，
+   *   效果不生效并关对话（可回放——rng 随档）。
+   * - 效果：stock（营地库存）/ techFragment（grantTechFragment——**任务给"抽卡"面子**，
+   *   奖励走现有科技抽卡池通道，id 未注册静默跳过并 log）。
+   * - close 选项：结算后关对话。
+   * 校验：玩家仍相邻（防隔空操作）；不相邻自动关对话。
+   */
+  chooseOption(i: number): 'applied' | 'rejected' | 'closed' | 'invalid' {
+    if (!this.dialogue) return 'invalid';
+    const { npcEid, dialogueId } = this.dialogue;
+    const hero = this.dialogueActor(); // 受控主角
+    if (!hero || Math.hypot(hero.pos.x - this.pawnMap.get(npcEid)!.pos.x, hero.pos.y - this.pawnMap.get(npcEid)!.pos.y) > this.tuning.hero.interactRange) {
+      this.closeDialogue(); // 走远了：对话自然结束
+      return 'closed';
+    }
+    const def = this.tuning.dialogues[dialogueId];
+    const opt = def?.options[i];
+    if (!opt) {
+      this.closeDialogue();
+      return 'invalid';
+    }
+    if (opt.rollSuccess && !this.rollSuccess(this.tuning.successRate.dialogue)) {
+      this.log(`💬 ${def.name} 摇头拒绝了`);
+      this.closeDialogue();
+      return 'rejected';
+    }
+    if (opt.stock) {
+      for (const [k, v] of Object.entries(opt.stock)) {
+        this.stockpile[k] = (this.stockpile[k] ?? 0) + v;
+      }
+      this.log(`💬 收下物资：${JSON.stringify(opt.stock)}`);
+    }
+    if (opt.techFragment) {
+      const r = this.grantTechFragment(opt.techFragment);
+      if (r === 'unknown') this.log(`💬 「${def.name}」提到的委托还没有对应的科技池条目`);
+      else this.log(`💬 委托进度：${opt.techFragment} ${r}`);
+    }
+    if (opt.close) {
+      this.closeDialogue();
+      return 'closed';
+    }
+    return 'applied';
+  }
+
+  closeDialogue(): void {
+    this.dialogue = null;
+  }
+
+  /** 当前对话的发起者（受控主角）；P2 本地模式 = 唯一受控鼠。 */
+  private dialogueActor(): PawnState | undefined {
+    if (!this.dialogue) return undefined;
+    for (const p of this.pawnMap.values()) {
+      if (p.controlledBy !== undefined) return p;
+    }
+    // 本地 P2：没有 controlledBy 标注时，退回到最近的一只鼠（测试友好）
+    const npc = this.pawnMap.get(this.dialogue.npcEid);
+    if (!npc) return undefined;
+    let best: PawnState | undefined;
+    let bestD = Infinity;
+    for (const p of this.pawnMap.values()) {
+      if (p.eid === npc.eid) continue;
+      const d = Math.hypot(p.pos.x - npc.pos.x, p.pos.y - npc.pos.y);
+      if (d < bestD) {
+        bestD = d;
+        best = p;
+      }
+    }
+    return best;
   }
 
   // ---- 决策引擎面 ----

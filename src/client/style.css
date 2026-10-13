@@ -360,3 +360,58 @@ button:hover {
   background: rgba(255, 255, 255, 0.35);
   border: 2px solid rgba(255, 255, 255, 0.5);
 }
+
+/* ---- P2 对话面板（2026-10-13）：底部居中卡片，NPC 名字 + 开场白 + 玩家选项 ---- */
+#hud-dialogue {
+  position: fixed;
+  left: 50%;
+  bottom: 96px;
+  transform: translateX(-50%);
+  width: min(480px, 90vw);
+  z-index: 25;
+  background: rgba(16, 20, 16, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 10px;
+  padding: 12px 14px;
+  color: #ddd;
+  font: 14px system-ui;
+}
+#hud-dialogue[hidden] {
+  display: none;
+}
+.dlg-name {
+  font-weight: 700;
+  color: #ffe08a;
+  margin-bottom: 4px;
+}
+.dlg-line {
+  margin-bottom: 10px;
+  line-height: 1.5;
+}
+.dlg-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.dlg-opt {
+  text-align: left;
+  padding: 6px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #eee;
+  cursor: pointer;
+}
+.dlg-opt:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+.dlg-close {
+  font: 12px system-ui;
+  padding: 4px 10px;
+  border: none;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.12);
+  color: #bbb;
+  cursor: pointer;
+}

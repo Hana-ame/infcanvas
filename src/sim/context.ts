@@ -8,7 +8,7 @@
  *
  * 纪律：SimContext 只放"读状态 + 基础动作面"，不放玩法语义（那是卡与系统的事）。
  */
-import type { BuildingState, Eid, FeatureHit, Hostile, PawnState, Pos } from './types';
+import type { BuildingState, Eid, FeatureHit, Hostile, InteractOutcome, PawnState, Pos } from './types';
 import type { Tuning } from './tuning';
 import type { CardDef } from './cards';
 
@@ -126,6 +126,9 @@ export interface SimContext extends DrawSurface {  // ---- 时钟与随机（见
   rollSuccess(rate: number): boolean;
   /** 主角攻击示例动作：范围内最近敌袭单位近战，命中率 rollSuccess，失败=无伤害但进冷却。 */
   directAttack(eid: Eid): boolean;
+  /** 环境/NPC 交互（P2）：proximity 解析 NPC→特征→建筑（拾取/使用/传送），
+   *  返回交互结果类型；失败语义见实现注释（可存档可回放）。 */
+  interact(eid: Eid): InteractOutcome | null;
 
   // ---- 决策引擎面（内核 behavior 消费；玩法包经此注册内容）----
   // cards() / weightHooks() 已在 DrawSurface 中声明（抽卡引擎的窄依赖）。

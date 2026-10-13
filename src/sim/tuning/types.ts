@@ -83,6 +83,21 @@ export interface EnemyTuningEntry {
   aggro?: number;
 }
 
+/** 对话选项（P2 2026-10-13，`tuning.dialogues` 的元素类型）。
+ *  取舍：选项 = 玩家选择（给玩家里子）；效果走现有 gacha 机制（任务给"抽卡"面子）。 */
+export interface DialogOptionEntry {
+  /** 选项文案（客户端按钮显示） */
+  label: string;
+  /** 判定：true = 过 `tuning.successRate.dialogue`（失败 = NPC 拒绝，效果不生效并关对话） */
+  rollSuccess?: boolean;
+  /** 成功效果：营地库存增量（键 = contracts K_STOCK_*），如 { food: 5 } */
+  stock?: Record<string, number>;
+  /** 成功效果：授予科技碎片（"接受委托"式奖励走现有 tech-pool 通道；id 未注册 = 静默跳过） */
+  techFragment?: string;
+  /** 选择后是否关闭对话（缺省 = 保持对话继续） */
+  close?: boolean;
+}
+
 // ===== §2 Tuning 接口：按玩法域分节（域顺序 = §3 DEFAULT_TUNING 的键顺序）=====
 
 export interface Tuning {
@@ -132,13 +147,44 @@ export interface Tuning {
   /** 主角直接操控（P1 2026-10-13）：与自主鼠共用世界观，移动/动作以人操纵为主。
    *  出厂与 pawn 同值起步，mod 可覆盖；P1 只被客户端本地模式消费。 */
   hero: {
-    /** 直接操控位移速率（格/秒）。移动本体无成功率（避免手感碎裂，见 rollSuccess）。 */
+    /** 直接操控位移速率（格/秒）。移动本体无成功率（避免手感碎裂，见 successRate）。 */
     speed: number;
-    /** 主角攻击命中率 0..1（成功率判定示例：失败 = 无伤害但进冷却，可存档可回放）。 */
-    attackHitChance: number;
     /** 主角近战判定半径（格），与 raid/combat 的 attackRange 同量纲。 */
     attackRange: number;
+    /** 环境/NPC 交互判定半径（格，P2）：interact 的 proximity 扫描圈。 */
+    interactRange: number;
   };
+  /** 成功率表（P2 2026-10-13 初稿）：动作类判定统一入口，数值 mod 可覆盖。
+   *  语义 = `rollSuccess(rate)`；失败语义由动作声明（缺省「不生效但进冷却」），
+   *  rng 只在权威侧消费且随档 → 失败可存档可回放。**移动本体无成功率**（P1 口径），
+   *  本表只挂动作不挂位移。 */
+  successRate: {
+    /** 主角近战命中率（P1 的 hero.attackHitChance 收编于此，P2 迁移；失败 = 无伤害但进冷却） */
+    attack: number;
+    /** 拾取成功率（采浆果/砍树取木；失败 = 本次不采到 + 交互冷却） */
+    pickup: number;
+    /** 攀爬/跳跃成功率（P2 未引入攀爬动作，表位预留） */
+    climb: number;
+    /** 冲刺成功率（P2 未引入冲刺动作，表位预留） */
+    sprint: number;
+    /** 对话判定成功率（说服类选项；失败 = NPC 拒绝该选项，效果不生效） */
+    dialogue: number;
+  };
+  /** 对话数据表（P2 2026-10-13 MVP）：NPC 对话内容，纯数据可 mod 覆盖。
+   *  取舍（按 proposal 六-②）：**选项 = 玩家选择**（给玩家里子，不做抽卡式随机）；
+   *  **任务给"抽卡"面子**——选项效果走现有 gacha 机制（grantTechFragment / 库存），
+   *  不新造任务系统。MVP 单节点对话。 */
+  dialogues: Record<
+    string,
+    {
+      /** NPC 显示名 */
+      name: string;
+      /** 对话开场白（逐条显示） */
+      lines: string[];
+      /** 玩家可选选项 */
+      options: DialogOptionEntry[];
+    }
+  >;
   needs: {
     // 每秒衰减速率。食物最紧（约 8 分钟从满到空），睡眠次之，心情/理智缓慢
     foodDecay: number;

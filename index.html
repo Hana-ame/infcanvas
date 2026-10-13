@@ -59,7 +59,15 @@
       <div id="joy-base"></div>
       <div id="joy-knob" data-joy-knob></div>
     </div>
-    <div id="hud-hint">WASD/方向键/摇杆 直接操控主角（相机跟随）｜J 攻击｜左键点鼠选中 → 点地面/右键指挥｜拖拽平移·滚轮缩放｜空格暂停｜悬停看地块信息</div>
+    <!-- P2 对话面板（2026-10-13）：NPC 对话（E 键打开），选项 = 玩家选择（给玩家里子）；
+         效果走现有 gacha 机制（任务给"抽卡"面子，见 tuning.dialogues 注释） -->
+    <div id="hud-dialogue" hidden>
+      <div class="dlg-name"></div>
+      <div class="dlg-line"></div>
+      <div class="dlg-options"></div>
+      <button class="dlg-close">🗨 离开（E）</button>
+    </div>
+    <div id="hud-hint">WASD/方向键/摇杆 操控主角｜E 交互（拾取/使用/传送/对话）｜J 攻击｜空格暂停｜拖拽平移·滚轮缩放｜悬停看地块信息</div>
     <script type="module" src="/src/client/main.ts"></script>
   </body>
 </html>

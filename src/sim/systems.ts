@@ -115,6 +115,8 @@ function stepPawn(ctx: SimContext, p: PawnState, dt: number): void {
     else p.cardId = null; // 卡被卸载（mod 热插拔）：安全落地，下轮重抽
   }
   if (p.atkCd > 0) p.atkCd = Math.max(0, p.atkCd - dt);
+  // P2 interactCd（交互冷却）：可选字段，自主鼠缺省 undefined → 恒跳过，零行为影响。
+  if (p.interactCd !== undefined && p.interactCd > 0) p.interactCd = Math.max(0, p.interactCd - dt);
   if (p.path.length > 0) ctx.moveStep(p, dt);
 }
 

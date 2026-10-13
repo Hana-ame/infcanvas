@@ -1940,3 +1940,23 @@ apply 与 resolve 解耦后，同一效果表可多次 apply / 回放 / 测试�
 **数据**：`tuning.hero`（speed 4.5 / attackHitChance 0.8 / attackRange 1.75，与 pawn 同值起步，mod 可覆盖）。
 
 **边界（P1 明确不做）**：联机 input 上行通道（P3，协议 InputMsg + server 抽卡处理 + 结果下行）、NPC 对话与环境交互（P2）、房间制（R2+ 候选）。自主鼠行为/抽卡引擎零改动（golden 指纹不变是验收）。
+
+## P2 环境交互 + NPC 对话（2026-10-13 追加，v3 章节续）
+
+**承接**：P1 主角直接操控已落地（input/moveDir/rollSuccess/directAttack）。P2 补"环境 + NPC 交互"，仍为**本地闭环**（联机同步 P3）。
+
+**成功率表** `tuning.successRate`（五判定位：attack/pickup/climb/sprint/dialogue）：动作类判定统一入口，数值 mod 可覆盖；**移动本体无成功率**（终版口径）。P1 的 `hero.attackHitChance` **收编迁移**为 `successRate.attack`（消除双源）。失败语义由动作声明（缺省"不生效但进冷却"），rng 只在权威侧消费且随档 → 可回放。
+
+**环境交互** `Sim.interact`（proximity 解析顺序 **NPC → 特征 → 建筑**，半径 `hero.interactRange`）：
+- 拾取：featureAt/takeOne（berry→food、tree→wood，复用 gather 结算键），过 `successRate.pickup`；失败 = 本次不采 + `interactCd`（新增可选字段，stepPawn 递减，自主鼠 undefined 零影响）；
+- 使用：fire/shelter 建筑 = 需求小幅恢复 + log（MVP 演示语义）；
+- 传送：waypoint 建筑对（`world.buildingsByTag` 找第二座）——复用寻路锚点 K_TAG_WAYPOINT。
+- 键契约：'food'/'wood'/'waypoint'/'fire'/'shelter' 与 contracts K_STOCK_*/K_TAG_* 对齐（**内核不反向依赖 mods**，字面量 + 注释钉死）。
+
+**NPC 对话**（sim 侧状态机，`sim.dialogue` 运行态不入档——对话是即时交互，奖励已落 stock/techFragments 随档）：
+- NPC = 自主殖民地鼠（`PawnState.npc?.dialogueId` 缺省 'colony' 兜底）——殖民地鼠即现成 NPC；
+- **选项 = 玩家选择**（给玩家里子，不做抽卡式随机选线）；rollSuccess 选项过 `successRate.dialogue`（失败 = 拒绝并关对话）；
+- **任务给"抽卡"面子**：选项效果走现有 gacha 机制——`grantTechFragment`（科技抽卡池）与库存，不新造任务系统；
+- 走远自动关对话（防隔空操作）；MVP 单节点，nodeId 扩展预留。
+
+**P2 边界**：多轮对话树、联机对话/交互上行（P3）、房间制（R2+）。

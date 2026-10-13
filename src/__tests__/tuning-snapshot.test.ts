@@ -50,7 +50,7 @@ describe('DEFAULT_TUNING 拆分后深比较（护栏）', () => {
   it('DEFAULT_TUNING 键顺序与 Tuning 接口一致', () => {
     const keys = Object.keys(DEFAULT_TUNING);
     expect(keys).toEqual([
-      'world', 'pawn', 'hero', 'needs', 'build', 'gathering',
+      'world', 'pawn', 'hero', 'successRate', 'dialogues', 'needs', 'build', 'gathering',
       'farming', 'cooking', 'medicine',
       'social', 'raid', 'hunting', 'combat', 'env',
       'factions', 'fortify',
@@ -117,11 +117,11 @@ function src(rel: string): string {
 
 /** 各 defaults 文件的合法导出段（与 index.ts 的 import 列表一致） */
 const DEFAULTS_EXPORTS: Record<string, string[]> = {
-  'core.ts': ['world', 'pawn', 'hero', 'needs', 'build', 'gathering'],
+  'core.ts': ['world', 'pawn', 'hero', 'successRate', 'needs', 'build', 'gathering'],
   'food.ts': ['farming', 'cooking', 'medicine'],
   'combat.ts': ['social', 'raid', 'hunting', 'combat', 'fortify'],
   'env.ts': ['env'],
-  'meta.ts': ['factions', 'techs', 'techPool', 'bootstrap', 'events', 'tiles', 'buildings', 'enemies', 'traits'],
+  'meta.ts': ['factions', 'techs', 'techPool', 'bootstrap', 'events', 'tiles', 'buildings', 'enemies', 'traits', 'dialogues'],
 };
 
 describe('defaults/*.ts 结构扫描：只导出本段（防跨域污染）', () => {
