@@ -415,3 +415,2229 @@ button:hover {
   color: #bbb;
   cursor: pointer;
 }
+
+/* ============================================================================
+ * RimWorld Standard UI Theme (100% RimWorld Slate & Bevel Interface + Collapsible Menus)
+ * ============================================================================ */
+
+/* Hide legacy floating debug panels when RimWorld UI is active */
+#hud-panels,
+#hud-tech,
+#hud-btns,
+#hud-tip,
+#hud-hint {
+  display: none !important;
+}
+
+#rw-root {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  pointer-events: none;
+  font-family: "Calibri", "Segoe UI", system-ui, -apple-system, sans-serif;
+  color: #e3e8ee;
+  user-select: none;
+}
+
+.rw-bevel-box {
+  background: rgba(24, 28, 33, 0.94);
+  border: 2px solid #57606b;
+  box-shadow: inset 0 0 0 1px #121518, 0 4px 12px rgba(0, 0, 0, 0.55);
+  pointer-events: auto;
+}
+
+.rw-collapse-pill {
+  white-space: nowrap;
+  background: rgba(28, 33, 40, 0.94);
+  border: 1.5px solid #5c6672;
+  border-radius: 2px;
+  color: #cfd8e3;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  cursor: pointer;
+  pointer-events: auto;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.45);
+}
+
+.rw-collapse-pill:hover {
+  background: #323c47;
+  border-color: #f5d451;
+  color: #ffffff;
+}
+
+.rw-collapse-mini {
+  background: #232930;
+  border: 1px solid #56606b;
+  border-radius: 2px;
+  color: #cfd8e3;
+  font-size: 11px;
+  padding: 1px 6px;
+  cursor: pointer;
+}
+
+/* 1. Top-Center Colonist Bar (Collapsible) */
+#rw-colonist-bar-wrap {
+  position: absolute;
+  top: 6px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  pointer-events: auto;
+  z-index: 35;
+}
+
+#rw-colonist-bar {
+  display: flex;
+  gap: 8px;
+}
+
+.rw-colonist-card {
+  position: relative;
+  width: 66px;
+  background: #1d2228;
+  border: 2px solid #59636e;
+  padding: 3px 3px 4px;
+  cursor: pointer;
+  text-align: center;
+  overflow: hidden;
+  transition: border-color 0.12s, transform 0.12s;
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.5);
+}
+
+.rw-colonist-card:hover {
+  border-color: #9fb0c2;
+}
+
+.rw-colonist-card.selected {
+  border-color: #ffffff;
+  box-shadow: 0 0 0 2px #f5d451, 0 4px 12px rgba(0, 0, 0, 0.7);
+}
+
+.rw-colonist-card.drafted {
+  border-color: #e05252;
+}
+
+.rw-col-mood-bg {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  opacity: 0.42;
+  pointer-events: none;
+}
+
+.rw-col-avatar {
+  position: relative;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1;
+}
+
+.rw-col-draft-badge {
+  position: absolute;
+  top: -1px;
+  right: 1px;
+  background: #b82e2e;
+  color: #fff;
+  font-size: 10px;
+  padding: 0 3px;
+  border: 1px solid #fff;
+}
+
+.rw-col-hpbar {
+  position: relative;
+  z-index: 1;
+  height: 4px;
+  background: #121518;
+  margin: 2px 0;
+  border: 1px solid #000;
+}
+
+.rw-col-hpbar i {
+  display: block;
+  height: 100%;
+  background: #5cb85c;
+}
+
+.rw-col-name {
+  position: relative;
+  z-index: 1;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  text-shadow: 0 1px 2px #000;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rw-col-job {
+  position: relative;
+  z-index: 1;
+  font-size: 10px;
+  color: #d6deeb;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 2. Top-Left Categorized Resource Readout (Collapsible Tree) */
+#rw-resource-readout {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  width: 224px;
+  padding: 6px 9px;
+  font-size: 12px;
+  background: rgba(20, 24, 28, 0.9);
+}
+
+.rw-res-top-bar {
+  font-size: 12px;
+  font-weight: 700;
+  color: #f5d451;
+  cursor: pointer;
+  padding-bottom: 4px;
+  margin-bottom: 5px;
+  border-bottom: 1px solid #49525c;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.rw-res-top-bar:hover {
+  color: #ffffff;
+}
+
+.rw-res-cat {
+  margin-bottom: 5px;
+}
+
+.rw-res-cat:last-child {
+  margin-bottom: 0;
+}
+
+.rw-res-head {
+  font-size: 11px;
+  font-weight: 700;
+  color: #b4c2d1;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 2px 2px;
+  margin-bottom: 2px;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+}
+
+.rw-res-head:hover {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.rw-res-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1px 4px 1px 10px;
+  color: #dce3ec;
+  font-size: 11.5px;
+}
+
+.rw-res-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 1px;
+  border: 1px solid rgba(0, 0, 0, 0.6);
+}
+
+.rw-res-row b {
+  color: #ffffff;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 3. Designator Banner */
+#rw-designator-banner {
+  position: absolute;
+  top: 106px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(30, 42, 56, 0.96);
+  border: 2px solid #8cb8e8;
+  padding: 6px 14px;
+  font-size: 12.5px;
+  color: #fff;
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  z-index: 40;
+}
+
+#rw-designator-banner[hidden] {
+  display: none;
+}
+
+#rw-rotate-desig {
+  background: #2f4b66;
+  border: 1px solid #8cb8e8;
+  color: #fff;
+  padding: 3px 8px;
+  font-size: 12px;
+}
+
+#rw-cancel-desig {
+  background: #8a2e2e;
+  border: 1px solid #d46a6a;
+  color: #fff;
+  padding: 3px 8px;
+  font-size: 12px;
+}
+
+/* 4. Right-Side Alerts & Letters (Collapsible) */
+#rw-alerts-wrap {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  width: 245px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  align-items: flex-end;
+  pointer-events: auto;
+}
+
+#rw-alerts-stack {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.rw-alert-item {
+  padding: 5px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  border: 1.5px solid #6b7480;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.rw-alert-threat {
+  background: rgba(135, 32, 32, 0.92);
+  border-color: #f07575;
+  color: #fff;
+}
+
+.rw-alert-warn {
+  background: rgba(120, 88, 24, 0.92);
+  border-color: #f0c965;
+  color: #fff;
+}
+
+.rw-letter-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  margin-top: 2px;
+}
+
+.rw-letter-envelope {
+  background: rgba(28, 34, 42, 0.92);
+  border: 1px solid #596573;
+  padding: 4px 8px;
+  font-size: 11px;
+  color: #cfd8e3;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.rw-env-icon {
+  color: #f5d451;
+  font-weight: bold;
+}
+
+/* 5. Bottom-Left Inspect Pane (Collapsible) */
+#rw-inspect-wrap {
+  position: absolute;
+  left: 10px;
+  bottom: 46px;
+  width: 356px;
+  pointer-events: auto;
+}
+
+#rw-inspect-top-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  margin-bottom: -2px;
+}
+
+#rw-inspect-tabs {
+  display: flex;
+  gap: 2px;
+}
+
+.rw-insp-tab {
+  background: #21262d;
+  border: 2px solid #57606b;
+  border-bottom: none;
+  border-radius: 0;
+  padding: 4px 8px;
+  font-size: 11.5px;
+  color: #b8c4d0;
+}
+
+.rw-insp-tab.active {
+  background: #303842;
+  color: #ffffff;
+  font-weight: 700;
+}
+
+#rw-inspect-pane {
+  padding: 9px 11px;
+  min-height: 150px;
+  max-height: 245px;
+  overflow-y: auto;
+}
+
+.rw-insp-title {
+  font-size: 14.5px;
+  font-weight: 700;
+  color: #ffffff;
+}
+
+.rw-insp-sub {
+  font-size: 11px;
+  color: #9fb0c2;
+  margin-bottom: 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.rw-insp-meta {
+  font-size: 11.5px;
+  color: #cfd8e3;
+  margin: 3px 0;
+}
+
+.rw-insp-desc {
+  font-size: 11px;
+  color: #9fb0c2;
+  line-height: 1.4;
+  margin: 4px 0;
+}
+
+.rw-insp-statgrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3px 8px;
+  font-size: 11px;
+  background: rgba(0, 0, 0, 0.25);
+  padding: 5px 7px;
+  margin: 4px 0;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.rw-insp-subhead {
+  font-size: 11px;
+  font-weight: 700;
+  color: #f5d451;
+  margin: 6px 0 3px;
+}
+
+.rw-skill-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 3px 0;
+  font-size: 11px;
+}
+
+.rw-sk-name {
+  width: 135px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rw-sk-track {
+  flex: 1;
+  height: 7px;
+  background: #121518;
+  border: 1px solid #3c444d;
+}
+
+.rw-sk-track i {
+  display: block;
+  height: 100%;
+  background: #4e8fd4;
+}
+
+.rw-sk-lv {
+  width: 38px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.rw-skill-card {
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid #444d57;
+  padding: 5px 7px;
+  margin-bottom: 5px;
+}
+
+.rw-skill-card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+}
+
+.rw-gene-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 5px 0;
+}
+
+.rw-gene-chip {
+  background: #273747;
+  border: 1px solid #4f779e;
+  padding: 2px 7px;
+  font-size: 11px;
+  color: #d8ecff;
+}
+
+.rw-gene-inject-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 4px;
+}
+
+.rw-mini-btn {
+  background: #2b3540;
+  border: 1px solid #677482;
+  border-radius: 2px;
+  padding: 3px 8px;
+  font-size: 11px;
+  color: #e8eef5;
+}
+
+.rw-mini-btn:hover {
+  background: #3b4958;
+  border-color: #9fb0c2;
+}
+
+/* 6. Bottom-Center Command Gizmos (Collapsible) */
+#rw-gizmo-wrap {
+  position: absolute;
+  left: 376px;
+  bottom: 46px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  pointer-events: auto;
+}
+
+#rw-gizmo-bar {
+  display: flex;
+  gap: 6px;
+}
+
+.rw-gizmo {
+  position: relative;
+  width: 66px;
+  height: 66px;
+  background: rgba(28, 33, 39, 0.95);
+  border: 2px solid #636d7a;
+  border-radius: 2px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  box-shadow: inset 0 0 0 1px #14171a, 0 3px 8px rgba(0, 0, 0, 0.55);
+}
+
+.rw-gizmo:hover {
+  background: #2e3742;
+  border-color: #a8b6c4;
+}
+
+.rw-gizmo.active-draft {
+  background: #5c2222;
+  border-color: #ff7373;
+}
+
+.rw-gizmo.cooldown {
+  opacity: 0.6;
+}
+
+.rw-gizmo-hotkey {
+  position: absolute;
+  top: 2px;
+  left: 4px;
+  font-size: 9.5px;
+  font-weight: 700;
+  color: #f5d451;
+}
+
+.rw-gizmo-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 24px;
+}
+
+.rw-gizmo-label {
+  font-size: 10px;
+  color: #e3e8ee;
+  margin-top: 3px;
+  text-align: center;
+  line-height: 1.1;
+}
+
+/* 7. Main Bottom Drawer */
+#rw-main-drawer {
+  position: absolute;
+  left: 376px;
+  right: 274px;
+  bottom: 142px;
+  max-height: 325px;
+  padding: 10px 12px;
+  overflow-y: auto;
+  z-index: 38;
+}
+
+#rw-main-drawer[hidden] {
+  display: none;
+}
+
+.rw-drawer-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  border-bottom: 1px solid #454e59;
+  padding-bottom: 6px;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+
+.rw-subcat-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.rw-subcat-btn {
+  background: #232930;
+  border: 1px solid #56606b;
+  border-radius: 2px;
+  padding: 4px 9px;
+  font-size: 11.5px;
+}
+
+.rw-subcat-btn.active {
+  background: #3d4d5e;
+  border-color: #9ec2e6;
+  color: #fff;
+  font-weight: 700;
+}
+
+.rw-arch-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(215px, 1fr));
+  gap: 7px;
+}
+
+.rw-arch-card,
+.rw-bio-card {
+  background: #23282e;
+  border: 1.5px solid #525b66;
+  border-radius: 2px;
+  padding: 7px 9px;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.rw-arch-card:hover {
+  background: #2f3740;
+  border-color: #9fb0c2;
+}
+
+.rw-arch-card b {
+  font-size: 12.5px;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.rw-arch-card span {
+  font-size: 11px;
+  color: #f5d451;
+}
+
+.rw-arch-card small {
+  font-size: 11px;
+  color: #aab6c4;
+}
+
+/* Work Table & Schedule */
+.rw-table-wrap {
+  overflow-x: auto;
+}
+
+.rw-work-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.rw-work-table th,
+.rw-work-table td {
+  border: 1px solid #414952;
+  padding: 4px 6px;
+  text-align: center;
+}
+
+.rw-work-table th {
+  background: #283038;
+  color: #cfd8e3;
+}
+
+.rw-prio-cell {
+  width: 28px;
+  height: 24px;
+  padding: 0;
+  font-weight: 700;
+  border-radius: 2px;
+}
+
+.rw-prio-cell.prio-1 {
+  background: #235c33;
+  color: #7ef09d;
+  border-color: #48a862;
+}
+.rw-prio-cell.prio-2 {
+  background: #485926;
+  color: #d7f07e;
+}
+.rw-prio-cell.prio-3 {
+  background: #594622;
+  color: #f0c97e;
+}
+.rw-prio-cell.prio-4 {
+  background: #4f2d2d;
+  color: #e09696;
+}
+.rw-prio-cell.prio-0 {
+  background: #1a1e22;
+  color: #636c75;
+}
+
+.sch-sleep {
+  background: #233852;
+  color: #9ec4f0;
+}
+.sch-joy {
+  background: #524223;
+  color: #f0d39e;
+}
+.sch-work {
+  background: #2c3e2e;
+  color: #a8dba8;
+}
+
+.rw-raid-status {
+  background: rgba(120, 32, 32, 0.25);
+  border: 1px solid #8a3c3c;
+  padding: 7px 10px;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+
+.rw-mod-loader-box {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #444d57;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 12px;
+}
+
+.rw-mod-loader-box input {
+  flex: 1;
+  background: #14181c;
+  border: 1px solid #56606b;
+  color: #e3e8ee;
+  padding: 4px 8px;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+}
+
+/* 8. Bottom-Right Readout & Time Controls (Collapsible) */
+#rw-bottom-right {
+  position: absolute;
+  right: 10px;
+  bottom: 46px;
+  width: 248px;
+  padding: 6px 10px;
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.rw-br-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: #f5d451;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  padding-bottom: 3px;
+}
+
+#rw-cell-inspector {
+  font-size: 11px;
+  color: #d6deeb;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  padding-bottom: 4px;
+  line-height: 1.4;
+}
+
+#rw-clock-readout {
+  font-size: 11.5px;
+  color: #e3e8ee;
+  line-height: 1.4;
+  padding-top: 3px;
+}
+
+#rw-speed-controls {
+  display: flex;
+  gap: 4px;
+}
+
+#rw-speed-controls button {
+  flex: 1;
+  background: #232930;
+  border: 1.5px solid #56606b;
+  border-radius: 2px;
+  padding: 4px 0;
+  font-size: 11px;
+  color: #cfd8e3;
+}
+
+#rw-speed-controls button.active {
+  background: #3d5266;
+  border-color: #f5d451;
+  color: #fff;
+  font-weight: 700;
+}
+
+/* 9. Bottom Main Tab Bar */
+#rw-main-tabbar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 38px;
+  background: #181c20;
+  border-top: 2px solid #5c6570;
+  display: flex;
+  pointer-events: auto;
+  z-index: 42;
+}
+
+.rw-tab-btn {
+  flex: 1;
+  background: #21262c;
+  border: none;
+  border-right: 1px solid #49515b;
+  border-radius: 0;
+  color: #d4dce6;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 0 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rw-tab-btn:hover {
+  background: #2e3640;
+  color: #fff;
+}
+
+.rw-tab-btn.active {
+  background: #3b4754;
+  color: #f5d451;
+  box-shadow: inset 0 3px 0 #f5d451;
+}
+
+.rw-tab-accent {
+  color: #ff9c9c;
+}
+
+.rw-tab-dlc {
+  color: #8cd4ff;
+}
+
+/* 10. Float Menu & Toast */
+#rw-float-menu {
+  position: fixed;
+  z-index: 60;
+  min-width: 220px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+#rw-float-menu[hidden] {
+  display: none;
+}
+
+.rw-float-item {
+  background: #232930;
+  border: 1px solid #49525c;
+  border-radius: 1px;
+  text-align: left;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: #e8eef5;
+}
+
+.rw-float-item:hover {
+  background: #3b4b5c;
+  border-color: #9ec2e6;
+}
+
+#rw-toast {
+  position: fixed;
+  top: 76px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(22, 27, 33, 0.96);
+  border: 1.5px solid #f5d451;
+  color: #fff;
+  padding: 6px 16px;
+  font-size: 13px;
+  z-index: 70;
+  opacity: 0;
+  transition: opacity 0.2s;
+  pointer-events: none;
+}
+
+#rw-toast.visible {
+  opacity: 1;
+}
+
+/* Modal Backdrop & Card for Corpse Looting Window and Price=0 Group Trade Panel */
+.rw-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: rgba(8, 10, 14, 0.72);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+}
+.rw-modal-backdrop[hidden] {
+  display: none !important;
+}
+.rw-modal-card {
+  width: min(680px, 92vw);
+  max-height: 82vh;
+  overflow-y: auto;
+  padding: 14px 16px;
+  background: rgba(22, 26, 32, 0.98);
+  border: 2px solid #8cb8e8;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.8);
+}
+
+/* 分组筛选顶栏与双层检视窗增强样式 */
+#rw-colonist-bar {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+}
+
+.rw-collapse-mini.active,
+.rw-mini-btn.active {
+  background: #3d5266;
+  border-color: #f5d451;
+  color: #f5d451;
+  font-weight: 700;
+}
+
+#rw-inspect-body {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+#rw-floor-pane {
+  background: rgba(20, 24, 28, 0.94);
+  border: 1.5px solid #57606b;
+}
+
+#rw-inspect-pane {
+  min-height: 110px;
+  max-height: 210px;
+}
+
+
+/* =========================================================================
+   RimWorld 原版 Dialog_Trade 三栏对称双向交易窗口样式
+   ========================================================================= */
+.rw-modal-card.rw-trade-dialog {
+  width: min(940px, 95vw);
+  max-height: 86vh;
+  padding: 12px 15px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: linear-gradient(180deg, rgba(24, 29, 36, 0.99) 0%, rgba(18, 22, 27, 0.99) 100%);
+  border: 2px solid #8a9bb0;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08),
+    0 16px 44px rgba(0, 0, 0, 0.88);
+}
+
+.rw-trade-titlebar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-bottom: 6px;
+  border-bottom: 1.5px solid #455261;
+  margin-bottom: 2px;
+}
+
+.rw-trade-mode-tabs {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.rw-trade-header-grid {
+  display: grid;
+  grid-template-columns: 1fr 1.15fr 1fr;
+  gap: 10px;
+  align-items: stretch;
+  background: rgba(13, 16, 20, 0.72);
+  border: 1px solid #3c4856;
+  padding: 8px 10px;
+  border-radius: 3px;
+}
+
+.rw-trade-party-box {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 4px;
+  padding: 6px 9px;
+  background: rgba(27, 33, 41, 0.85);
+  border: 1px solid #485666;
+  border-radius: 2px;
+}
+
+.rw-trade-party-right {
+  text-align: right;
+  align-items: flex-end;
+}
+
+.rw-trade-party-role {
+  font-size: 11px;
+  color: #9fb0c2;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.rw-trade-party-main {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  color: #f0ebe1;
+}
+
+.rw-trade-party-right .rw-trade-party-main {
+  justify-content: flex-end;
+}
+
+.rw-trade-party-sub {
+  font-size: 11.5px;
+  color: #cfd8e3;
+}
+
+.rw-trade-filter-box {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 4px 6px;
+}
+
+.rw-trade-search {
+  flex: 1;
+  background: #12161b;
+  color: #f0ebe1;
+  border: 1px solid #566575;
+  padding: 4px 8px;
+  font-size: 12px;
+  border-radius: 2px;
+  outline: none;
+}
+
+.rw-trade-search:focus {
+  border-color: #f5d451;
+}
+
+.rw-trade-select {
+  background: #181e25;
+  color: #e8e2d5;
+  border: 1px solid #586878;
+  padding: 3px 6px;
+  font-size: 11.5px;
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.rw-trade-cat-pills {
+  display: flex;
+  gap: 4px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.rw-trade-cat-pills .rw-subcat-btn {
+  padding: 2px 7px;
+  font-size: 11px;
+}
+
+/* 顶部固定银币/通货结算栏 */
+.rw-trade-currency-bar {
+  display: grid;
+  grid-template-columns: 1fr 1.2fr 1fr;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: linear-gradient(90deg, rgba(44, 52, 64, 0.9) 0%, rgba(33, 41, 52, 0.95) 50%, rgba(44, 52, 64, 0.9) 100%);
+  border: 1px solid #6b7c8f;
+  border-radius: 2px;
+  font-size: 12px;
+}
+
+.rw-trade-curr-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rw-trade-curr-mid {
+  text-align: center;
+  font-size: 12px;
+}
+
+.rw-trade-curr-right {
+  text-align: right;
+  font-size: 12px;
+}
+
+.rw-trade-muted {
+  color: #95a5b5;
+  font-size: 11px;
+}
+
+.rw-trade-zero-badge {
+  display: inline-block;
+  padding: 2px 10px;
+  background: rgba(46, 82, 58, 0.65);
+  border: 1px solid #63c784;
+  color: #8cf5ad;
+  font-size: 11.5px;
+  font-weight: 600;
+  border-radius: 2px;
+}
+
+/* RimWorld 三栏双向交易表 */
+.rw-trade-table-wrap {
+  max-height: 43vh;
+  overflow-y: auto;
+  border: 1px solid #445160;
+  background: rgba(14, 17, 22, 0.92);
+}
+
+.rw-trade-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.rw-trade-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #242c35;
+  color: #d8ccb8;
+  font-weight: 700;
+  font-size: 11.5px;
+  padding: 6px 6px;
+  border-bottom: 1.5px solid #566678;
+}
+
+.rw-trade-row {
+  border-bottom: 1px solid rgba(72, 85, 100, 0.38);
+  transition: background 0.1s ease;
+  cursor: pointer;
+}
+
+.rw-trade-row:nth-child(even) {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.rw-trade-row:hover {
+  background: rgba(140, 184, 232, 0.12);
+}
+
+.rw-trade-row.rw-row-buying {
+  background: rgba(58, 128, 82, 0.24) !important;
+}
+
+.rw-trade-row.rw-row-selling {
+  background: rgba(148, 108, 42, 0.24) !important;
+}
+
+.rw-trade-item-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rw-trade-item-icon {
+  font-size: 16px;
+  line-height: 1;
+  width: 22px;
+  text-align: center;
+}
+
+.rw-trade-item-title {
+  color: #f0ebe1;
+  font-size: 12.5px;
+  display: block;
+}
+
+.rw-trade-cat-tag {
+  display: inline-block;
+  font-size: 10px;
+  color: #9fb0c2;
+  background: rgba(56, 68, 82, 0.65);
+  padding: 0 5px;
+  border-radius: 2px;
+  margin-top: 1px;
+}
+
+.rw-trade-num {
+  padding: 5px 8px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.rw-trade-transfer-td {
+  padding: 4px 6px;
+  text-align: center;
+}
+
+.rw-trade-transfer-ctrl {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  background: rgba(18, 22, 28, 0.9);
+  padding: 2px 5px;
+  border: 1px solid #485666;
+  border-radius: 2px;
+}
+
+.rw-trade-step-btn {
+  min-width: 26px;
+  height: 23px;
+  padding: 0 5px;
+  background: #2b3440;
+  color: #e8e2d5;
+  border: 1px solid #5c6d7e;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  border-radius: 2px;
+  line-height: 1;
+}
+
+.rw-trade-step-btn:hover {
+  background: #3d4b5c;
+  border-color: #f5d451;
+  color: #fff;
+}
+
+.rw-trade-Editable-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: #11151a;
+  border: 1px solid #566678;
+  padding: 0 5px;
+  height: 23px;
+}
+
+.rw-trade-dir-arrow {
+  font-size: 11px;
+  color: #f5d451;
+  min-width: 11px;
+  text-align: center;
+}
+
+.rw-trade-qty-input {
+  width: 54px;
+  background: transparent;
+  color: #fff;
+  border: none;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 700;
+  outline: none;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 底部结算与操作栏 */
+.rw-trade-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding-top: 8px;
+  border-top: 1.5px solid #455261;
+}
+
+.rw-trade-footer-summary {
+  font-size: 12.5px;
+  color: #e8e2d5;
+}
+
+.rw-trade-footer-btns {
+  display: flex;
+  gap: 7px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.rw-trade-action-btn {
+  padding: 5px 11px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.rw-trade-accept-btn {
+  background: #2b543a !important;
+  border-color: #7ef09d !important;
+  color: #ffffff !important;
+  font-weight: 700;
+  padding: 5px 15px;
+}
+
+.rw-trade-accept-btn:hover {
+  background: #366948 !important;
+  box-shadow: 0 0 10px rgba(126, 240, 157, 0.35);
+}
+
+
+/* RimWorld 右键上下文菜单 (FloatMenu) 增强样式 */
+#rw-float-menu {
+  min-width: 265px;
+  max-width: 380px;
+  padding: 5px;
+  background: rgba(20, 24, 30, 0.98);
+  border: 2px solid #8a9bb0;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08),
+    0 10px 28px rgba(0, 0, 0, 0.85);
+}
+
+.rw-float-head {
+  padding: 5px 9px 6px;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #f5d451;
+  background: rgba(12, 15, 19, 0.9);
+  border-bottom: 1px solid #485666;
+  margin-bottom: 3px;
+  letter-spacing: 0.2px;
+}
+
+.rw-float-item {
+  font-size: 12px;
+  padding: 6px 10px;
+  color: #f0ebe1;
+  background: #232a32;
+  border: 1px solid #455260;
+  cursor: pointer;
+  transition: background 0.08s ease, border-color 0.08s ease;
+}
+
+.rw-float-item:hover {
+  background: #364556;
+  border-color: #f5d451;
+  color: #ffffff;
+}
+
+.rw-float-cancel {
+  margin-top: 2px;
+  color: #adb5bd;
+  background: #1b2026;
+  border-color: #38424d;
+  text-align: center;
+  font-size: 11.5px;
+}
+
+/* =========================================================================
+   RimWorld FloatMenu 挪远自动淡出 & 全图标化 UI 视觉增强
+   ========================================================================= */
+#rw-float-menu {
+  transition: opacity 0.16s ease-out, transform 0.12s ease-out;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.78);
+}
+
+#rw-float-menu.rw-float-fading {
+  transition: opacity 0.12s linear;
+}
+
+.rw-float-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #f5d451;
+  background: rgba(16, 20, 26, 0.92);
+  border-bottom: 1px solid #49525c;
+  margin-bottom: 2px;
+}
+
+.rw-float-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  background: #232930;
+  border: 1px solid #49525c;
+  border-radius: 2px;
+  text-align: left;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: #e8eef5;
+  transition: background 0.1s, border-color 0.1s;
+}
+
+.rw-float-item:hover {
+  background: #354658;
+  border-color: #f5d451;
+  color: #ffffff;
+}
+
+.rw-tab-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+}
+
+.rw-gizmo.active-desig {
+  background: #2b445e;
+  border-color: #f5d451;
+  box-shadow: 0 0 0 1px #f5d451, 0 4px 10px rgba(0, 0, 0, 0.65);
+}
+
+/* =========================================================================
+   RimWorld 1.5 原版 UI 布局与四角 HUD 精调：
+   1. 左上角物资栏 (#rw-resource-readout)：自适应最大高度与滚动，绝不遮挡左下检视面板；
+   2. 右上角信封与警报 (#rw-alerts-wrap)：外框 pointer-events:none 不挡地图点击，内项可点；
+   3. 左下角检视面板 (#rw-inspect-wrap, 356px) 与中下指令栏 (#rw-gizmo-wrap, left:374px) 零重叠；
+   4. 右下角环境与时间读数 (#rw-bottom-right)：半透明深色护眼底衬 + 速度控制组；
+   5. 底部主抽屉 (#rw-main-drawer)：打开工作指派或任意页签时保留四角 HUD 可见可交互。
+   ========================================================================= */
+#rw-resource-readout {
+  top: 10px;
+  left: 10px;
+  width: 226px;
+  max-height: calc(100vh - 360px);
+  overflow-y: auto;
+  z-index: 36;
+  border-radius: 3px;
+}
+
+#rw-alerts-wrap {
+  top: 10px;
+  right: 10px;
+  width: 242px;
+  max-height: calc(100vh - 180px);
+  overflow-y: auto;
+  pointer-events: none !important;
+  z-index: 36;
+}
+
+#rw-alerts-wrap > *,
+#rw-alerts-stack > *,
+.rw-letter-envelope,
+.rw-alert-item {
+  pointer-events: auto;
+}
+
+#rw-inspect-wrap {
+  left: 10px !important;
+  bottom: 44px !important;
+  width: 356px !important;
+  z-index: 39;
+}
+
+#rw-gizmo-wrap {
+  left: 374px !important;
+  bottom: 44px !important;
+  z-index: 37;
+}
+
+#rw-main-drawer {
+  left: 374px;
+  right: 264px;
+  bottom: 120px;
+  max-height: calc(100vh - 220px);
+  z-index: 45;
+  border-radius: 3px;
+}
+
+#rw-main-drawer.rw-work-fullwidth {
+  left: 374px !important;
+  right: 12px !important;
+  bottom: 120px !important;
+  top: auto !important;
+  width: auto !important;
+  max-height: calc(100vh - 205px) !important;
+  z-index: 48 !important;
+}
+
+@media (max-width: 1180px) {
+  #rw-main-drawer,
+  #rw-main-drawer.rw-work-fullwidth {
+    left: 12px !important;
+    right: 12px !important;
+    bottom: 118px !important;
+    z-index: 52 !important;
+  }
+}
+
+#rw-inspect-pane.rw-inspect-health-expanded {
+  max-height: 280px;
+  min-height: 205px;
+}
+
+.rw-health-split {
+  display: grid;
+  grid-template-columns: 108px 1fr;
+  gap: 8px;
+  margin-top: 5px;
+  align-items: start;
+}
+
+.rw-health-caps {
+  background: rgba(14, 18, 23, 0.86);
+  border: 1px solid #3c4652;
+  padding: 5px 7px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+}
+
+.rw-cap-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px dashed rgba(255, 255, 255, 0.07);
+  padding-bottom: 2px;
+}
+
+.rw-health-parts-list {
+  max-height: 205px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding-right: 2px;
+}
+
+.rw-bpart-row {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px;
+  background: rgba(18, 22, 28, 0.88);
+  border: 1px solid #38424d;
+  font-size: 11px;
+}
+
+.rw-bpart-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  white-space: nowrap;
+}
+
+.rw-bpart-actions {
+  display: flex;
+  gap: 3px;
+  flex-shrink: 0;
+}
+
+/* 右下角：护眼半透明信息读数底衬 + 小图标开关 + 速度按钮组 */
+#rw-bottom-right {
+  position: absolute;
+  right: 10px;
+  bottom: 44px;
+  width: auto;
+  min-width: 196px;
+  padding: 0;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  pointer-events: none;
+  z-index: 41;
+}
+
+#rw-br-readouts {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  text-align: right;
+  background: rgba(18, 22, 28, 0.84);
+  border: 1px solid rgba(88, 99, 112, 0.72);
+  border-radius: 3px;
+  padding: 4px 8px;
+  pointer-events: auto;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+}
+
+#rw-cell-inspector {
+  font-size: 11.5px;
+  color: #dce4ee;
+  border: none;
+  padding: 0;
+}
+
+#rw-clock-readout {
+  font-size: 12px;
+  font-weight: 600;
+  color: #f4f1ea;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 0;
+}
+
+#rw-perf-readout {
+  font-size: 10.5px;
+  color: #7ef09d;
+  font-weight: 500;
+}
+
+#rw-overlay-toggles {
+  display: flex;
+  gap: 4px;
+  justify-content: flex-end;
+  pointer-events: auto;
+}
+
+.rw-br-icon-btn {
+  width: 26px;
+  height: 24px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(25, 30, 36, 0.92);
+  border: 1.5px solid #586370;
+  border-radius: 2px;
+  color: #cfd8e3;
+}
+
+.rw-br-icon-btn.active {
+  background: #3d5266;
+  border-color: #f5d451;
+  color: #f5d451;
+}
+
+#rw-speed-controls {
+  display: flex;
+  gap: 2px;
+  pointer-events: auto;
+  background: rgba(18, 22, 27, 0.94);
+  padding: 2px;
+  border: 1.5px solid #5c6672;
+  border-radius: 2px;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.65);
+}
+
+#rw-speed-controls button {
+  min-width: 34px;
+  height: 24px;
+  background: #252b33;
+  border: 1px solid #4d5661;
+  border-radius: 1px;
+  padding: 0 7px;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #d4dce6;
+  letter-spacing: -1px;
+}
+
+#rw-speed-controls button:hover {
+  background: #343d48;
+  color: #fff;
+}
+
+#rw-speed-controls button.active {
+  background: #3d5266;
+  border-color: #f5d451;
+  color: #f5d451;
+  box-shadow: inset 0 0 0 1px rgba(245, 212, 81, 0.4);
+}
+
+/* =========================================================================
+   RimWorld 原版截图级 Health (ITab_Pawn_Health) 与 Gear (ITab_Pawn_Gear) HUD 样式
+   ========================================================================= */
+#rw-inspect-wrap.rw-inspect-wide-hud {
+  width: min(535px, calc(100vw - 24px)) !important;
+  z-index: 44 !important;
+}
+
+#rw-inspect-pane.rw-inspect-health-expanded {
+  max-height: 335px;
+  min-height: 255px;
+  overflow-y: auto;
+}
+
+/* 1. ITab_Pawn_Health 双栏布局（左侧 Overview/Operations + 12项机能，右侧 Whole body + 部位伤病表） */
+.rw-rwhealth-grid {
+  display: grid;
+  grid-template-columns: 186px 1fr;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.rw-rwhealth-left {
+  background: rgba(15, 19, 24, 0.92);
+  border: 1px solid #414c58;
+  padding: 5px 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.rw-rwhealth-subtabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3px;
+}
+
+.rw-rwhealth-subtab {
+  background: #1f252d;
+  border: 1px solid #4d5866;
+  color: #b8c4d0;
+  font-size: 10.5px;
+  padding: 3px 4px;
+  cursor: pointer;
+  text-align: center;
+  border-radius: 2px;
+}
+
+.rw-rwhealth-subtab.active {
+  background: #354658;
+  border-color: #f5d451;
+  color: #ffffff;
+  font-weight: 700;
+}
+
+.rw-rwhealth-settings {
+  background: rgba(24, 30, 38, 0.85);
+  border: 1px solid #353f4b;
+  padding: 4px 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 10.5px;
+}
+
+.rw-rwhealth-chk {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  color: #dce4ee;
+}
+
+.rw-rwhealth-medrow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 4px;
+}
+
+.rw-rwhealth-painrow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-top: 1px dashed rgba(255, 255, 255, 0.08);
+  padding-top: 2px;
+}
+
+.rw-rwhealth-cap-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 175px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.rw-rwhealth-cap-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 10.5px;
+  padding: 1.5px 4px;
+  border-bottom: 1px dashed rgba(255, 255, 255, 0.06);
+}
+
+.rw-rwhealth-cap-item:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.rw-rwhealth-ops-box {
+  display: flex;
+  flex-direction: column;
+  font-size: 10.5px;
+  max-height: 230px;
+  overflow-y: auto;
+}
+
+.rw-rwhealth-ops-queue {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.rw-rwhealth-op-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 3px 5px;
+  background: rgba(28, 35, 44, 0.9);
+  border: 1px solid #485666;
+}
+
+.rw-rwhealth-add-bills {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.rw-rwhealth-add-bills .rw-mini-btn {
+  text-align: left;
+  font-size: 10px;
+  padding: 2.5px 5px;
+}
+
+.rw-rwhealth-right {
+  background: rgba(13, 16, 21, 0.92);
+  border: 1px solid #414c58;
+  padding: 4px 6px;
+  max-height: 268px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.rw-hediff-row {
+  display: grid;
+  grid-template-columns: 112px 1fr;
+  gap: 6px;
+  align-items: center;
+  padding: 3px 6px;
+  background: rgba(22, 27, 34, 0.9);
+  border: 1px solid #343e49;
+  font-size: 11px;
+}
+
+.rw-hediff-row:nth-child(even) {
+  background: rgba(28, 34, 42, 0.9);
+}
+
+.rw-hediff-wholebody {
+  background: rgba(28, 42, 54, 0.92) !important;
+  border-color: #4f6d8a;
+}
+
+.rw-hediff-part {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 4px;
+  border-right: 1px solid rgba(255, 255, 255, 0.1);
+  padding-right: 5px;
+}
+
+.rw-hediff-hp {
+  font-size: 10px;
+  color: #9fb0c2;
+  font-variant-numeric: tabular-nums;
+}
+
+.rw-hediff-cond {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+/* 2. ITab_Pawn_Gear 装备、武器与随身行囊面板样式 */
+.rw-rwgear-top {
+  background: rgba(14, 18, 23, 0.94);
+  border: 1px solid #455260;
+  padding: 5px 8px;
+  margin-bottom: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.rw-rwgear-mass-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11.5px;
+}
+
+.rw-rwgear-mass-track {
+  flex: 1;
+  height: 9px;
+  background: #101419;
+  border: 1px solid #485462;
+  border-radius: 1px;
+  overflow: hidden;
+}
+
+.rw-rwgear-mass-track i {
+  display: block;
+  height: 100%;
+  transition: width 0.15s ease;
+}
+
+.rw-rwgear-stat-strip {
+  display: grid;
+  grid-template-columns: 1.35fr 1fr 1fr 1fr;
+  gap: 4px;
+  font-size: 10.5px;
+}
+
+.rw-rwgear-stat-pill {
+  background: rgba(24, 30, 38, 0.9);
+  border: 1px solid #384350;
+  padding: 2.5px 5px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.rw-rwgear-scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 235px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.rw-rwgear-sec-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: #f5d451;
+  background: rgba(28, 35, 44, 0.88);
+  border-left: 3px solid #f5d451;
+  padding: 2.5px 7px;
+  margin-top: 2px;
+}
+
+.rw-rwgear-item-card {
+  background: rgba(19, 24, 30, 0.92);
+  border: 1px solid #3d4856;
+  padding: 4px 7px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.rw-rwgear-item-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rw-rwgear-icon-box {
+  width: 28px;
+  height: 28px;
+  background: #13171d;
+  border: 1px solid #4a5664;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.rw-rwgear-item-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.rw-rwgear-qbadge {
+  font-size: 10px;
+  border: 1px solid;
+  padding: 0 4px;
+  border-radius: 2px;
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.rw-rwgear-item-btns {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.rw-rwgear-infocard {
+  background: rgba(12, 16, 21, 0.95);
+  border: 1px dashed #4f647a;
+  padding: 4px 7px;
+  font-size: 10.5px;
+  color: #cfd8e3;
+  line-height: 1.35;
+}
+
+.rw-rwgear-inv-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.rw-rwgear-inv-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 3px 7px;
+  background: rgba(18, 23, 29, 0.9);
+  border: 1px solid #35404d;
+  font-size: 11px;
+}
+
+/* =========================================================================
+   RimWorld 1.5 原版风格自定义滚动条 (Dark Slate Recessed Track + Beveled Thumb)
+   ========================================================================= */
+#rw-root,
+#rw-root *,
+#rw-resource-readout,
+#rw-inspect-pane,
+#rw-main-drawer,
+.rw-rwhealth-cap-list,
+.rw-rwhealth-right,
+.rw-rwhealth-ops-queue,
+.rw-rwgear-scroll,
+.rw-table-wrap,
+.rw-trade-table-wrap,
+.rw-modal-card {
+  scrollbar-width: thin;
+  scrollbar-color: #4b5868 #12161b;
+}
+
+#rw-root ::-webkit-scrollbar,
+#rw-resource-readout::-webkit-scrollbar,
+#rw-inspect-pane::-webkit-scrollbar,
+#rw-main-drawer::-webkit-scrollbar,
+.rw-rwhealth-cap-list::-webkit-scrollbar,
+.rw-rwhealth-right::-webkit-scrollbar,
+.rw-rwhealth-ops-queue::-webkit-scrollbar,
+.rw-rwgear-scroll::-webkit-scrollbar,
+.rw-table-wrap::-webkit-scrollbar,
+.rw-trade-table-wrap::-webkit-scrollbar,
+.rw-modal-card::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+#rw-root ::-webkit-scrollbar-track,
+#rw-resource-readout::-webkit-scrollbar-track,
+#rw-inspect-pane::-webkit-scrollbar-track,
+#rw-main-drawer::-webkit-scrollbar-track,
+.rw-rwhealth-cap-list::-webkit-scrollbar-track,
+.rw-rwhealth-right::-webkit-scrollbar-track,
+.rw-rwhealth-ops-queue::-webkit-scrollbar-track,
+.rw-rwgear-scroll::-webkit-scrollbar-track,
+.rw-table-wrap::-webkit-scrollbar-track,
+.rw-trade-table-wrap::-webkit-scrollbar-track,
+.rw-modal-card::-webkit-scrollbar-track {
+  background: #11151a;
+  border: 1px solid #2b343e;
+  border-radius: 1px;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.8);
+}
+
+#rw-root ::-webkit-scrollbar-thumb,
+#rw-resource-readout::-webkit-scrollbar-thumb,
+#rw-inspect-pane::-webkit-scrollbar-thumb,
+#rw-main-drawer::-webkit-scrollbar-thumb,
+.rw-rwhealth-cap-list::-webkit-scrollbar-thumb,
+.rw-rwhealth-right::-webkit-scrollbar-thumb,
+.rw-rwhealth-ops-queue::-webkit-scrollbar-thumb,
+.rw-rwgear-scroll::-webkit-scrollbar-thumb,
+.rw-table-wrap::-webkit-scrollbar-thumb,
+.rw-trade-table-wrap::-webkit-scrollbar-thumb,
+.rw-modal-card::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #4b5868 0%, #353f4b 100%);
+  border: 1px solid #6b7a8c;
+  border-radius: 1px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14);
+}
+
+#rw-root ::-webkit-scrollbar-thumb:hover,
+#rw-resource-readout::-webkit-scrollbar-thumb:hover,
+#rw-inspect-pane::-webkit-scrollbar-thumb:hover,
+#rw-main-drawer::-webkit-scrollbar-thumb:hover,
+.rw-rwhealth-cap-list::-webkit-scrollbar-thumb:hover,
+.rw-rwhealth-right::-webkit-scrollbar-thumb:hover,
+.rw-rwhealth-ops-queue::-webkit-scrollbar-thumb:hover,
+.rw-rwgear-scroll::-webkit-scrollbar-thumb:hover,
+.rw-table-wrap::-webkit-scrollbar-thumb:hover,
+.rw-trade-table-wrap::-webkit-scrollbar-thumb:hover,
+.rw-modal-card::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, #5f7084 0%, #445160 100%);
+  border-color: #f5d451;
+}
+
+#rw-root ::-webkit-scrollbar-thumb:active,
+#rw-resource-readout::-webkit-scrollbar-thumb:active,
+#rw-inspect-pane::-webkit-scrollbar-thumb:active,
+#rw-main-drawer::-webkit-scrollbar-thumb:active {
+  background: linear-gradient(180deg, #73602c 0%, #52441e 100%);
+  border-color: #f5d451;
+}
+
+#rw-root ::-webkit-scrollbar-corner {
+  background: #11151a;
+}
+
+/* 右下角 i18n 语言切换按钮样式 */
+#rw-lang-toggle {
+  width: auto !important;
+  min-width: 44px;
+  padding: 0 6px;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: #f5d451;
+  border-color: #7c6d35;
+  background: rgba(28, 34, 42, 0.92);
+  letter-spacing: 0.2px;
+}
+
+#rw-lang-toggle:hover {
+  background: rgba(58, 70, 84, 0.96);
+  border-color: #f5d451;
+  color: #ffffff;
+}
+
+
+/* ===== Layout Non-Overlap & Tab Polish (RimWorld 1.5) ===== */
+.rw-insp-tab {
+  white-space: nowrap !important;
+  flex-shrink: 0 !important;
+}
+#rw-resource-readout {
+  max-height: calc(100vh - 548px) !important;
+  overflow-y: auto !important;
+  padding: 5px 8px !important;
+}
+#rw-resource-readout .rw-res-cat {
+  margin-top: 3px !important;
+  padding-top: 3px !important;
+}
+#rw-resource-readout .rw-res-row {
+  padding: 1px 2px !important;
+  font-size: 11.5px !important;
+}
+#rw-inspect-wrap.rw-inspect-wide-hud #rw-inspect-pane.rw-inspect-health-expanded {
+  max-height: 342px !important;
+}
+#rw-main-drawer.rw-drawer-architect {
+  left: 446px !important;
+  transform: none !important;
+  bottom: 146px !important;
+  width: min(730px, calc(100vw - 670px)) !important;
+  max-height: 350px !important;
+}
+
+/* ===== Horizontal Non-Overlap between Wide Inspect HUD, Gizmo Bar, and Architect Drawer ===== */
+#rw-inspect-wrap.rw-inspect-wide-hud {
+  width: 432px !important;
+}
+#rw-gizmo-wrap {
+  left: 448px !important;
+}
+#rw-main-drawer.rw-drawer-architect {
+  left: 448px !important;
+  transform: none !important;
+  bottom: 146px !important;
+  width: min(730px, calc(100vw - 670px)) !important;
+  max-height: 350px !important;
+}

@@ -275,7 +275,15 @@ export function validInterest(d: unknown): d is { x: number; y: number; r: numbe
  * 错误回显通道是刻意的，见 game-server 头注释）——所以漏登记极难排查。
  * R1-5 新增 save/load 即踩过这个坑：命令发出去没反应，必须在此登记才生效。
  */
-export const SERVER_COMMANDS: readonly string[] = ['move', 'save', 'load'];
+export const SERVER_COMMANDS: readonly string[] = [
+  'move', 'save', 'load',
+  'draft', 'attack_hostile', 'work_priority',
+  'architect_build', 'architect_order',
+  'use_skill', 'splice_gene',
+  'raid_spawn', 'raid_order', 'switch_role',
+  'base_trade', 'base_gift', 'base_ally', 'base_assault',
+  'dlc_toggle',
+];
 
 /** move 参数校验：坐标有限且在防御边界内；eids 存在性由 Sim.issueCommand 自行过滤 */
 export function validMoveArgs(args: Record<string, unknown> | undefined): boolean {

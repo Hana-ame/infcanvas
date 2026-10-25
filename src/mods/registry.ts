@@ -337,6 +337,7 @@ export function resolvePacks(
 // 数据清单与契约校验用静态 import：它们是纯数据/纯函数，不构成框架↔玩法运行时环
 // （玩法包只 import 本文件的**类型**，类型在编译期擦除）。
 import { DEFAULT_PLAYSTYLE_PACKS, DLC_PACKS } from './packs/playstyle';
+import { registerOfficialDlcs } from './dlc-entry';
 import { validateContracts } from './contracts';
 
 function playstyleList(): typeof import('./packs/playstyle') {

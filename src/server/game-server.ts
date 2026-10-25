@@ -245,6 +245,9 @@ export function createGameServer(opts: GameServerOptions): Promise<GameServerHan
       interest: null,
       prevInterest: null,
       center: { x: sim.world.spawn.x, y: sim.world.spawn.y },
+      // P3（多人选型 A）：新连接默认观察模式，无认领、无输入意图。
+      claimedEid: null,
+      lastInput: null,
     };
     clients.add(ctx);
     // 新连接：先收 welcome（seed+tuning+全量），之后走常规节奏。

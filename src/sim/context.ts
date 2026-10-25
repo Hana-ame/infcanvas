@@ -95,7 +95,7 @@ export interface SimContext extends DrawSurface {  // ---- 时钟与随机（见
    */
   grantTechFragment(techId: string): 'progress' | 'unlocked' | 'dup' | 'unknown';
   /** 科技抽卡池顺序（TECH_ORDER：order 升序 = 权重递减方向） */
-  techOrder(): string[];
+  techOrder(): readonly string[];
   /**
    * 建筑科技门控判定（R2-1 消费端）：给定 BuildingTuningEntry.tech 列表，
    * 判断是否全部已解锁。语义三条：

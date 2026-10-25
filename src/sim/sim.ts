@@ -1,122 +1,134 @@
 /**
- * sim.ts —— 权威模拟本体：实体管理 + 系统步进 + 命令路由 + 事件日志。
- *
- * 零 DOM / 零 Node API：同一份代码跑在 vitest、CLI（tsx）、浏览器、服务端。
- * Sim 实现 SimContext 给玩法包用；玩法包永远只见 SimContext 切面（可单测替换）。
- *
- * 命令路由（原则④能力面）：move 是引擎内建的基础指挥；其余命令由玩法包
- * registerCommand 注册。玩家命令给小人 holdUntil 优先窗口——这是命令层语义
- * （外部输入压过自主抽卡），不是行为规则。
+ * sim.ts —— 权威模拟本体：实体管理 + 空间哈希网格 + 单格唯一对象 + 生物尸体拖回屠宰 + 蓝图自动施工 + 植物蔓延 + 小人精神崩溃离开派系自主求生 + AImode DLC 门控。
  */
 import { mulberry32, type RngFn } from './rng';
-import { DEFAULT_TUNING, type Tuning } from './tuning';
+import { type Tuning } from './tuning';
 import { World } from './world';
 import { RoutePlanner } from './path-plan';
+import { InfiniteChunkPathfinder } from './hpa-infinite';
+import { initPawnRimWorldProfile, enforceMaxThreeSkills } from './genetics-skills';
+import { ensurePawnTriads } from './triad-specialization';
+import { SpatialHashGrid } from './spatial-grid';
+import { ensureRimWorldBuildingsRegistered, tickRimWorldBlueprintWork } from './rimworld-work';
+import { isSolidMountainAt, canStepElevationFast, canTraverseElevationWithSlope, clampPathToPlayerFog, hasSlopeAt, SLOPE_LADDER_SPEED_PENALTY_MUL, } from './rooms-power-fog';
+import { computeAnatomyCapacities, inflictBodyPartInjury } from './anatomy-health';
+import { spawnBattlefieldCorpse } from './corpse-youtube-play';
+import { tickOutdoorItemWeathering } from './social-trade-weathering';
+import { enforceSingleTileOccupancy, findNearestUnoccupiedTile, spawnCreatureCorpse, tickPlantSpread, tickRimWorldButcherHaul, } from './rimworld-ecology-butcher';
+import { assignPawnToGroup, getColonistGroups, refreshGroupCarryMetrics, tickRimWorldScavengeOrders } from './mmo-groups-ruins';
+import { ensureInitialCulinaryStockpile, getActiveCulinaryBuff } from './culinary-dishes';
+import { terrainMetaAt } from './terrain';
+import { getActiveSimDlcs, isAiModeDlcEnabled } from '../mods/dlc-entry';
+import { dispatchSimCommand, executeChooseDialogueOption, executeSimInteract } from './sim-commands';
 import type { SimContext, CardWeightHook } from './context';
 import type { CardDef } from './cards';
-import { behaviorCtor, commit, releaseHerbReservation, tryReserveHerb, type GameSystem } from './systems';
-import type { BuildingState, DialogueState, Eid, FeatureHit, Hostile, InteractOutcome, LogEvent, PawnState, Pos } from './types';
+import { commit, releaseHerbReservation, tryReserveHerb, type GameSystem } from './systems';
+import type {
+  BuildingState,
+  DialogueState,
+  Eid,
+  FeatureHit,
+  Hostile,
+  InteractOutcome,
+  LogEvent,
+  PawnState,
+  Pos,
+} from './types';
 import type { SaveData } from './schema';
 import type { ModRegistry } from '../mods/registry';
-
-/**
- * 移动被阻挡时把坐标贴回当前格朝向移动方向的边界（P1 moveDir 用）。
- * 格心为整数坐标，格占 [c-0.5, c+0.5]；朝 +dir 被挡 → 贴 +侧边界并留 0.01 裕量，
- * 防浮点抖动把角色弹进下一格（否则贴墙时在格边界来回抖动）。
- */
 function clampTileEdge(v: number, dir: number): number {
   const c = Math.round(v);
   return dir > 0 ? c + 0.5 - 0.01 : c - 0.5 + 0.01;
 }
-
 export interface SimConfig {
   seed?: number;
-  /** 显式指定 = 跳过 bootstrap 出生引导（最小装配/单测用）；缺省交给 bootstrap 包 */
   pawnCount?: number;
   registry: ModRegistry;
-  /** 读档恢复：传入存档对象（migrate 后的 SaveData）。装配跳过全部 system.init()
-   *  （那是"新开一局"的设定副作用，读档时实体由存档回填），随后回填状态。 */
   restore?: SaveData;
+  playerRimWorldMode?: boolean;
 }
-
 export class Sim implements SimContext {
   readonly world: World;
-  /**
-   * 路径规划策略（2026-10-08 sim 维度：从 Sim 容器剥出到 sim/path-plan.ts）。
-   *
-   * 它持有两个私有缓存（航点列表按 world.tagVersion 判过期、起终点对段缓存随
-   * 建筑增删清空）+ 双档迭代预算 + 长距标志位导航的分派规则。这些是**纯计算**，
-   * 与「谁是实体」无关，所以放进 Sim 里只会让实体容器变厚。
-   *
-   * Sim 仍负责两件事（因为它们属于实体/状态层）：
-   *   - addBuilding/removeBuilding 时调 `planner.clearRoutes()`（缓存失效是状态事件）；
-   *   - `setPath` 里构造 canStep/canStand 闭包（依赖 `p.climb`）并给路径**取副本**——
-   *     规划层可能返回 routeCache 的本体，实体状态绝不能共享它。
-   */
   readonly planner: RoutePlanner;
+  readonly infinitePathfinder: InfiniteChunkPathfinder;
+  readonly pawnGrid = new SpatialHashGrid<PawnState>(8);
+  readonly hostileGrid = new SpatialHashGrid<Hostile>(8);
   readonly reg: ModRegistry;
   tuning: Tuning;
   time = 0;
   systems: GameSystem[] = [];
   readonly pawnMap = new Map<Eid, PawnState>();
+  readonly deadPawnMap = new Map<Eid, PawnState>();
   readonly hostilesList: Hostile[] = [];
   stockpile: Record<string, number> = {};
   events: LogEvent[] = [];
-  selected: Eid[] = []; // 客户端选中（框选/点选），纯 UI 投影
-  /** P2 对话状态（运行态不入档，MVP）：当前打开的一次 NPC 对话，null = 未在对话。
-   *  为什么不入档：对话是即时交互而非世界事实；任务性奖励已落进 stock/techFragments
-   *  （随档），无需把"正在聊"存起来。P3+ 若要做持久剧情再升级。 */
+  selected: Eid[] = [];
   dialogue: DialogueState | null = null;
-  /** 玩法包运行态暂存（随档）：键 "<包>.<名>"。系统状态放这里而非闭包，存档才能还原 */
   readonly scratch: Record<string, number> = {};
-  /**
-   * 科技抽卡池运行态（R2-1）：已解锁科技 id + 各科技已攒碎片数。
-   *
-   * 为什么是显式字段而不放 ctx.scratch（scratch 是 Record<string,number>，
-   * 已解锁是"集合"塞不进去；碎片数倒是能塞）。理由有三：
-   *  1. 存档契约：已解锁是**世界事实**，必须整份进 SaveData（读档后门控判定才一致）；
-   *  2. 协议契约：联机 HUD 的科技面板要看到解锁进度，走 FullState 一段透传；
-   *  3. 可读性：scratch 是"包私有运行态"，科技是跨包共享事实（tech-pool 写 / building 读）。
-   */
+  playerRimWorldMode = false;
+  activePlayerId = 'p_local_1';
+  private climbRolledTargetKey = new Map<Eid, string>();
+  private unreachableGoalVer = -1;
+  private unreachableGoals = new Set<number>();
   private techsUnlocked = new Set<string>();
   readonly techFragments: Record<string, number> = {};
   private rngImpl: RngFn;
   private nextEid = 1;
   private nextHostileId = 1;
-  private relations = new Map<string, number>(); // pairKey → -100..100
-
+  private relations = new Map<string, number>();
   constructor(cfg: SimConfig) {
     this.reg = cfg.registry;
     this.tuning = this.reg.effectiveTuning();
-    // 读档时以存档里的 seed 重建世界（地形哈希由 seed 推导，必须一致）
+    ensureRimWorldBuildingsRegistered(this, Boolean(cfg.playerRimWorldMode));
+    if (cfg.playerRimWorldMode) this.playerRimWorldMode = true;
     const seed = cfg.restore?.seed ?? cfg.seed ?? 20260821;
     this.rngImpl = mulberry32(seed);
     this.world = new World(this.tuning, seed, { x: 0, y: 0 });
-    // 不能写成字段初始化器：字段初始化器在构造函数体之前执行，那时 world 还没赋值
-    // （useDefineForClassFields 下直接报 used before its initialization）
+    if (this.playerRimWorldMode) this.world.rimWorldSingleOccupancy = true;
     this.planner = new RoutePlanner(this.world);
-    // 装配系统（类别序×注册序）→ 全部 ctor 后再统一 init（出生引导能看到完整装配）
+    this.infinitePathfinder = new InfiniteChunkPathfinder(this.world);
     this.systems = this.reg.assemble(this);
     const restoring = cfg.restore !== undefined;
     if (!restoring) for (const s of this.systems) s.init?.();
     else this.applyRestore(cfg.restore!);
     if (cfg.pawnCount !== undefined && !restoring) {
-      for (let i = 0; i < cfg.pawnCount; i++) this.spawnPawn(); // 读档时实体来自存档，绝不能再刷
+      for (let i = 0; i < cfg.pawnCount; i++) this.spawnPawn();
+    }
+    if (this.playerRimWorldMode && !restoring) {
+      enforceSingleTileOccupancy(this);
+    }
+    this.rebuildSpatialGrids();
+  }
+  rebuildSpatialGrids(): void {
+    this.pawnGrid.rebuild(this.pawnMap.values());
+    this.hostileGrid.rebuild(this.hostilesList);
+  }
+  enableRimWorldPlayerRules(activePlayerId = 'p_local_1'): void {
+    this.playerRimWorldMode = true;
+    this.activePlayerId = activePlayerId;
+    this.world.rimWorldSingleOccupancy = true;
+    ensureRimWorldBuildingsRegistered(this, true);
+    ensureInitialCulinaryStockpile(this);
+    enforceSingleTileOccupancy(this);
+    this.planner.clearRoutes();
+    if (!isAiModeDlcEnabled(this)) {
+      for (const p of this.pawnMap.values()) {
+        if (p.cardId && (p.cardId.startsWith('build_') || p.cardId === 'till_field')) {
+          p.cardId = null;
+          p.busyUntil = this.time;
+        }
+      }
     }
   }
-
-  // ================= SimContext 实现 =================
   rng(): number {
     return this.rngImpl();
   }
-
   pawns(): IterableIterator<PawnState> {
     return this.pawnMap.values();
   }
   pawn(eid: Eid): PawnState | undefined {
     return this.pawnMap.get(eid);
   }
-
   spawnPawn(x?: number, y?: number): Eid {
     const eid = this.nextEid++;
     const pos = x !== undefined && y !== undefined ? { x, y } : this.findSpawn();
@@ -138,47 +150,56 @@ export class Sim implements SimContext {
       mastery: {},
       uses: {},
     };
+    initPawnRimWorldProfile(p, this.world.seed);
+    ensurePawnTriads(p, this.world.seed);
     this.pawnMap.set(eid, p);
+    this.pawnGrid.insert(p);
     this.log(`🐭 ${p.name} 出生（${this.tuning.traits[p.trait].name}）`);
     return eid;
   }
-
   killPawn(eid: Eid, cause: string): void {
     const p = this.pawnMap.get(eid);
     if (!p) return;
-    // R3 审计 P2 #3：死亡也要释放预留——killPawn 不走 finishCard/clearTarget（卡没到期就被打死），
-    // 预留量会一直挂在 scratch 上，永不归还 stockpile。与"卡自然到期"（P2 #7）是同一类
-    // 泄漏，只是触发点在死亡；两个释放点共用同一个 helper，键语义只有一处实现。
     releaseHerbReservation(this, eid);
-    // 别的鼠身上指向这只鼠的照料目标键一并清掉。medicine.resolveTarget 会懒清（hp<=0 时删键），
-    // 但那要到它下一次 action 才发生；提前清掉省一次陈旧键读取，也让存档不带死链。
-    // 两半：① 它自己的目标键（值 = 别人）；② 别人指向它的键（值 = 它自己）。
-    // ⚠ ② 只清"目标是鼠"的键：scratch 里 factions.name.<建筑id> 也存数字，裸判 `v === eid`
-    // 会误删建筑名映射（建筑 id 与鼠 eid 都从 1 起，是真实碰撞）。
     delete this.scratch[`medicine.target.${eid}`];
     for (const [k, v] of Object.entries(this.scratch)) {
       if (v === eid && k.startsWith('medicine.target.')) delete this.scratch[k];
     }
+    p.retainedOnCorpse = true;
+    p.corpseLooted = false;
+    p.corpseOrgansHarvested = false;
+    p.corpseButchered = false;
+    p.butcherYield = p.butcherYield ?? { meat: 3, leather: 2 };
+    p.causeOfDeath = cause;
+    p.deathTime = this.time;
+    const corpseClone = structuredClone(p);
+    if (this.playerRimWorldMode) {
+      corpseClone.pos = findNearestUnoccupiedTile(this, p.pos.x, p.pos.y, {
+        ignorePawnEid: eid,
+        replaceSurfacePlant: true,
+      });
+    }
+    this.deadPawnMap.set(eid, corpseClone);
     this.pawnMap.delete(eid);
     this.selected = this.selected.filter((s) => s !== eid);
     this.log(`💀 ${p.name} 死亡（${cause}）`);
   }
-
-  /** 出生点：营地锚点附近螺旋找可站格 */
   private findSpawn(): Pos {
     const anchor = this.campPos() ?? this.world.spawn;
-    for (let r = 0; r <= 10; r++) {
+    for (let r = 0; r <= 12; r++) {
       for (let dy = -r; dy <= r; dy++) {
         for (let dx = -r; dx <= r; dx++) {
           if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
-          if (this.passable(anchor.x + dx, anchor.y + dy)) return { x: anchor.x + dx, y: anchor.y + dy };
+          const cx = anchor.x + dx;
+          const cy = anchor.y + dy;
+          if (!this.passable(cx, cy)) continue;
+          if (this.playerRimWorldMode && this.world.buildingAt(cx, cy)) continue;
+          return { x: cx, y: cy };
         }
       }
     }
     return { ...anchor };
   }
-
-  /** 营地锚点 = 距鼠群质心最近的篝火（无火回世界原点）。标签键见 mods/contracts K_TAG_FIRE */
   campPos(): Pos | null {
     const c = this.meanPawnPos();
     const fire = this.world.nearestBuildingByTag('fire', c.x, c.y);
@@ -195,15 +216,11 @@ export class Sim implements SimContext {
     }
     return n ? { x: sx / n, y: sy / n } : { x: 0, y: 0 };
   }
-
   hostiles(): readonly Hostile[] {
     return this.hostilesList;
   }
   spawnHostile(kind: string, x: number, y: number): Hostile {
     const def = this.tuning.enemies[kind];
-    // 未注册的 kind：抛清晰错误而不是让下一行 `def.hp` 抛
-    // 「Cannot read properties of undefined (reading 'hp')」。
-    // 读档后 spawn 一个本装配里没有的敌人类型 = 调用方的装配错误，属 bug 不是边界情况。
     if (!def) throw new Error(`spawnHostile：未注册的敌人类别「${kind}」（缺挂载注册它的玩法包）`);
     const h: Hostile = {
       id: this.nextHostileId++,
@@ -211,9 +228,10 @@ export class Sim implements SimContext {
       pos: { x, y },
       hp: def.hp,
       maxHp: def.hp,
-      atkCd: def.atkCd, // 初值=cd：落地先观察一拍，防首帧秒咬（旧项目踩坑结论）
+      atkCd: def.atkCd,
     };
     this.hostilesList.push(h);
+    this.hostileGrid.insert(h);
     this.log(`${def.name} 出没！`);
     return h;
   }
@@ -221,7 +239,6 @@ export class Sim implements SimContext {
     const i = this.hostilesList.findIndex((h) => h.id === id);
     if (i >= 0) this.hostilesList.splice(i, 1);
   }
-
   damagePawn(eid: Eid, dmg: number, cause: string): void {
     const p = this.pawnMap.get(eid);
     if (!p) return;
@@ -233,15 +250,37 @@ export class Sim implements SimContext {
     if (!h) return;
     h.hp -= dmg;
     if (h.hp <= 0) {
-      // 判空（2026-10-07 R4-GEN 集成期补）：读一个「含 raider 的存档」但当前装配
-      // 没挂 factions 包时，`def` 为 undefined。此处**必须照常击杀并 despawn**——
-      // 缺判空会抛 TypeError，而 raid.tickCats 已加 `if (!def) continue` 跳过未知类，
-      // 结果是这只 raider **永远无法被杀死、变成不灭的隐形障碍**（比报错更坏）。
-      // 降级策略：drops 视为空表、名字用 kind 兜底，日志语义仍成立。
       const def = this.tuning.enemies[h.kind];
-      // 掉落（R3-3 起支持）：把 drops 表写进营地库存。这是**世界事实**（随档/进协议），
-      // 不是行为规则，所以进内核而不是 hunting 包——做成"拾取卡"需要尸体实体系统，
-      // 成本远高于收益。缺省 undefined = 不掉落，日志与改动前逐字一致（golden 基线不动）。
+      const isRaiderOrMech = h.kind.startsWith('raider') || h.kind === 'siege_rat_mech';
+      if (this.playerRimWorldMode) {
+        if (isRaiderOrMech) {
+          const drops = def?.drops ?? {};
+          for (const [k, v] of Object.entries(drops)) {
+            this.stockpile[k] = (this.stockpile[k] ?? 0) + v;
+          }
+          const freePos = findNearestUnoccupiedTile(this, h.pos.x, h.pos.y, {
+            ignoreHostileId: h.id,
+            replaceSurfacePlant: true,
+          });
+          spawnBattlefieldCorpse(this, freePos.x, freePos.y, {
+            eid: 20000 + h.id,
+            name: `${def?.name ?? h.kind} 遗体 (#${h.id})`,
+            equipWeapon: h.kind.includes('sniper') ? '赤爪狙击弩' : '制式突击步枪',
+            equipApparel: '掠夺者防弹背心',
+            inventory: { ore: 3, gold: 2, herb: 1, meal: 1 },
+            butcherYield: { meat: 3, leather: 2 },
+            causeOfDeath: '被殖民地防线击毙',
+            isRaiderCorpse: true,
+          });
+          this.despawnHostile(id);
+          this.log(`💀 ${def?.name ?? h.kind} 被击毙，留下了一具可搜刮/屠宰的遗体`);
+          return;
+        }
+        const corpse = spawnCreatureCorpse(this, h);
+        this.despawnHostile(id);
+        this.log(`💀 ${def?.name ?? h.kind} 死亡，留下了【${corpse.name}】（需拖回屠宰台屠宰获取肉与毛皮）`);
+        return;
+      }
       const drops = def?.drops ?? {};
       const dropTxt = Object.entries(drops)
         .map(([k, v]) => `+${v} ${k}`)
@@ -253,14 +292,18 @@ export class Sim implements SimContext {
       this.log(dropTxt ? `${def?.name ?? h.kind} 被击退了（${dropTxt}）` : `${def?.name ?? h.kind} 被击退了`);
     }
   }
-
   passable(x: number, y: number): boolean {
+    if (this.playerRimWorldMode && isSolidMountainAt(this.world, x, y)) return false;
     return this.world.canStand(x, y);
   }
   zAt(x: number, y: number): number {
     return this.world.zAt(x, y);
   }
   canStep(fx: number, fy: number, tx: number, ty: number, climb: number): boolean {
+    if (this.playerRimWorldMode) {
+      if (!this.passable(tx, ty)) return false;
+      return canStepElevationFast(this.world, fx, fy, tx, ty, climb > 1);
+    }
     return this.world.canStep(fx, fy, tx, ty, climb);
   }
   featureAt(x: number, y: number): FeatureHit | null {
@@ -288,59 +331,52 @@ export class Sim implements SimContext {
     return this.world.buildings.values();
   }
   addBuilding(defId: string, x: number, y: number): BuildingState | null {
-    this.planner.clearRoutes(); // 火堆网络变化→航点段落全部作废
+    if (this.playerRimWorldMode && !isAiModeDlcEnabled(this) && this.time > 0) return null;
+    this.planner.clearRoutes();
+    this.infinitePathfinder.invalidateAtTile(x, y);
     return this.world.addBuilding(defId, x, y);
   }
   removeBuilding(id: string): void {
+    const b = this.world.buildings.get(id);
+    if (b) this.infinitePathfinder.invalidateAtTile(b.pos.x, b.pos.y);
     this.planner.clearRoutes();
     this.world.removeBuilding(id);
   }
-
-  // ---- 科技抽卡池面（R2-1 实现；查询面见 context.ts 的语义注释）----
   techUnlocked(): ReadonlySet<string> {
     return this.techsUnlocked;
   }
-  techOrder(): string[] {
+  techOrder(): readonly string[] {
     return this.reg.techOrder();
   }
   techFragmentsOf(techId: string): number {
     return this.techFragments[techId] ?? 0;
   }
-  grantTechFragment(techId: string): 'progress' | 'unlocked' | 'dup' | 'unknown' {
+  grantTechFragment(techId: string): 'unlocked' | 'progress' | 'dup' | 'unknown' {
     const def = this.tuning.techs[techId];
-    if (!def) return 'unknown'; // 表里没有（如 mod 热卸载了科技）→ 不静默累计
-    // 重复卡：已解锁科技再抽到 = 白抽，不累计（用户 2026-08-15 裁决：稀释而非奖励）
+    if (!def) return 'unknown';
     if (this.techsUnlocked.has(techId)) return 'dup';
     const next = (this.techFragments[techId] ?? 0) + 1;
     this.techFragments[techId] = next;
     if (next < def.fragments) return 'progress';
-    // 攒满：解锁整卡。碎片数清零（进度条归零，HUD 靠"已解锁"态显示而非残留计数）
     this.techFragments[techId] = 0;
     this.techsUnlocked.add(techId);
     this.log(`🔬 科技解锁：${def.name}`);
     return 'unlocked';
   }
-
-  /** 建筑门控判定（R2-1）：科技表为空（tech-pool 未挂）时一律放行——
-   *  "卸载科技包 = 永无科技但核心照跑"，否则卸载会锁死整个建造玩法。 */
-  techSatisfied(tech?: readonly string[]): boolean {
+  techSatisfied(tech: readonly string[] | undefined): boolean {
     if (!tech || tech.length === 0) return true;
     for (const id of tech) {
-      // 门控引用的科技不在表里（mod 未挂/热卸载）= 不阻断建造：
-      // 门控是"需要先解锁"，不是"必须存在于表"，否则数据半残就锁死世界。
       if (this.tuning.techs[id] !== undefined && !this.techsUnlocked.has(id)) return false;
     }
     return true;
   }
-
-  /** DLC 门控（P0）：权威来源是 registry 的已挂载 DLC 集合（见 ModRegistry.dlcEnabled）。
-   *  为什么查 registry 而不是在 Sim 里另存一份：registry 是"装了什么"的唯一事实源，
-   *  复制一份就有两处会漂移（同 techSatisfied 把判定收口在一处的理由）。
-   *  缺省（registry 无 DLC）= 恒 false = 原版体验。 */
   hasDlc(id: string): boolean {
-    return this.reg.dlcEnabled(id);
+    const active = getActiveSimDlcs(this);
+    if (id === 'ai_mode' || id === 'aimode' || id === 'dlc-ai-mode') {
+      return active.has('dlc-ai-director') || this.reg.dlcEnabled('dlc-ai-director');
+    }
+    return this.reg.dlcEnabled(id) || active.has(id);
   }
-
   relation(a: Eid, b: Eid): number {
     return this.relations.get(pairKey(a, b)) ?? 0;
   }
@@ -349,30 +385,46 @@ export class Sim implements SimContext {
     const v = Math.max(-100, Math.min(100, (this.relations.get(k) ?? 0) + delta));
     this.relations.set(k, v);
   }
-
-  // ---- 移动服务 ----
-  /**
-   * 规划一条路径并写进实体状态。
-   *
-   * 策略本体（双档迭代预算 / 长距标志位分段导航 / 航点与段缓存的失效规则）
-   * 在 sim/path-plan.ts 的 RoutePlanner（2026-10-08 sim 维度拆分）。
-   *
-   * Sim 这里只保留三件属于「实体/状态层」的事：
-   *   1. **整数量化**：小人坐标是连续的（moveStep 在格心之间插值），浮点进 A*
-   *      会解码错位甚至整条返回空路径（真实踩坑：半路重规划全部静默失败）。
-   *      findPath 内部也会兜底 round。
-   *   2. **按边注入 z 判定**：|Δz| ≤ 该鼠攀爬（岩层上不去就是上不去，A* 自动绕行）。
-   *      这是 per-pawn 的，所以闭包只能在这里造。
-   *   3. **取副本**：`p.path` **绝不能**直接引用规划层返回的数组——长距命中段缓存时
-   *      返回的是缓存本体，moveStep 靠 `shift()` 推进（见下），会把缓存里同一条路线
-   *      掏空：同起终点下一次命中缓存拿到空数组，可达路线被判「不可达」，小人原地空转；
-   *      存档/读档后缓存重建，同一局「直跑」与「续跑」从此分叉。（golden 真实踩坑 2026-10-06）
-   */
   setPath(p: PawnState, txRaw: number, tyRaw: number): boolean {
     const tx = Math.round(txRaw);
     const ty = Math.round(tyRaw);
     const sx = Math.round(p.pos.x);
     const sy = Math.round(p.pos.y);
+    if (this.playerRimWorldMode) {
+      const playerId = p.controlledBy ?? this.activePlayerId;
+      const drafted = Boolean(p.drafted);
+      const tagVer = this.world.tagVersionNow();
+      if (this.unreachableGoalVer !== tagVer) {
+        this.unreachableGoalVer = tagVer;
+        this.unreachableGoals.clear();
+      }
+      const goalKey = ((tx + 32768) * 65536 + (ty + 32768)) * 2 + (drafted ? 1 : 0);
+      if (this.unreachableGoals.has(goalKey) && Math.abs(sx - tx) + Math.abs(sy - ty) > 6) {
+        p.path = [];
+        return false;
+      }
+      const rawPath = this.planner.plan({
+        canStep: (fx, fy, ax, ay) => {
+          if (!this.world.canStand(ax, ay) || isSolidMountainAt(this.world, ax, ay)) return false;
+          return canStepElevationFast(this.world, fx, fy, ax, ay, drafted);
+        },
+        canStand: (ax, ay) => this.world.canStand(ax, ay) && !isSolidMountainAt(this.world, ax, ay),
+        sx,
+        sy,
+        tx,
+        ty,
+      });
+      if (rawPath.length === 0 && (sx !== tx || sy !== ty)) {
+        this.unreachableGoals.add(goalKey);
+      }
+      const clamped = clampPathToPlayerFog(
+        this,
+        playerId,
+        rawPath.length > 0 ? rawPath.slice() : rawPath,
+      );
+      p.path = clamped;
+      return clamped.length > 0 || (sx === tx && sy === ty);
+    }
     const path = this.planner.plan({
       canStep: (fx, fy, ax, ay) => this.world.canStep(fx, fy, ax, ay, p.climb),
       canStand: (ax, ay) => this.world.canStand(ax, ay),
@@ -382,13 +434,60 @@ export class Sim implements SimContext {
       ty,
     });
     p.path = path.length > 0 ? path.slice() : path;
-    const ok = path.length > 0 || (sx === tx && sy === ty);
-    return ok;
+    return path.length > 0 || (sx === tx && sy === ty);
   }
   moveStep(p: PawnState, dt: number): void {
-    let budget = this.tuning.pawn.speed * dt;
+    let speedMul = 1.0;
+    if (this.playerRimWorldMode) {
+      const caps = computeAnatomyCapacities(p);
+      const tMeta = terrainMetaAt(this.world, p.pos.x, p.pos.y);
+      const onLadder = hasSlopeAt(this.world, p.pos.x, p.pos.y);
+      const ladderMul = onLadder ? 1 / SLOPE_LADDER_SPEED_PENALTY_MUL : 1.0;
+      const cBuff = getActiveCulinaryBuff(p, this.time);
+      const buffMoveMul = cBuff ? 1 + cBuff.moveSpeedPct / 100 : 1.0;
+      speedMul =
+        0.42 *
+        Math.max(0.15, caps.movingPct / 100) *
+        Math.max(0.3, tMeta.moveSpeedMul || 1) *
+        ladderMul *
+        buffMoveMul;
+      if (p.inMeleeGrapple) speedMul *= 0.08;
+    }
+    let budget = this.tuning.pawn.speed * speedMul * dt;
     while (budget > 0 && p.path.length > 0) {
       const next = p.path[0];
+      if (this.playerRimWorldMode) {
+        if (isSolidMountainAt(this.world, next.x, next.y)) {
+          p.path = [];
+          break;
+        }
+        const trav = canTraverseElevationWithSlope(
+          this.world,
+          Math.round(p.pos.x),
+          Math.round(p.pos.y),
+          next.x,
+          next.y,
+          Boolean(p.drafted),
+        );
+        if (!trav.allowed) {
+          p.path = [];
+          break;
+        }
+        if (trav.viaSlope && trav.speedPenaltyMul > 1) {
+          budget /= trav.speedPenaltyMul;
+        } else if (trav.requiresClimbRoll) {
+          budget /= trav.speedPenaltyMul;
+          const stepKey = `${next.x},${next.y}`;
+          if (this.climbRolledTargetKey.get(p.eid) !== stepKey) {
+            this.climbRolledTargetKey.set(p.eid, stepKey);
+            if (!this.rollSuccess(this.tuning.successRate.climb)) {
+              const partId = this.rng() < 0.5 ? 'left_leg' : 'right_leg';
+              inflictBodyPartInjury(p, partId, 6, 'bruise', '征召攀爬/跳下高差跌伤');
+              this.log(`⚠ ${p.name} 在征召状态下强行攀爬/跳下高地失手跌伤（腿部挫伤 -6 HP）！`);
+            }
+          }
+        }
+      }
       const dx = next.x - p.pos.x;
       const dy = next.y - p.pos.y;
       const d = Math.hypot(dx, dy);
@@ -407,82 +506,39 @@ export class Sim implements SimContext {
   adjacent(p: PawnState, x: number, y: number, r = 1.5): boolean {
     return Math.hypot(p.pos.x - x, p.pos.y - y) <= r;
   }
-
-  // ---- 直接操控面（P1 2026-10-13：以人操纵为主 + 成功率判定，可跳过抽卡）----
-
-  /**
-   * 方向意图 → 分轴位移 + 格心碰撞（复用 world.canStep/canStand）。
-   *
-   * 与 moveStep（路径消费）**正交**：moveDir 是"每渲染帧喂一次方向意图"，
-   * 不经过寻路、不设目标点；移动本体**无成功率**（成功率只挂动作，见 rollSuccess）——
-   * 这是 2026-10-13 终版口径（可跳过抽卡），避免"每次按键都被判定拦截"的手感碎裂。
-   *
-   * 碰撞语义：逐轴独立尝试；目标格不可立足/高差超攀爬 → 该轴贴当前格边界钳制
-   * （贴墙滑动：另一轴照常移动，不整位移丢弃）。
-   *
-   * @param p   受控主角（PawnState）
-   * @param dx  x 方向分量（归一化向量，已由客户端 input 合成）
-   * @param dy  y 方向分量
-   * @param dt  真实经过秒（渲染帧 dt；钳制单帧位移防后台标签页突进）
-   * @returns 是否发生任何位移
-   */
   moveDir(p: PawnState, dx: number, dy: number, dt: number): boolean {
-    const step = this.tuning.hero.speed * Math.min(dt, 0.25);
+    const slowMul = this.playerRimWorldMode ? 0.45 : 1.0;
+    const step = this.tuning.hero.speed * slowMul * Math.min(dt, 0.25);
     let moved = false;
     if (dx !== 0) {
       const nx = p.pos.x + dx * step;
-      if (this.world.canStep(p.pos.x, p.pos.y, nx, p.pos.y, p.climb)) {
+      if (this.canStep(p.pos.x, p.pos.y, nx, p.pos.y, p.drafted ? 2 : p.climb)) {
         p.pos.x = nx;
         moved = true;
-      } else {
-        p.pos.x = clampTileEdge(p.pos.x, dx);
-      }
+      } else p.pos.x = clampTileEdge(p.pos.x, dx);
     }
     if (dy !== 0) {
       const ny = p.pos.y + dy * step;
-      if (this.world.canStep(p.pos.x, p.pos.y, p.pos.x, ny, p.climb)) {
+      if (this.canStep(p.pos.x, p.pos.y, p.pos.x, ny, p.drafted ? 2 : p.climb)) {
         p.pos.y = ny;
         moved = true;
-      } else {
-        p.pos.y = clampTileEdge(p.pos.y, dy);
-      }
+      } else p.pos.y = clampTileEdge(p.pos.y, dy);
     }
     return moved;
   }
-
-  /**
-   * 成功率判定原语（0..1）：`rng() < rate` → true（成功）。
-   *
-   * 消费权威 rng 单流（mulberry32，随档）——确定性续跑与自主抽卡同一条流、
-   * 同一次序约束（调用发生在 tick 边界/动作触发点，顺序即消费顺序）。
-   * 失败语义由调用动作声明（如 directAttack：失败 = 无伤害但进冷却）。
-   */
   rollSuccess(rate: number): boolean {
     return this.rng() < rate;
   }
-
-  /**
-   * 主角攻击示例动作（P1）：对范围内最近的敌袭单位发动一次近战。
-   *
-   * 流程：冷却闸 → 找 attackRange 内最近敌袭 → rollSuccess(attackHitChance)：
-   *  - 成功：damageHostile（打死即 despawn，语义与 raid 的伤害出口一致）；
-   *  - 失败：无伤害但消耗 atkCd（失败语义可存档可回放——rng 状态随档，续跑同结果）。
-   * 无目标/冷却中 → 不动手（return false，不消耗 rng）。
-   */
   directAttack(eid: Eid): boolean {
     const p = this.pawnMap.get(eid);
     if (!p || p.atkCd > 0) return false;
-    let best: Hostile | null = null;
-    let bestD = this.tuning.hero.attackRange;
-    for (const h of this.hostilesList) {
-      const d = Math.hypot(h.pos.x - p.pos.x, h.pos.y - p.pos.y);
-      if (d <= bestD) {
-        bestD = d;
-        best = h;
-      }
-    }
+    const best = this.hostileGrid.nearestInRadius(p.pos.x, p.pos.y, this.tuning.hero.attackRange);
     if (!best) return false;
     p.atkCd = this.tuning.pawn.atkCd;
+    p.path = [];
+    p.attackWindup = 0;
+    p.attackWindupTotal = 0.8;
+    p.attackTargetId = best.id;
     const def = this.tuning.enemies[best.kind];
     const name = def ? def.name : best.kind;
     if (this.rollSuccess(this.tuning.successRate.attack)) {
@@ -493,288 +549,145 @@ export class Sim implements SimContext {
     }
     return true;
   }
-
-  // ---- 环境/NPC 交互 + 对话（P2 2026-10-13：以人操纵为主，任务借"抽卡"面子）----
-
-  /**
-   * 环境/NPC 交互：proximity 解析顺序 **NPC → 特征 → 建筑**（拾取/使用/传送）。
-   *
-   * 判定半径 = tuning.hero.interactRange；全部动作先过 interactCd 冷却闸
-   * （防连点刷屏；undefined = 0 对自主鼠零影响）。失败语义：
-   *  - 拾取失败（successRate.pickup 判定不过）= 本次不采到 + 较长冷却（可回放——
-   *    rng 随档，续跑同结果）；
-   *  - 移动本体无成功率（终版口径，P1 已定）。
-   *
-   * 键契约：item 返回 'food'/'wood' 与 mods/contracts.ts 的 K_STOCK_FOOD/WOOD 对齐
-   * （内核不反向依赖 mods，用字面量 + 此处注释钉死契约）。
-   */
   interact(eid: Eid): InteractOutcome | null {
-    const p = this.pawnMap.get(eid);
-    if (!p || (p.interactCd ?? 0) > 0) return null;
-    const r = this.tuning.hero.interactRange;
-    const cd = (v: number) => {
-      p.interactCd = v;
-    };
-    // 1) NPC（非自身、非受控主角之外的鼠 = 自主殖民地鼠即 NPC）
-    const npc = this.nearestNPC(eid, r);
-    if (npc) {
-      this.openDialogue(npc.eid);
-      cd(0.5);
-      return { kind: 'npc', npcEid: npc.eid };
-    }
-    // 2) 特征拾取（树=2×2 贴边、浆果=单点；复用 featureRect/distToFeatureRect）
-    for (const kind of ['berry', 'tree'] as const) {
-      const f = this.nearestFeature(kind, p.pos.x, p.pos.y, r);
-      if (!f) continue;
-      if (this.distToFeatureRect(p.pos.x, p.pos.y, this.featureRect(f)) > r) continue;
-      const item = kind === 'berry' ? 'food' : 'wood';
-      if (this.rollSuccess(this.tuning.successRate.pickup)) {
-        const left = this.takeOne(f.x, f.y);
-        if (left >= 0) {
-          this.stockpile[item] = (this.stockpile[item] ?? 0) + 1;
-          cd(0.5);
-          return { kind: 'pickup', item, gained: 1 };
-        }
-        // 采空（left<0 防御分支，正常不会走到——takeOne 对已空特征返回 0）
-      }
-      cd(1.0); // 拾取判定失败：本次不采到 + 较长冷却
-      this.log(`🤚 ${p.name} 没采到（手慢了）`);
-      return { kind: 'pickup-fail' };
-    }
-    // 3) 建筑：waypoint 对传送 → fire/shelter 使用
-    // 键契约：'waypoint'/'fire'/'shelter' 与 mods/contracts.ts 的 K_TAG_* 对齐
-    // （内核不反向依赖 mods，用字面量 + 此处注释钉死契约）。
-    const wp = this.nearestBuildingByTag('waypoint', p.pos.x, p.pos.y, r);
-    if (wp) {
-      // 找另一座 waypoint（排除自身）：world.buildingsByTag 是 tag 倒排索引
-      const others = this.world.buildingsByTag('waypoint');
-      let other: BuildingState | null = null;
-      let bestD = Infinity;
-      for (const b of others) {
-        if (b.id === wp.id) continue;
-        const d = Math.hypot(b.pos.x - p.pos.x, b.pos.y - p.pos.y);
-        if (d < bestD) {
-          bestD = d;
-          other = b;
-        }
-      }
-      if (other) {
-        const from = { ...p.pos };
-        p.pos = { x: other.pos.x, y: other.pos.y };
-        p.path = [];
-        cd(1.0);
-        this.log(`🌀 ${p.name} 沿航点传送到了 ${other.pos.x},${other.pos.y}`);
-        return { kind: 'teleport', from, to: { ...p.pos } };
-      }
-    }
-    for (const tag of ['fire', 'shelter'] as const) {
-      const b = this.nearestBuildingByTag(tag, p.pos.x, p.pos.y, r);
-      if (!b) continue;
-      // 使用 = 取暖/休整：需求小幅恢复 + 叙事（MVP 演示语义，数值固定小幅）
-      p.needs.mood = Math.min(100, p.needs.mood + 3);
-      p.needs.san = Math.min(100, p.needs.san + 3);
-      cd(1.0);
-      this.log(`🔥 ${p.name} 在 ${b.defId} 旁歇了歇（心情/理智 +3）`);
-      return { kind: 'use', tag };
-    }
-    return { kind: 'none' };
+    return executeSimInteract(this, eid);
   }
-
-  /** 找 eid 邻近最近的 NPC（非自身、非受控鼠）：自主殖民地鼠 = 现成 NPC。 */
-  private nearestNPC(eid: Eid, r: number): PawnState | undefined {
-    const self = this.pawnMap.get(eid);
-    if (!self) return undefined;
-    let best: PawnState | undefined;
-    let bestD = r;
-    for (const p of this.pawnMap.values()) {
-      if (p.eid === eid || p.controlledBy !== undefined) continue;
-      const d = Math.hypot(p.pos.x - self.pos.x, p.pos.y - self.pos.y);
-      if (d <= bestD) {
-        bestD = d;
-        best = p;
-      }
-    }
-    return best;
-  }
-
-  // ---- 对话状态机（P2 MVP，单节点；nodeId 扩展预留）----
-
-  /** 打开与 npcEid 的对话：dialogueId = npc.npc?.dialogueId ?? 'colony'，表缺失回退默认。 */
   openDialogue(npcEid: Eid): boolean {
     const npc = this.pawnMap.get(npcEid);
     if (!npc) return false;
     const wanted = npc.npc?.dialogueId ?? 'colony';
     const dialogueId = this.tuning.dialogues[wanted] ? wanted : 'colony';
-    if (!this.tuning.dialogues[dialogueId]) return false; // 连默认表都没有（测试最小装配）
+    if (!this.tuning.dialogues[dialogueId]) return false;
     this.dialogue = { npcEid, dialogueId };
     return true;
   }
-
-  /**
-   * 玩家选择选项 i（**给玩家里子**：选项 = 玩家选择，不是抽卡）。
-   * - rollSuccess 选项：过 tuning.successRate.dialogue（说服检定）；失败 = NPC 拒绝，
-   *   效果不生效并关对话（可回放——rng 随档）。
-   * - 效果：stock（营地库存）/ techFragment（grantTechFragment——**任务给"抽卡"面子**，
-   *   奖励走现有科技抽卡池通道，id 未注册静默跳过并 log）。
-   * - close 选项：结算后关对话。
-   * 校验：玩家仍相邻（防隔空操作）；不相邻自动关对话。
-   */
   chooseOption(i: number): 'applied' | 'rejected' | 'closed' | 'invalid' {
-    if (!this.dialogue) return 'invalid';
-    const { npcEid, dialogueId } = this.dialogue;
-    const hero = this.dialogueActor(); // 受控主角
-    if (!hero || Math.hypot(hero.pos.x - this.pawnMap.get(npcEid)!.pos.x, hero.pos.y - this.pawnMap.get(npcEid)!.pos.y) > this.tuning.hero.interactRange) {
-      this.closeDialogue(); // 走远了：对话自然结束
-      return 'closed';
-    }
-    const def = this.tuning.dialogues[dialogueId];
-    const opt = def?.options[i];
-    if (!opt) {
-      this.closeDialogue();
-      return 'invalid';
-    }
-    if (opt.rollSuccess && !this.rollSuccess(this.tuning.successRate.dialogue)) {
-      this.log(`💬 ${def.name} 摇头拒绝了`);
-      this.closeDialogue();
-      return 'rejected';
-    }
-    if (opt.stock) {
-      for (const [k, v] of Object.entries(opt.stock)) {
-        this.stockpile[k] = (this.stockpile[k] ?? 0) + v;
-      }
-      this.log(`💬 收下物资：${JSON.stringify(opt.stock)}`);
-    }
-    if (opt.techFragment) {
-      const r = this.grantTechFragment(opt.techFragment);
-      if (r === 'unknown') this.log(`💬 「${def.name}」提到的委托还没有对应的科技池条目`);
-      else this.log(`💬 委托进度：${opt.techFragment} ${r}`);
-    }
-    if (opt.close) {
-      this.closeDialogue();
-      return 'closed';
-    }
-    return 'applied';
+    return executeChooseDialogueOption(this, i);
   }
-
   closeDialogue(): void {
     this.dialogue = null;
   }
-
-  /** 当前对话的发起者（受控主角）；P2 本地模式 = 唯一受控鼠。 */
-  private dialogueActor(): PawnState | undefined {
-    if (!this.dialogue) return undefined;
-    for (const p of this.pawnMap.values()) {
-      if (p.controlledBy !== undefined) return p;
-    }
-    // 本地 P2：没有 controlledBy 标注时，退回到最近的一只鼠（测试友好）
-    const npc = this.pawnMap.get(this.dialogue.npcEid);
-    if (!npc) return undefined;
-    let best: PawnState | undefined;
-    let bestD = Infinity;
-    for (const p of this.pawnMap.values()) {
-      if (p.eid === npc.eid) continue;
-      const d = Math.hypot(p.pos.x - npc.pos.x, p.pos.y - npc.pos.y);
-      if (d < bestD) {
-        bestD = d;
-        best = p;
-      }
-    }
-    return best;
-  }
-
-  // ---- 决策引擎面 ----
   cards(): readonly CardDef[] {
+    if (this.playerRimWorldMode && !isAiModeDlcEnabled(this)) {
+      return this.reg.cards.filter(
+        (c) => c.series !== 'build' && !c.id.startsWith('build_') && c.id !== 'till_field',
+      );
+    }
     return this.reg.cards;
   }
   cardById(id: string): CardDef | undefined {
+    if (this.playerRimWorldMode && !isAiModeDlcEnabled(this) && (id.startsWith('build_') || id === 'till_field')) {
+      return undefined;
+    }
     return this.reg.cardById(id);
   }
   weightHooks(): readonly CardWeightHook[] {
     return this.reg.weightHooks;
   }
   finishCard(p: PawnState): void {
-    p.busyUntil = this.time; // 下 tick 重抽
+    p.busyUntil = this.time;
   }
-
   log(text: string): void {
     this.events.push({ time: this.time, text });
     if (this.events.length > this.tuning.events.maxLog) {
-      this.events.splice(0, this.events.length - this.tuning.events.maxLog); // 批量裁剪防长局膨胀
+      this.events.splice(0, this.events.length - this.tuning.events.maxLog);
     }
   }
-
   command(type: string, args: Record<string, unknown> = {}): void {
     this.issueCommand(type, args, 'system');
   }
-
-  // ---- 命令路由 ----
   issueCommand(type: string, args: Record<string, unknown> = {}, source: 'player' | 'system' = 'player'): void {
-    if (type === 'move') {
-      // move = 引擎内建基础指挥。eids 批量（框选）/ 单 eid / 当前选中
-      const eids = ((args.eids as Eid[]) ?? (args.eid !== undefined ? [args.eid as Eid] : this.selected)).filter(
-        (e) => this.pawnMap.has(e),
-      );
-      const tx = args.x as number;
-      const ty = args.y as number;
-      for (const eid of eids) {
-        const p = this.pawnMap.get(eid)!;
-        p.cardId = null; // 玩家指挥打断自主行为
-        p.busyUntil = 0;
-        p.holdUntil = this.time + 5; // 优先窗口内不重新自主抽卡
-        if (!this.setPath(p, tx, ty)) {
-          this.log(`⚠ ${p.name} 去不了 (${tx},${ty})`); // 点了水/岩：给玩家回声而不是无声站立
-        }
-      }
-      return;
-    }
-    const handler = this.reg.commands.get(type);
-    if (handler) handler(this, args, source);
-    else this.log(`⚠ 未知命令：${type}`);
+    dispatchSimCommand(this, type, args, source);
   }
-
-  // ---- 步进 ----
   step(dt: number): void {
     this.time += dt;
-    this.world.now = this.time; // 单时钟源：world 特征再生跟随 sim 时钟
+    this.world.now = this.time;
+    this.rebuildSpatialGrids();
+    const hasHostiles = this.hostilesList.length > 0;
+    if (hasHostiles) {
+      for (const h of this.hostilesList) h.inMeleeGrapple = false;
+    }
+    for (const p of this.pawnMap.values()) {
+      if (p.skills) {
+        if (p.skills.length > 3) p.skills = enforceMaxThreeSkills(p.skills);
+        for (const sk of p.skills) {
+          if (sk.cooldown > 0) sk.cooldown = Math.max(0, sk.cooldown - dt);
+        }
+      }
+      if (p.drafted) p.holdUntil = this.time + 10;
+      if (this.playerRimWorldMode && !p.isStranger && (p.needs.mood <= 10 || p.needs.san <= 10)) {
+        triggerColonistMentalBreak(this, p.eid, '长期心情极度低落');
+        continue;
+      }
+      let grappled = false;
+      if (hasHostiles) {
+        for (const h of this.hostilesList) {
+          const dx = h.pos.x - p.pos.x;
+          const dy = h.pos.y - p.pos.y;
+          if (dx * dx + dy * dy <= 2.56) {
+            grappled = true;
+            h.inMeleeGrapple = true;
+          }
+        }
+      }
+      p.inMeleeGrapple = grappled;
+      if (p.attackWindup !== undefined) {
+        p.attackWindup += dt;
+        p.path = [];
+        if (p.attackWindup >= (p.attackWindupTotal ?? 0.8)) {
+          if (p.attackTargetId !== undefined) {
+            const target = this.hostilesList.find((x) => x.id === p.attackTargetId);
+            if (target) {
+              const dmg = this.tuning.pawn.dmg * (this.tuning.pawn.traitDmgMul[p.trait] ?? 1);
+              this.damageHostile(target.id, Math.round(dmg));
+              this.log(`⚔ ${p.name} 蓄力出招命中敌军 #${target.id}！`);
+            }
+          }
+          p.attackWindup = undefined;
+          p.attackTargetId = undefined;
+          p.atkCd = this.tuning.pawn.atkCd;
+        }
+      }
+      if (p.activeWork && p.activeWork.kind !== 'butcher' && p.activeWork.kind !== 'haul_corpse') {
+        p.activeWork.workContinuousSec = (p.activeWork.workContinuousSec ?? 0) + dt;
+        let fatigue = 1.0;
+        if (p.activeWork.workContinuousSec > 10) {
+          fatigue = Math.max(0.2, 1.0 - (p.activeWork.workContinuousSec - 10) * 0.035);
+        }
+        if (p.activeWork.workContinuousSec > 12 && this.rng() < 0.15 * dt) {
+          p.activeWork.workProgress = Math.max(0, p.activeWork.workProgress - 2.5 * dt);
+        }
+        p.activeWork.workProgress += dt * 12 * fatigue;
+        if (p.activeWork.workProgress >= p.activeWork.workTotal) {
+          p.activeWork = undefined;
+        }
+      }
+    }
+    tickOutdoorItemWeathering(this, dt);
+    tickPlantSpread(this, dt);
+    tickRimWorldButcherHaul(this, dt);
+    tickRimWorldBlueprintWork(this, dt);
+    tickRimWorldScavengeOrders(this, dt);
     for (const sys of this.systems) sys.update?.(dt);
   }
-
-  /**
-   * 按区块分片步进（line/net 2026-10-06）：只推进 activeChunks 覆盖到的区块里的实体。
-   *
-   * ## 与 step 的关系：**它是 step 的子集，不是替代**
-   *
-   * `activeChunks === null` 时行为与 step 逐位相同（所有区块都被 admit）——
-   * 这是设计上的关键：服务器可以按"有客户端订阅 + 有实体"的并集决定要不要分片，
-   * 单机本地模式永远走 null 路径，**零行为变化**。
-   *
-   * ## 确定性保证（本方法能存在的前提）
-   *
-   * 分片只做"跳过"，不重排：admitted 全集时，各系统 updateChunked 的遍历顺序
-   * 与 update 完全相同 → rng 消费序列相同 → 抽卡序列相同 → 整局相同。
-   * 推论（也是本方法的限制）：**admitted ≠ 全集时，被跳过的鼠在那一 tick 完全不动**
-   * （不抽卡、不推进、不消耗 rng）。这是"分片"的本质代价，不是 bug。
-   * 于是它只适合"跳过的区块里没有玩家关心的实体"——服务器据此只 admit
-   * 有客户端订阅的区块，而**玩家的鼠必然在自己订阅的区块里**，所以玩家的鼠永不被跳过。
-   *
-   * ⚠️ 换来的代价是真实的：视口外的鼠（AI 独自在远方劳作）会被跳过分片 tick。
-   * 它们的状态不变，玩家看不见；但如果玩家把镜头移过去，它们会"从暂停中醒来"。
-   * 这与"客户端只是不显示远处实体"是同一个语义，服务器仍在权威推进自己那部分。
-   */
   stepChunked(dt: number, activeChunks: ReadonlySet<number> | null): void {
     this.time += dt;
     this.world.now = this.time;
+    this.rebuildSpatialGrids();
+    tickOutdoorItemWeathering(this, dt);
+    tickPlantSpread(this, dt);
+    tickRimWorldButcherHaul(this, dt);
+    tickRimWorldBlueprintWork(this, dt);
+    tickRimWorldScavengeOrders(this, dt);
     for (const sys of this.systems) {
       if (activeChunks === null) sys.update?.(dt);
       else if (sys.updateChunked) sys.updateChunked(dt, activeChunks);
-      else sys.update?.(dt); // 没实现分片的面照常全量（正确性优先于收益）
+      else sys.update?.(dt);
     }
   }
   run(seconds: number, dt = 1): void {
     for (let t = 0; t < seconds; t++) this.step(dt);
   }
-
-  // ---- 存档面（结构见 sim-save.ts；这里只暴露最小访问器）----
   rngState(): number {
     return this.rngImpl.getState();
   }
@@ -787,8 +700,6 @@ export class Sim implements SimContext {
   exportRelations(): [string, number][] {
     return [...this.relations.entries()];
   }
-
-  /** 从存档对象回填状态（在构造器 restore 路径调用；init 已被跳过） */
   private applyRestore(d: SaveData): void {
     this.time = d.time;
     this.rngImpl.setState(d.rngState);
@@ -804,31 +715,17 @@ export class Sim implements SimContext {
     this.events = structuredClone(d.events);
     Object.keys(this.scratch).forEach((k) => delete this.scratch[k]);
     Object.assign(this.scratch, d.scratch);
-    // 科技抽卡池状态随档（R2-1）：碎片数 + 已解锁集合。
-    // 缺字段回落空（旧档经迁移后 techs/techFragments 可能不存在）——"没有科技进度"
-    // 等价于"还没抽到任何碎片"，不是坏档。
     this.techsUnlocked = new Set(d.techs ?? []);
     for (const k of Object.keys(this.techFragments)) delete this.techFragments[k];
     Object.assign(this.techFragments, d.techFragments ?? {});
     this.world.importState(d.world);
-    this.world.now = d.time; // 单时钟源必须随档：否则再生冷却相对新时钟全部误判（真实踩坑）
+    this.world.now = d.time;
   }
-
-  /** 测试/CLI 演示专用：强制某鼠立即执行指定卡（绕过抽签）。
-   *  刻意不进 SimContext——玩法系统永远走真实抽卡；这个口子只给测试，
-   *  且内部复用与真实抽卡同一条 commit 路径（统计/熟练度语义不漂移）。 */
   debugForceCard(eid: Eid, cardId: string): boolean {
     const card = this.reg.cardById(cardId);
     const p = this.pawnMap.get(eid);
     if (!card || !p) return false;
-    // 强制换卡前先清旧预留：debugForceCard 是唯一绕过 stepPawn 到期释放的入口，不清的话
-    // "旧卡预留 + 新卡预留"会叠加，新卡一释放就把旧卡的钱一起退回去（等于白退一次）。
     releaseHerbReservation(this, p.eid);
-    // R1 审计 P1 #2：预留不足时**不指派**——改前 commit 先于预留检查，
-    // herbs < totalCost 时卡已指派但预留静默失败 → 原地发呆至 duration 到期。
-    // 改为预留优先：预留不足则直接返回 false，不污染 cardId/busyUntil。
-    // R3 审计 P1 #1：判定逻辑抽成 systems.tryReserveHerb，与真实抽卡路径共用同一份实现
-    // （改前两条抽卡面各写一份，stepPawn 那份失败时静默、这份失败时返回 false，语义分叉）。
     if (!tryReserveHerb(this, p, card)) return false;
     p.cardId = null;
     p.busyUntil = this.time;
@@ -836,7 +733,58 @@ export class Sim implements SimContext {
     return true;
   }
 }
-
+/**
+ * RimWorld 精神崩溃：小人因极端压力放弃并离开殖民地派系（Run Wild / Give Up and Leave），
+ * 在地图周围由 AI 行为系统自动管理自主生存（采野果、进食、露宿、漫步），玩家可驯服/重新招募。
+ */
+export function triggerColonistMentalBreak(
+  sim: Sim,
+  eid: Eid,
+  reason = '精神崩溃',
+): { ok: boolean; pawn?: PawnState; message: string } {
+  const p = sim.pawn(eid);
+  if (!p) return { ok: false, message: '未找到指定殖民者' };
+  p.isStranger = true;
+  p.formerColonist = true;
+  p.mentalBreakState = 'wild_man';
+  p.controlledBy = 'p_wild_faction';
+  p.drafted = false;
+  p.holdUntil = 0;
+  p.busyUntil = sim.time;
+  p.cardId = null;
+  p.activeWork = undefined;
+  p.groupId = undefined;
+  p.needs.mood = Math.max(55, p.needs.mood);
+  p.needs.san = Math.max(60, p.needs.san);
+  sim.selected = sim.selected.filter((id) => id !== eid);
+  refreshGroupCarryMetrics(sim);
+  const wildTarget = findNearestUnoccupiedTile(sim, p.pos.x + 8, p.pos.y - 6, { ignorePawnEid: eid });
+  sim.setPath(p, wildTarget.x, wildTarget.y);
+  const msg = `🧠【精神崩溃：离开派系】${p.name} 因${reason}彻底崩溃，脱离殖民地派系在周边荒野独自求生（由 AI 接管，可右键重新招募）！`;
+  sim.log(msg);
+  return { ok: true, pawn: p, message: msg };
+}
+/** 重新安抚/招募因精神崩溃脱离派系的荒野前殖民者 */
+export function recruitWildFormerColonist(
+  sim: Sim,
+  eid: Eid,
+  targetGroupId = 'group_alpha',
+): { ok: boolean; pawn?: PawnState; message: string } {
+  const p = sim.pawn(eid);
+  if (!p || !p.isStranger) return { ok: false, message: '目标并非脱离派系的荒野游民' };
+  p.isStranger = false;
+  p.formerColonist = false;
+  p.mentalBreakState = undefined;
+  p.controlledBy = sim.activePlayerId;
+  p.needs.mood = Math.max(68, p.needs.mood);
+  p.needs.san = Math.max(75, p.needs.san);
+  const groups = getColonistGroups(sim);
+  const grpId = groups.has(targetGroupId) ? targetGroupId : 'group_alpha';
+  assignPawnToGroup(sim, p.eid, grpId);
+  const msg = `🤝【重返殖民地】成功安抚并重新招募了 ${p.name}，已回归殖民地派系！`;
+  sim.log(msg);
+  return { ok: true, pawn: p, message: msg };
+}
 function pairKey(a: Eid, b: Eid): string {
   return a < b ? `${a}_${b}` : `${b}_${a}`;
 }
