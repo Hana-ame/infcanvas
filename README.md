@@ -20,19 +20,42 @@ RimWorld-like 鼠鼠殖民地模拟 · **一切皆抽卡**的 0 操作自主生�
 ## 快速体验
 
 ```bash
-npm test                                   # vitest 56 用例（内核/各包独立/装配卸载/契约/存档续跑/协议）
+npm test                                   # vitest 用例（内核/各包独立/装配卸载/契约/存档续跑/协议）
 npm run typecheck                          # tsc --noEmit
-npm run build                              # 生产构建（PixiJS 分包）
+npm run build                              # 生产构建（PixiJS 分包，产物 dist/ 是纯前端）
+npm run check:frontend                     # 验证 dist/ 无 ws / node: 依赖（纯前端承诺）
 
-# 本地游玩（PixiJS 渲染 + 存档读档）
+# ① 本地模式（纯前端，无 ws，无服务器）—— 默认
 npm run dev                                # → http://localhost:5173 （?seed=42 开局；?save=1 读最近存档）
+#   或生产构建直接丢到静态服务器：
+npm run build && python -m http.server 8080 -d dist   # → http://localhost:8080
+#   生产构建部署到 nginx / gh-pages / 任意静态托管：整份 dist/ 上传即可。
+#   本地模式的整条链路（main.ts → Sim → Renderer → HUD）**不触 WebSocket 全局构造器**。
 
-# 联机（WSS 权威模拟 + 增量同步）
-npm run server -- 8080 42                  # 权威服务器
-#   浏览器开 http://localhost:5173/?remote=ws://127.0.0.1:8080
+# ② 本地连远程模式（ws）—— 浏览器 → 权威服务器
+npm run server -- 8080 42                  # 权威服务器（node 进程，独立于客户端）
+#   浏览器开 http://localhost:5173/?mode=remote&server=ws://127.0.0.1:8080
+#   或历史兼容：http://localhost:5173/?remote=ws://127.0.0.1:8080
 
 npx tsx scripts/play.ts 600 42            # 纯逻辑 CLI：600s 生存循环统计报告
 ```
+
+### 三种运行形态
+
+| 形态 | 命令 | 客户端是否用 ws | 需要的进程 |
+|---|---|---|---|
+| **① 本地模式** | `npm run dev`（或 `npm run build` + 静态服务器） | ❌ 纯前端 | 仅浏览器 |
+| **② 本地连远程** | 浏览器加 `?mode=remote&server=ws://...` | ✅ ws | 浏览器 + node 服务器 |
+| **③ server 模式** | `npm run server -- [端口] [seed]` | — | 仅 node 进程（不启动浏览器客户端） |
+
+URL 参数（`src/client/mode.ts` 的 `parseClientMode` 解析，测试见 `src/__tests__/mode.test.ts`）：
+
+- `?mode=local` → 本地模式（显式，最高优先；同时带 `?remote=` 也仍走本地）
+- `?mode=remote&server=ws://...` → 本地连远程模式（缺 `server=` 时降级 local）
+- `?remote=ws://...` → 本地连远程模式（历史兼容）
+- 无参数 → 本地模式（默认）
+
+**硬不变量：本地模式不使用 ws。** 这条由 `src/__tests__/mode.test.ts` 锁死，由 `npm run check:frontend` 在发布前二次验证。
 
 ## 文档导航
 
