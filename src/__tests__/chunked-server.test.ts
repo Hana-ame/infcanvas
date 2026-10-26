@@ -264,8 +264,8 @@ describe('分区块同步（服务端集成）', () => {
 });
 
 describe('分区块 tick（模拟侧）', () => {
-  it('admitted=全集时 stepChunked ≡ step（逐位同，不引入分叉）', async () => {
-    const { Sim: S } = await import('../sim');
+  it('admitted=全集时 stepChunked ≡ step（全量快照逐位同，不引入分叉）', async () => {
+    const { Sim: S, snapshotOf } = await import('../sim');
     const reg = ModRegistry.default();
     const a = new S({ seed: 99, registry: reg });
     const b = new S({ seed: 99, registry: reg });
@@ -275,17 +275,14 @@ describe('分区块 tick（模拟侧）', () => {
       a.step(0.1);
       b.stepChunked(0.1, all); // 全集 admit = 不跳任何鼠
     }
-    expect(b.time).toBe(a.time);
-    expect([...b.pawns()].length).toBe([...a.pawns()].length);
-    for (const p of a.pawns()) {
-      const q = b.pawn(p.eid)!;
-      expect(q.pos).toEqual(p.pos);
-      expect(q.uses).toEqual(p.uses); // 抽卡序列一致 = 确定性一致
-    }
+    // 只比 pos/uses 是当初漏掉鼠级记账的根因：attackWindup、skills.cooldown、
+    // activeWork.workContinuousSec、inMeleeGrapple、atkCd 全都没被覆盖。
+    // 现在直接比全量快照——含 rngState，任何一条路径多/少消费一次随机数都会炸。
+    expect(snapshotOf(b)).toEqual(snapshotOf(a));
   });
 
   it('admitted=null 时 stepChunked ≡ step（服务器无人订阅时的路径）', async () => {
-    const { Sim: S } = await import('../sim');
+    const { Sim: S, snapshotOf } = await import('../sim');
     const reg = ModRegistry.default();
     const a = new S({ seed: 100, registry: reg });
     const b = new S({ seed: 100, registry: reg });
@@ -293,6 +290,41 @@ describe('分区块 tick（模拟侧）', () => {
       a.step(0.1);
       b.stepChunked(0.1, null);
     }
-    for (const p of a.pawns()) expect(b.pawn(p.eid)!.pos).toEqual(p.pos);
+    expect(snapshotOf(b)).toEqual(snapshotOf(a));
+  });
+
+  /**
+   * 这条用例会钉住一个真实线上缺陷（2026-10-26）：
+   *
+   * 鼠级记账（近战缠斗、attackWindup 推进、技能冷却、activeWork 疲劳进度、
+   * 心情崩溃）原先只内联在 step() 里，stepChunked() 整段不跑。而服务器权威路径
+   * （game-server.ts:400）只调 stepChunked —— 于是联机下玩家 directAttack 的蓄力
+   * 永远停在 0：出招永不完成、后续伤害与 atkCd 永不结算、客户端出招弧线停在起点。
+   *
+   * 只断言 pos/uses 抓不到它（攻击不改变坐标）。这里必须真的发起一次 directAttack，
+   * 让 attackWindup 进入"待推进"状态，再比全量快照。
+   */
+  it('stepChunked 也推进鼠级记账：directAttack 的蓄力出招不会卡在 0', async () => {
+    const { Sim: S, snapshotOf } = await import('../sim');
+    const reg = ModRegistry.default();
+    reg.overrideTuning((t) => {
+      t.raid.pressurePerSec = 0; // 关自动刷敌，别让随机猫破坏精确布置
+    });
+    const a = new S({ seed: 313, registry: reg, pawnCount: 1 });
+    const b = new S({ seed: 313, registry: reg, pawnCount: 1 });
+    const pa = [...a.pawns()][0]!;
+    const pb = [...b.pawns()][0]!;
+    // 野猫放到鼠的右侧一格，稳定落在 tuning.hero.attackRange 内
+    a.spawnHostile('cat', pa.pos.x + 1, pa.pos.y);
+    b.spawnHostile('cat', pb.pos.x + 1, pb.pos.y);
+    expect(a.directAttack(pa.eid)).toBe(true);
+    expect(b.directAttack(pb.eid)).toBe(true);
+    // 0.8s 的蓄力 = 8 个 0.1s tick；跑 20 个足以让完成分支真的走一遍
+    for (let i = 0; i < 20; i++) {
+      a.step(0.1);
+      b.stepChunked(0.1, null);
+    }
+    // 修复前：a 的 attackWindup 已归 undefined 且敌人多挨一击，b 的永远停在 0
+    expect(snapshotOf(b)).toEqual(snapshotOf(a));
   });
 });
