@@ -32,5 +32,6 @@ export * from './mmo-ruins';
 export * from './mmo-groups-ruins';
 export * from './rimworld-ecology-butcher';
 export * from './culinary-dishes';
+export * from './rimworld-bootstrap';
 
 export * from '../mods/dlc-entry';

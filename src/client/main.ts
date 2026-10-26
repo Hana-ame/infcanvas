@@ -6,15 +6,8 @@ import { Application } from 'pixi.js';
 import {
   Sim,
   type Eid,
-  enforceSingleTileOccupancy,
-  getRuinSites,
-  isRuinScavengeDlcEnabled,
-  placeArchitectBuilding,
+  bootstrapLocalRimWorldPreset,
   tickPlayerControlledRaiders,
-  spawnPackBeast,
-  spawnBattlefieldCorpse,
-  spawnAncientDangerShrine,
-  spawnCreatureCorpse,
 } from '../sim';
 import { loadSim, snapshotOf } from '../sim/sim-save';
 import { encodeSaveDataToFile, decodeSaveDataFromFile } from '../shared/bigint-json';
@@ -131,57 +124,9 @@ async function boot() {
         playerRimWorldMode: true,
       });
     }
-    sim.enableRimWorldPlayerRules('p_local_1');
-
-    sim.stockpile['wood'] = Math.max(sim.stockpile['wood'] ?? 0, 60);
-    sim.stockpile['ore'] = (sim.stockpile['ore'] ?? 0) + 32;
-    sim.stockpile['stone'] = (sim.stockpile['stone'] ?? 0) + 24;
-    sim.stockpile['gold'] = (sim.stockpile['gold'] ?? 0) + 8;
-    sim.stockpile['herb'] = (sim.stockpile['herb'] ?? 0) + 12;
-
-    // 初始化远古遗迹房间与内部可搜刮建筑（远古储物柜、军用物资箱、实验终端、休眠舱）
-    if (isRuinScavengeDlcEnabled(sim)) getRuinSites(sim);
-
-    // 开局建造一座 6×5 封闭室内工坊与厨房房间 (x=-6..-1, y=-7..-3)，供玩家直接点击房间体验「选中房间布置内设/装饰/工作台」
-    for (let rx = -6; rx <= -1; rx++) {
-      for (let ry = -7; ry <= -3; ry++) {
-        const isEdge = rx === -6 || rx === -1 || ry === -7 || ry === -3;
-        if (!isEdge) continue;
-        const isDoor = rx === -3 && ry === -3;
-        const b = sim.world.addArchitectBuilding(isDoor ? 'door' : 'wall', rx, ry, {
-          allowContiguous: true,
-          ignoreTerrain: true,
-          allowReplace: true,
-        });
-        if (b) b.ownerPlayerId = 'p_local_1';
-      }
-    }
-    placeArchitectBuilding(sim, 'stove', -5, -6, 0, 'p_local_1');
-    placeArchitectBuilding(sim, 'butcher_table', -3, -6, 0, 'p_local_1');
-    placeArchitectBuilding(sim, 'shelf', -5, -4, 0, 'p_local_1');
-    placeArchitectBuilding(sim, 'great_bonfire', 3, -3, 0, 'p_local_1');
-    spawnAncientDangerShrine(sim, -8, -5);
-    spawnPackBeast(sim, 'p_local_1', 3, 2, { food: 10, wood: 12, ore: 6, herb: 4 });
-    spawnBattlefieldCorpse(sim, 5, -2, {
-      name: '赤爪先锋斥候遗体 (可搜尸/屠宰)',
-      equipWeapon: '精准栓动步枪 (Bolt-Action Rifle)',
-      equipApparel: '掠夺者防弹背心 (Flak Vest)',
-      inventory: { ore: 6, gold: 3, herb: 2, meal: 2 },
-      butcherYield: { meat: 3, leather: 2 },
-      causeOfDeath: '前哨交火阵亡',
-    });
-    spawnCreatureCorpse(sim, 'deer', -4, 2);
-
-    const strangerEid = sim.spawnPawn(6, -3);
-    const stranger = sim.pawn(strangerEid);
-    if (stranger) {
-      stranger.name = '旅鼠·墨菲(陌生人)';
-      stranger.isStranger = true;
-      stranger.controlledBy = 'p_stranger_faction';
-      stranger.inventory = { food: 15, herb: 6, gold: 4, wood: 10 };
-    }
-
-    enforceSingleTileOccupancy(sim);
+    // 本地模式开局套件（stockpile 加成 + 6×5 工坊 + 敌人/尸体 + 陌生鼠）抽成 preset，
+    // 与 main.ts 原版逐字节等价——见 sim/rimworld-bootstrap.ts 顶部注释。
+    bootstrapLocalRimWorldPreset(sim);
 
     localSim = sim;
     const heroParam = Number(params.get('hero'));
