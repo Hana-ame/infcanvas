@@ -72,7 +72,7 @@ export interface WorldView {
    * 「看到的鼠」和「被选中的鼠」对不上——批量指挥会指挥错对象。
    * 插值只能是画出来的那一份，逻辑判定永远读权威值。
    */
-  renderPos?(eid: number, nowMs: number): { x: number; y: number } | undefined;
+  renderPos?(eid: number, nowMs?: number): { x: number; y: number } | undefined;
   /**
    * 科技抽卡池进度（R2-1）：已组装好的展示模型。
    * 为什么是"拼装好的对象"而不是 (techs表, 碎片, 已解锁集合) 三个原始面：

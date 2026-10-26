@@ -178,7 +178,7 @@ export interface InterestAckMsg {
     chunks: number;
   };
 }
-export type ServerMsg = WelcomeMsg | FullMsg | DeltaMsg | PingMsg | InterestAckMsg;
+export type ServerMsg = WelcomeMsg | FullMsg | DeltaMsg | PingMsg | InterestAckMsg | ClaimAckMsg;
 
 /** 心跳广播周期（ms）。ROADMAP R1-1 规定 10s。 */
 export const PING_MS = 10000;
@@ -203,7 +203,49 @@ export interface InterestMsg {
   /** 视口中心（tile 坐标）+ 半径（tile） */
   d: { x: number; y: number; r: number };
 }
-export type ClientMsg = CmdMsg | InterestMsg;
+/**
+ * P3 认领请求（多人选型 A，2026-10-13）：客户端请求认领一只鼠（玩家↔pawn 绑定）。
+ * eid 缺省 = server 分配一只未认领鼠（首连即分配）。
+ */
+export interface ClaimMsg {
+  t: 'claim';
+  d: { eid?: number };
+}
+/** 认领结果下行（server → 客户端）。 */
+export interface ClaimAckMsg {
+  t: 'claimAck';
+  d: { ok: boolean; eid?: number; reason?: string };
+}
+/**
+ * P3 高频输入上行（20-50Hz，多人选型 A：input 上行 → server 权威处理 → 结果下行）。
+ * vx/vy = 归一化方向意图（无操作 = 0,0；**客户端不直写坐标，只声明意图**）；
+ * act = 本帧动作意图（J=attack / E=interact；缺省 = 无动作）。
+ * 服务端每 tick 消费各客户端最新输入 → moveDir/directAttack/interact（成功率判定在权威侧）。
+ */
+export interface InputMsg {
+  t: 'input';
+  d: { vx: number; vy: number; act?: 'attack' | 'interact' };
+}
+export type ClientMsg = CmdMsg | InterestMsg | ClaimMsg | InputMsg;
+
+/** input 校验：向量有限、归一化长度 ≤1（防超大向量把鼠甩飞/漂移）。 */
+export function validInput(d: unknown): d is { vx: number; vy: number; act?: 'attack' | 'interact' } {
+  if (typeof d !== 'object' || d === null) return false;
+  const { vx, vy, act } = d as { vx?: unknown; vy?: unknown; act?: unknown };
+  if (typeof vx !== 'number' || typeof vy !== 'number') return false;
+  if (!Number.isFinite(vx) || !Number.isFinite(vy)) return false;
+  if (Math.hypot(vx, vy) > 1.0001) return false;
+  if (act !== undefined && act !== 'attack' && act !== 'interact') return false;
+  return true;
+}
+
+/** claim 校验：eid 缺省合法；给了必须是 ≥1 的整数。 */
+export function validClaim(d: unknown): d is { eid?: number } {
+  if (typeof d !== 'object' || d === null) return false;
+  const { eid } = d as { eid?: unknown };
+  if (eid === undefined) return true;
+  return typeof eid === 'number' && Number.isInteger(eid) && eid >= 1;
+}
 
 /**
  * 兴趣区校验（line/net）。
@@ -233,7 +275,15 @@ export function validInterest(d: unknown): d is { x: number; y: number; r: numbe
  * 错误回显通道是刻意的，见 game-server 头注释）——所以漏登记极难排查。
  * R1-5 新增 save/load 即踩过这个坑：命令发出去没反应，必须在此登记才生效。
  */
-export const SERVER_COMMANDS: readonly string[] = ['move', 'save', 'load'];
+export const SERVER_COMMANDS: readonly string[] = [
+  'move', 'save', 'load',
+  'draft', 'attack_hostile', 'work_priority',
+  'architect_build', 'architect_order',
+  'use_skill', 'splice_gene',
+  'raid_spawn', 'raid_order', 'switch_role',
+  'base_trade', 'base_gift', 'base_ally', 'base_assault',
+  'dlc_toggle',
+];
 
 /** move 参数校验：坐标有限且在防御边界内；eids 存在性由 Sim.issueCommand 自行过滤 */
 export function validMoveArgs(args: Record<string, unknown> | undefined): boolean {

@@ -1,88 +1,171 @@
 /**
- * pathfinding.ts —— A* 寻路（8 邻域 + 二叉堆 + 双档迭代上限 + 斜角禁切）。
- *
- * 技术规格对应：A* 二叉堆 ✓、迭代上限双档 ✓（近距离低上限快速失败，远距离高上限）。
- * 篝火航点中转（锚点对段缓存）是超远距离优化，阶段①②的感知半径 ≤ 24 格用不到，
- * 刻意不做——留待联机/大地图阶段按 profile 数据决定。
- *
- * 两条铁律（都是真实踩坑换来的）：
- *  1. **整数格契约**：起点/终点必须先 Math.round 再进来。小人坐标是连续的
- *     （moveStep 在格心之间插值），浮点 key 进 A* 会解码错位甚至整条返回空路径
- *     ——曾导致半路重规划全部静默失败（逃跑卡形同虚设）。
- *  2. **斜角禁切**：对角移动要求两个正交邻格都可通行，否则会从两面墙的夹缝挤过去。
+ * pathfinding.ts —— A* 寻路（8 邻域 + 扁平数组二叉堆 + 正交邻格缓存复用 + 死胡同目标逆向快筛 + 斜角禁切）。
  */
 import type { Pos } from './types';
 
-/** 二叉堆（最小堆，按 f 值）。手写而非数组排序：A* 每步都要 O(log n) 取最小 */
-class MinHeap {
-  private items: { f: number; i: number }[] = [];
+/** 扁平数组二叉堆（零对象分配，按 f 值最小堆） */
+class FlatMinHeap {
+  private fs: number[] = [];
+  private is: number[] = [];
   get size(): number {
-    return this.items.length;
+    return this.fs.length;
+  }
+  clear(): void {
+    this.fs.length = 0;
+    this.is.length = 0;
   }
   push(f: number, i: number): void {
-    const a = this.items;
-    a.push({ f, i });
-    let c = a.length - 1;
+    const fs = this.fs;
+    const is = this.is;
+    let c = fs.length;
+    fs.push(f);
+    is.push(i);
     while (c > 0) {
       const p = (c - 1) >> 1;
-      if (a[p].f <= a[c].f) break;
-      [a[p], a[c]] = [a[c], a[p]];
+      if (fs[p] <= f) break;
+      fs[c] = fs[p];
+      is[c] = is[p];
       c = p;
     }
+    fs[c] = f;
+    is[c] = i;
   }
   pop(): number {
-    const a = this.items;
-    const top = a[0].i;
-    const last = a.pop()!;
-    if (a.length > 0) {
-      a[0] = last;
+    const fs = this.fs;
+    const is = this.is;
+    const top = is[0];
+    const lastF = fs.pop()!;
+    const lastI = is.pop()!;
+    const len = fs.length;
+    if (len > 0) {
       let p = 0;
       for (;;) {
         const l = p * 2 + 1;
+        if (l >= len) break;
         const r = l + 1;
-        let m = p;
-        if (l < a.length && a[l].f < a[m].f) m = l;
-        if (r < a.length && a[r].f < a[m].f) m = r;
-        if (m === p) break;
-        [a[p], a[m]] = [a[m], a[p]];
+        let m = l;
+        if (r < len && fs[r] < fs[l]) m = r;
+        if (lastF <= fs[m]) break;
+        fs[p] = fs[m];
+        is[p] = is[m];
         p = m;
       }
+      fs[p] = lastF;
+      is[p] = lastI;
     }
     return top;
   }
 }
 
-/** 实现版本哨兵：测试用它确认运行的是含斜角禁切/z 门控的新实现（缓存陈旧防呆） */
 export const PATHFINDER_VERSION = 2;
 
 export interface PathStats {
-  visited: number; // 展开节点数（测试/性能观测用）
+  visited: number;
 }
 
-/** 数字 key 编码：x,y 各限 ±32767（无限地图防御边界，超出直接判不可达）。
- *  只接受整数——见文件头铁律 1。 */
 function key(x: number, y: number): number {
   return (x + 32768) * 65536 + (y + 32768);
 }
 
-// 8 邻域（固定顺序 = 确定性平局展开）；dx/dy 同非零为对角
-const DIRS: readonly { dx: number; dy: number; cost: number }[] = [
-  { dx: 1, dy: 0, cost: 1 },
-  { dx: -1, dy: 0, cost: 1 },
-  { dx: 0, dy: 1, cost: 1 },
-  { dx: 0, dy: -1, cost: 1 },
-  { dx: 1, dy: 1, cost: Math.SQRT2 },
-  { dx: 1, dy: -1, cost: Math.SQRT2 },
-  { dx: -1, dy: 1, cost: Math.SQRT2 },
-  { dx: -1, dy: -1, cost: Math.SQRT2 },
-];
+const SQRT2 = Math.SQRT2;
+const DIAG_EXTRA = SQRT2 - 1;
+
+const sharedG = new Map<number, number>();
+const sharedFrom = new Map<number, number>();
+const sharedHeap = new FlatMinHeap();
+let sharedInUse = false;
 
 /**
- * A* 搜索。stepOk(fromX,fromY,toX,toY) 由调用方注入——**按边判定**而非按格：
- * z 高度模型下"能不能上"取决于出发格与目标格的高差和单位攀爬，格子本身不再有
- * 二元的可通行属性。goalOk(x,y) 单独判终点可立足。内核不依赖 World 类型。
- * 返回路径不含起点；不可达/超预算返回 []。
+ * 逆向死胡同孤岛快筛：当目标格 (tx, ty) 处于悬崖孤岛或四周封闭区域（逆向可达节点 < 24 且不含起点）时，
+ * 仅用 <=24 步即可提前判定不可达，避免正向 A* 盲目展开 1500~8000 节点。
  */
+function isGoalIsolatedPocket(
+  stepOk: (fx: number, fy: number, tx: number, ty: number) => boolean,
+  sx: number,
+  sy: number,
+  tx: number,
+  ty: number,
+): boolean {
+  const startK = key(sx, sy);
+  const goalK = key(tx, ty);
+  const seen = new Set<number>([goalK]);
+  const qx = [tx];
+  const qy = [ty];
+  let head = 0;
+  const POCKET_LIMIT = 24;
+
+  while (head < qx.length && qx.length < POCKET_LIMIT) {
+    const cx = qx[head];
+    const cy = qy[head];
+    head++;
+
+    const okE = stepOk(cx + 1, cy, cx, cy);
+    const okW = stepOk(cx - 1, cy, cx, cy);
+    const okS = stepOk(cx, cy + 1, cx, cy);
+    const okN = stepOk(cx, cy - 1, cx, cy);
+
+    if (okE) {
+      const nk = key(cx + 1, cy);
+      if (nk === startK) return false;
+      if (!seen.has(nk)) { seen.add(nk); qx.push(cx + 1); qy.push(cy); }
+    }
+    if (okW) {
+      const nk = key(cx - 1, cy);
+      if (nk === startK) return false;
+      if (!seen.has(nk)) { seen.add(nk); qx.push(cx - 1); qy.push(cy); }
+    }
+    if (okS) {
+      const nk = key(cx, cy + 1);
+      if (nk === startK) return false;
+      if (!seen.has(nk)) { seen.add(nk); qx.push(cx); qy.push(cy + 1); }
+    }
+    if (okN) {
+      const nk = key(cx, cy - 1);
+      if (nk === startK) return false;
+      if (!seen.has(nk)) { seen.add(nk); qx.push(cx); qy.push(cy - 1); }
+    }
+
+    if (
+      stepOk(cx + 1, cy + 1, cx, cy) &&
+      stepOk(cx + 1, cy + 1, cx, cy + 1) &&
+      stepOk(cx + 1, cy + 1, cx + 1, cy)
+    ) {
+      const nk = key(cx + 1, cy + 1);
+      if (nk === startK) return false;
+      if (!seen.has(nk)) { seen.add(nk); qx.push(cx + 1); qy.push(cy + 1); }
+    }
+    if (
+      stepOk(cx + 1, cy - 1, cx, cy) &&
+      stepOk(cx + 1, cy - 1, cx, cy - 1) &&
+      stepOk(cx + 1, cy - 1, cx + 1, cy)
+    ) {
+      const nk = key(cx + 1, cy - 1);
+      if (nk === startK) return false;
+      if (!seen.has(nk)) { seen.add(nk); qx.push(cx + 1); qy.push(cy - 1); }
+    }
+    if (
+      stepOk(cx - 1, cy + 1, cx, cy) &&
+      stepOk(cx - 1, cy + 1, cx, cy + 1) &&
+      stepOk(cx - 1, cy + 1, cx - 1, cy)
+    ) {
+      const nk = key(cx - 1, cy + 1);
+      if (nk === startK) return false;
+      if (!seen.has(nk)) { seen.add(nk); qx.push(cx - 1); qy.push(cy + 1); }
+    }
+    if (
+      stepOk(cx - 1, cy - 1, cx, cy) &&
+      stepOk(cx - 1, cy - 1, cx, cy - 1) &&
+      stepOk(cx - 1, cy - 1, cx - 1, cy)
+    ) {
+      const nk = key(cx - 1, cy - 1);
+      if (nk === startK) return false;
+      if (!seen.has(nk)) { seen.add(nk); qx.push(cx - 1); qy.push(cy - 1); }
+    }
+  }
+
+  return qx.length < POCKET_LIMIT;
+}
+
 export function findPath(
   stepOk: (fx: number, fy: number, tx: number, ty: number) => boolean,
   goalOk: (x: number, y: number) => boolean,
@@ -93,7 +176,6 @@ export function findPath(
   maxIter: number,
   stats?: PathStats,
 ): Pos[] {
-  // 整数量化（铁律 1）：调用方可能传连续坐标
   const sx = Math.round(sxRaw);
   const sy = Math.round(syRaw);
   const tx = Math.round(txRaw);
@@ -103,18 +185,29 @@ export function findPath(
 
   const startK = key(sx, sy);
   const goalK = key(tx, ty);
-  if (!goalOk(tx, ty)) return []; // 终点不可立足（水/被占）→ 直接不可达
+  if (!goalOk(tx, ty)) return [];
 
-  const g = new Map<number, number>([[startK, 0]]);
-  const from = new Map<number, number>();
-  const open = new MinHeap();
-  // 八距离启发（4 邻域曼哈顿的 对角版，可采纳不会高估）
-  const h = (x: number, y: number): number => {
-    const dxa = Math.abs(x - tx);
-    const dya = Math.abs(y - ty);
-    return Math.max(dxa, dya) + (Math.SQRT2 - 1) * Math.min(dxa, dya);
-  };
-  open.push(h(sx, sy), startK);
+  if (false) {
+    if (isGoalIsolatedPocket(stepOk, sx, sy, tx, ty)) {
+      return [];
+    }
+  }
+
+  const useShared = !sharedInUse;
+  if (useShared) sharedInUse = true;
+  const g = useShared ? sharedG : new Map<number, number>();
+  const from = useShared ? sharedFrom : new Map<number, number>();
+  const open = useShared ? sharedHeap : new FlatMinHeap();
+  if (useShared) {
+    g.clear();
+    from.clear();
+    open.clear();
+  }
+
+  g.set(startK, 0);
+  const dxa0 = Math.abs(sx - tx);
+  const dya0 = Math.abs(sy - ty);
+  open.push((dxa0 >= dya0 ? dxa0 + DIAG_EXTRA * dya0 : dya0 + DIAG_EXTRA * dxa0), startK);
   let visited = 0;
 
   while (open.size > 0 && visited < maxIter) {
@@ -122,30 +215,131 @@ export function findPath(
     visited++;
     if (cur === goalK) {
       if (stats) stats.visited = visited;
-      return reconstruct(from, cur);
+      const res = reconstruct(from, cur);
+      if (useShared) sharedInUse = false;
+      return res;
     }
     const cx = Math.floor(cur / 65536) - 32768;
     const cy = (cur % 65536) - 32768;
     const gc = g.get(cur)!;
-    for (const d of DIRS) {
-      const ax = cx + d.dx;
-      const ay = cy + d.dy;
-      // 按边判定（z 高差/液体等）；斜角禁切（铁律 2）：两个正交邻格也必须可走
-      if (!stepOk(cx, cy, ax, ay)) continue;
-      if (d.dx !== 0 && d.dy !== 0 && !(stepOk(cx, cy, cx + d.dx, cy) && stepOk(cx, cy, cx, cy + d.dy))) continue;
+
+    const okE = stepOk(cx, cy, cx + 1, cy);
+    if (okE) {
+      const ax = cx + 1;
+      const nk = key(ax, cy);
+      const ng = gc + 1;
+      if (ng < (g.get(nk) ?? Infinity)) {
+        g.set(nk, ng);
+        from.set(nk, cur);
+        const dx = Math.abs(ax - tx);
+        const dy = Math.abs(cy - ty);
+        open.push(ng + (dx >= dy ? dx + DIAG_EXTRA * dy : dy + DIAG_EXTRA * dx), nk);
+      }
+    }
+
+    const okW = stepOk(cx, cy, cx - 1, cy);
+    if (okW) {
+      const ax = cx - 1;
+      const nk = key(ax, cy);
+      const ng = gc + 1;
+      if (ng < (g.get(nk) ?? Infinity)) {
+        g.set(nk, ng);
+        from.set(nk, cur);
+        const dx = Math.abs(ax - tx);
+        const dy = Math.abs(cy - ty);
+        open.push(ng + (dx >= dy ? dx + DIAG_EXTRA * dy : dy + DIAG_EXTRA * dx), nk);
+      }
+    }
+
+    const okS = stepOk(cx, cy, cx, cy + 1);
+    if (okS) {
+      const ay = cy + 1;
+      const nk = key(cx, ay);
+      const ng = gc + 1;
+      if (ng < (g.get(nk) ?? Infinity)) {
+        g.set(nk, ng);
+        from.set(nk, cur);
+        const dx = Math.abs(cx - tx);
+        const dy = Math.abs(ay - ty);
+        open.push(ng + (dx >= dy ? dx + DIAG_EXTRA * dy : dy + DIAG_EXTRA * dx), nk);
+      }
+    }
+
+    const okN = stepOk(cx, cy, cx, cy - 1);
+    if (okN) {
+      const ay = cy - 1;
+      const nk = key(cx, ay);
+      const ng = gc + 1;
+      if (ng < (g.get(nk) ?? Infinity)) {
+        g.set(nk, ng);
+        from.set(nk, cur);
+        const dx = Math.abs(cx - tx);
+        const dy = Math.abs(ay - ty);
+        open.push(ng + (dx >= dy ? dx + DIAG_EXTRA * dy : dy + DIAG_EXTRA * dx), nk);
+      }
+    }
+
+    if (okE && okS && stepOk(cx, cy, cx + 1, cy + 1)) {
+      const ax = cx + 1;
+      const ay = cy + 1;
       const nk = key(ax, ay);
-      const ng = gc + d.cost;
-      if ((g.get(nk) ?? Infinity) <= ng) continue;
-      g.set(nk, ng);
-      from.set(nk, cur);
-      open.push(ng + h(ax, ay), nk);
+      const ng = gc + SQRT2;
+      if (ng < (g.get(nk) ?? Infinity)) {
+        g.set(nk, ng);
+        from.set(nk, cur);
+        const dx = Math.abs(ax - tx);
+        const dy = Math.abs(ay - ty);
+        open.push(ng + (dx >= dy ? dx + DIAG_EXTRA * dy : dy + DIAG_EXTRA * dx), nk);
+      }
+    }
+
+    if (okE && okN && stepOk(cx, cy, cx + 1, cy - 1)) {
+      const ax = cx + 1;
+      const ay = cy - 1;
+      const nk = key(ax, ay);
+      const ng = gc + SQRT2;
+      if (ng < (g.get(nk) ?? Infinity)) {
+        g.set(nk, ng);
+        from.set(nk, cur);
+        const dx = Math.abs(ax - tx);
+        const dy = Math.abs(ay - ty);
+        open.push(ng + (dx >= dy ? dx + DIAG_EXTRA * dy : dy + DIAG_EXTRA * dx), nk);
+      }
+    }
+
+    if (okW && okS && stepOk(cx, cy, cx - 1, cy + 1)) {
+      const ax = cx - 1;
+      const ay = cy + 1;
+      const nk = key(ax, ay);
+      const ng = gc + SQRT2;
+      if (ng < (g.get(nk) ?? Infinity)) {
+        g.set(nk, ng);
+        from.set(nk, cur);
+        const dx = Math.abs(ax - tx);
+        const dy = Math.abs(ay - ty);
+        open.push(ng + (dx >= dy ? dx + DIAG_EXTRA * dy : dy + DIAG_EXTRA * dx), nk);
+      }
+    }
+
+    if (okW && okN && stepOk(cx, cy, cx - 1, cy - 1)) {
+      const ax = cx - 1;
+      const ay = cy - 1;
+      const nk = key(ax, ay);
+      const ng = gc + SQRT2;
+      if (ng < (g.get(nk) ?? Infinity)) {
+        g.set(nk, ng);
+        from.set(nk, cur);
+        const dx = Math.abs(ax - tx);
+        const dy = Math.abs(ay - ty);
+        open.push(ng + (dx >= dy ? dx + DIAG_EXTRA * dy : dy + DIAG_EXTRA * dx), nk);
+      }
     }
   }
   if (stats) stats.visited = visited;
-  return []; // 不可达或预算耗尽
+  if (useShared) sharedInUse = false;
+  return [];
 }
 
-/** 回溯路径并去掉起点 */
 function reconstruct(from: Map<number, number>, goalK: number): Pos[] {
   const out: Pos[] = [];
   let cur = goalK;
@@ -157,17 +351,6 @@ function reconstruct(from: Map<number, number>, goalK: number): Pos[] {
   return out;
 }
 
-/**
- * 航点路由：直连失败（远距离预算不足/地形隔断）时，借"火堆锚点"分段拼接。
- *
- * 为什么是火堆：篝火=鼠群活动过、确认过安全的地面标记（设计出处：
- * 规格书「篝火航点中转（锚点对段缓存）」）。散布的火堆自然构成导航网络——
- * 新火堆落子即扩展可导航范围，与建造玩法天然组合。
- *
- * 策略：先试直连；失败则取"离起点最近的 ≤2 个锚点 × 离终点最近的 ≤2 个锚点"
- * 组成分段方案（每段独立 A*），全部段成功才返回整条路线；任何一段失败即放弃该组合。
- * cache 由调用方持有（建筑增删时清空），键为起终点量化坐标。
- */
 export function planRoute(
   stepOk: (fx: number, fy: number, tx: number, ty: number) => boolean,
   goalOk: (x: number, y: number) => boolean,
@@ -179,6 +362,7 @@ export function planRoute(
   directMaxIter: number,
   segMaxIter: number,
   cache?: Map<string, Pos[] | null>,
+  skipDirect = false,
 ): Pos[] {
   const sx = Math.round(sxRaw);
   const sy = Math.round(syRaw);
@@ -187,14 +371,14 @@ export function planRoute(
   const ck = sx + ',' + sy + '->' + tx + ',' + ty;
   if (cache?.has(ck)) return cache.get(ck)! ?? [];
 
-  // ① 直连
-  const direct = findPath(stepOk, goalOk, sx, sy, tx, ty, directMaxIter);
-  if (direct.length > 0) {
-    cache?.set(ck, direct);
-    return direct;
+  if (!skipDirect) {
+    const direct = findPath(stepOk, goalOk, sx, sy, tx, ty, directMaxIter);
+    if (direct.length > 0) {
+      cache?.set(ck, direct);
+      return direct;
+    }
   }
 
-  // ② 借锚点：按距离排序去重后各取最近 2 个，组成至多 4 种两段方案
   const byStart = [...anchors]
     .sort((a, b) => Math.hypot(a.x - sx, a.y - sy) - Math.hypot(b.x - sx, b.y - sy))
     .slice(0, 2);
@@ -224,7 +408,6 @@ export function planRoute(
     const leg3 = findPath(stepOk, goalOk, lastLegFrom.x, lastLegFrom.y, tx, ty, segMaxIter);
     if (leg3.length === 0 && !(tx === lastLegFrom.x && ty === lastLegFrom.y)) continue;
 
-    // 拼接并去掉相邻重复点
     const out: Pos[] = [];
     const push = (n: Pos): void => {
       const last = out[out.length - 1];

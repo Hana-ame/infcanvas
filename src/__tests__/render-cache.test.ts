@@ -44,6 +44,10 @@ vi.mock('pixi.js', () => {
     rect(_x: number, _y: number, _w: number, _h: number): this { return this; }
     fill(_color: any): this { return this; }
     circle(_x: number, _y: number, _r: number): this { return this; }
+    moveTo(_x: number, _y: number): this { return this; }
+    lineTo(_x: number, _y: number): this { return this; }
+    stroke(_opt: any, _a?: any, _b?: any, _c?: any, _d?: any, _e?: any): this { return this; }
+    ellipse(_x: number, _y: number, _w: number, _h: number): this { return this; }
     clear(): this { return this; }
     destroy(_opts?: any) { /* noop */ }
     addChild(c: any): any { this.children.push(c); return c; }

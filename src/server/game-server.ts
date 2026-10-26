@@ -109,6 +109,13 @@ interface ClientCtx {
   prevInterest: Set<number> | null;
   /** 该连接的中心（tick 分帧调度的优先级锚点：中心附近的块先处理） */
   center: { x: number; y: number };
+  /**
+   * P3 认领的鼠（多人选型 A，2026-10-13）：客户端经 claim 认领一只鼠，
+   * 之后它的 input 只作用于这只鼠；null = 未认领（观察模式）。
+   */
+  claimedEid: number | null;
+  /** P3 最新上行输入（每 tick 消费；未认领/无输入 = null）。 */
+  lastInput: { vx: number; vy: number; act?: 'attack' | 'interact' } | null;
 }
 
 export function createGameServer(opts: GameServerOptions): Promise<GameServerHandle> {
@@ -238,6 +245,9 @@ export function createGameServer(opts: GameServerOptions): Promise<GameServerHan
       interest: null,
       prevInterest: null,
       center: { x: sim.world.spawn.x, y: sim.world.spawn.y },
+      // P3（多人选型 A）：新连接默认观察模式，无认领、无输入意图。
+      claimedEid: null,
+      lastInput: null,
     };
     clients.add(ctx);
     // 新连接：先收 welcome（seed+tuning+全量），之后走常规节奏。

@@ -1,43 +1,45 @@
 /**
- * client/main.ts —— 客户端入口：本地单机 / ?remote= 联机 双模（阶段④）。
- *
- * - 本地模式：浏览器内直跑 Sim（与 Node 同一份零 DOM 代码），固定步长推进。
- * - 联机模式（?remote=ws://host:port）：RemoteSim 合入服务端快照，命令上行；
- *   渲染/HUD 与本地共用同一 WorldView，零分支。
- * 存档按钮走 localStorage（本地模式专属；联机的存档权在服务器侧）。
+ * client/main.ts —— 客户端入口：100% RimWorld 风格操作界面 + 单格唯一对象生成顺序校准 + 屠宰台与尸体拖回屠宰 + 遗迹内部建筑初始化 + 帧耗时自适应节流。
  */
 import './style.css';
 import { Application } from 'pixi.js';
-import { Sim } from '../sim';
-import { snapshotOf, loadSim, type SaveData } from '../sim/sim-save';
+import {
+  Sim,
+  type Eid,
+  enforceSingleTileOccupancy,
+  getRuinSites,
+  isRuinScavengeDlcEnabled,
+  placeArchitectBuilding,
+  tickPlayerControlledRaiders,
+  spawnPackBeast,
+  spawnBattlefieldCorpse,
+  spawnAncientDangerShrine,
+  spawnCreatureCorpse,
+} from '../sim';
+import { loadSim, snapshotOf } from '../sim/sim-save';
 import { encodeSaveDataToFile, decodeSaveDataFromFile } from '../shared/bigint-json';
 import { ModRegistry } from '../mods';
-import { DEFAULT_PORT, DEFAULT_SEED, CLIENT_STEP_SEC, RENDER_DT_CLAMP_SEC } from '../sim/tuning';
+import {
+  CLIENT_STEP_SEC,
+  DEFAULT_PORT,
+  DEFAULT_SEED,
+  RENDER_DT_CLAMP_SEC,
+} from '../sim/tuning';
 import { Renderer } from './render';
 import { Hud } from './hud';
 import { RemoteSim } from './remote';
 import { LocalView } from './local-view';
-import { KeyboardInput, VirtualJoystick } from './input';
 import type { WorldView } from './view';
+import { KeyboardInput, VirtualJoystick } from './input';
+import { RimWorldUiController } from './rimworld-ui';
 
 const SAVE_KEY = 'infcanvas-save-v3';
 
-interface Controller {
-  view: WorldView;
-  /** 本地模式推进时间；联机模式为 no-op（时间由服务器推） */
-  tick(realDt: number): void;
-  move(x: number, y: number): void;
-  paused(): boolean;
-}
-
-async function boot(): Promise<void> {
+async function boot() {
   const app = new Application();
-  // resolution 必须跟物理像素走：缺省 1 时高 DPI 屏会把低分辨率画面拉伸，
-  // 整个画面发虚像蒙了层雾（2026-08-21 用户反馈「为什么雾蒙蒙的」）；autoDensity 让
-  // CSS 尺寸保持逻辑像素、背缓冲用物理像素。
   const dpr = Math.min(2, window.devicePixelRatio || 1);
   await app.init({
-    background: '#101410',
+    background: '#171c16',
     resizeTo: window,
     antialias: true,
     resolution: dpr,
@@ -46,102 +48,158 @@ async function boot(): Promise<void> {
   document.getElementById('app')!.appendChild(app.canvas);
 
   const remoteArg = new URLSearchParams(location.search).get('remote');
-  const selected = new Set<number>();
-  /** R3-HUD：选中非鼠目标（建筑 id / 敌袭单位 id）。与 selected 互斥：
-   *  点鼠清空这两个，点建筑/敌人清空 selected（语义单一：详情面板同时只描述一个对象）。 */
+  const selected = new Set<Eid>();
   let selBuilding: string | null = null;
   let selHostile: number | null = null;
+  let selBase: string | null = null;
   let paused = false;
-  let speed = 3;
-  // R1-1 断连横幅（仅联机用；本地模式永远 hidden）
-  const banner = document.getElementById('hud-banner')!;
-  banner.hidden = true;
+  let speed = 1;
 
-  let ctrl: Controller;
-  // 联机句柄提到外层：渲染循环每帧要用它上报视口（setInterest 内部有指纹节流）。
-  // 本地单机模式恒为 null —— 单机不需要裁剪，本地进程本来就持有全部世界。
+  const banner = document.getElementById('hud-banner');
+  if (banner) banner.hidden = true;
+
+  let ctrl: {
+    view: WorldView;
+    tick(realDt: number): void;
+    move(x: number, y: number): void;
+    paused(): boolean;
+  };
   let remoteCtl: RemoteSim | null = null;
-  // ---- P1 直接操控（2026-10-13）：本地模式专用状态 ----
-  // localSim：本地权威 Sim（联机模式为 null，直接操控在 P3 接上行下发后才进联机）。
-  // heroEid：当前主角（?hero= 或第一只鼠）；死亡后判空回退质心相机。
-  // keyboard/joystick/joyVec：输入源（键盘 + 触屏摇杆合成方向向量）。
   let localSim: Sim | null = null;
-  let heroEid: number | null = null;
+  let heroEid: Eid | null = null;
   const keyboard = new KeyboardInput();
-  let joystick: VirtualJoystick | null = null;
   let joyVec = { x: 0, y: 0 };
+
   if (remoteArg) {
-    document.title = 'infcanvas · 联机观察/指挥';
-    // 本地专属按钮在联机模式是哑按钮：存档权在服务器侧，直接隐藏防误导
+    document.title = 'InfCanvas · RimWorld 联机指挥与对抗';
     for (const id of ['btn-save', 'btn-load', 'btn-new']) {
-      document.getElementById(id)!.style.display = 'none';
+      const el = document.getElementById(id);
+      if (el) el.style.display = 'none';
     }
     const remote = new RemoteSim();
     remoteCtl = remote;
-    // R1-1 断连横幅：断连/重连期间让玩家知道「不是卡了，是在重连」，
-    // 否则玩家会对着冻结的世界反复点击。所有权交给 main 的 render loop 控制显隐。
     remote.onConnectionChange = (connected) => {
-      banner.hidden = connected;
+      if (banner) banner.hidden = connected;
     };
-    // 等首包（welcome）到达再起渲染，否则没有 tuning 无法建地形推导器
-    // 注意：首连失败不致命——onerror 已排好退避重连，这里吞掉错误让页面继续跑，
-    // 等服务器起来后自动接上（这正是 R1-1 要的行为）。
     await remote.connect(remoteArg).catch(() => undefined);
     ctrl = {
       view: remote,
-      tick() {}, // 时间由服务器推进
+      tick() {},
       move(x, y) {
         remote.sendCommand('move', { eids: [...selected], x, y });
       },
       paused: () => false,
     };
   } else {
-    // 本地：支持 ?seed=；?save=1 从 localStorage 恢复
     const params = new URLSearchParams(location.search);
-    const savedRaw = params.get('save') === '1' ? localStorage.getItem(SAVE_KEY) : null;
+    let savedRaw: string | null = null;
+    try {
+      savedRaw = params.get('save') === '1' ? localStorage.getItem(SAVE_KEY) : null;
+    } catch {
+      savedRaw = null;
+    }
     let sim: Sim;
     if (savedRaw) {
       sim = loadSim(decodeSaveDataFromFile(JSON.parse(savedRaw)), ModRegistry.default());
-      history.replaceState(null, '', location.pathname + location.search.replace(/[?&]save=1/, ''));
+      try {
+        history.replaceState(null, '', location.pathname + location.search.replace(/[?&]save=1/, ''));
+      } catch {
+        // ignore in sandboxed iframe
+      }
     } else {
-      sim = new Sim({ seed: Number(params.get('seed') ?? DEFAULT_SEED), registry: ModRegistry.default() });
+      sim = new Sim({
+        seed: Number(params.get('seed') ?? DEFAULT_SEED),
+        registry: ModRegistry.default(),
+        playerRimWorldMode: true,
+      });
     }
+    sim.enableRimWorldPlayerRules('p_local_1');
+
+    sim.stockpile['wood'] = Math.max(sim.stockpile['wood'] ?? 0, 60);
+    sim.stockpile['ore'] = (sim.stockpile['ore'] ?? 0) + 32;
+    sim.stockpile['stone'] = (sim.stockpile['stone'] ?? 0) + 24;
+    sim.stockpile['gold'] = (sim.stockpile['gold'] ?? 0) + 8;
+    sim.stockpile['herb'] = (sim.stockpile['herb'] ?? 0) + 12;
+
+    // 初始化远古遗迹房间与内部可搜刮建筑（远古储物柜、军用物资箱、实验终端、休眠舱）
+    if (isRuinScavengeDlcEnabled(sim)) getRuinSites(sim);
+
+    // 开局建造一座 6×5 封闭室内工坊与厨房房间 (x=-6..-1, y=-7..-3)，供玩家直接点击房间体验「选中房间布置内设/装饰/工作台」
+    for (let rx = -6; rx <= -1; rx++) {
+      for (let ry = -7; ry <= -3; ry++) {
+        const isEdge = rx === -6 || rx === -1 || ry === -7 || ry === -3;
+        if (!isEdge) continue;
+        const isDoor = rx === -3 && ry === -3;
+        const b = sim.world.addArchitectBuilding(isDoor ? 'door' : 'wall', rx, ry, {
+          allowContiguous: true,
+          ignoreTerrain: true,
+          allowReplace: true,
+        });
+        if (b) b.ownerPlayerId = 'p_local_1';
+      }
+    }
+    placeArchitectBuilding(sim, 'stove', -5, -6, 0, 'p_local_1');
+    placeArchitectBuilding(sim, 'butcher_table', -3, -6, 0, 'p_local_1');
+    placeArchitectBuilding(sim, 'shelf', -5, -4, 0, 'p_local_1');
+    placeArchitectBuilding(sim, 'great_bonfire', 3, -3, 0, 'p_local_1');
+    spawnAncientDangerShrine(sim, -8, -5);
+    spawnPackBeast(sim, 'p_local_1', 3, 2, { food: 10, wood: 12, ore: 6, herb: 4 });
+    spawnBattlefieldCorpse(sim, 5, -2, {
+      name: '赤爪先锋斥候遗体 (可搜尸/屠宰)',
+      equipWeapon: '精准栓动步枪 (Bolt-Action Rifle)',
+      equipApparel: '掠夺者防弹背心 (Flak Vest)',
+      inventory: { ore: 6, gold: 3, herb: 2, meal: 2 },
+      butcherYield: { meat: 3, leather: 2 },
+      causeOfDeath: '前哨交火阵亡',
+    });
+    spawnCreatureCorpse(sim, 'deer', -4, 2);
+
+    const strangerEid = sim.spawnPawn(6, -3);
+    const stranger = sim.pawn(strangerEid);
+    if (stranger) {
+      stranger.name = '旅鼠·墨菲(陌生人)';
+      stranger.isStranger = true;
+      stranger.controlledBy = 'p_stranger_faction';
+      stranger.inventory = { food: 15, herb: 6, gold: 4, wood: 10 };
+    }
+
+    enforceSingleTileOccupancy(sim);
+
     localSim = sim;
-    // P1 主角：?hero=<eid> 指定，缺省 = 第一只鼠（4 鼠出生第一只）。
-    // 主角死亡后 heroEid 指向失效实体 → 后续帧自动判空回退质心相机（见 ticker）。
     const heroParam = Number(params.get('hero'));
-    const firstPawn = [...sim.pawns()][0];
+    const firstPawn = [...sim.pawns()].find((p) => !p.isStranger);
     heroEid =
       Number.isFinite(heroParam) && sim.pawnMap.has(heroParam)
         ? heroParam
         : firstPawn
           ? firstPawn.eid
           : null;
-    // 直接操控输入：键盘（WASD/方向键）+ 触屏摇杆（仅触摸设备挂摇杆层）
+    if (firstPawn) selected.add(firstPawn.eid);
     keyboard.attach();
     if ('ontouchstart' in window) {
       const joyEl = document.getElementById('joy');
       if (joyEl) {
         joyEl.hidden = false;
-        joystick = new VirtualJoystick(joyEl as HTMLElement, { onVector: (v) => (joyVec = v) });
+        new VirtualJoystick(joyEl, { onVector: (v) => (joyVec = v) });
       }
     }
     let acc = 0;
     const view = new LocalView(sim);
     ctrl = {
       view,
-      tick(realDt: number) {
+      tick(realDt) {
         if (paused) return;
         acc += realDt * speed;
         let steps = 0;
-        // 固定步长推进：步长来自 tuning.ts §0 的 CLIENT_STEP_SEC（= 2.5 × SIM_DT_SEC），
-        // 不是这里的字面量——历史 bug 就是把 0.25 当契约基准写进 sim 侧注释（P1）。
-        while (acc >= CLIENT_STEP_SEC && steps < 32) {
+        const tStep0 = performance.now();
+        while (acc >= CLIENT_STEP_SEC && steps < 8) {
           sim.step(CLIENT_STEP_SEC);
+          tickPlayerControlledRaiders(sim, CLIENT_STEP_SEC);
           acc -= CLIENT_STEP_SEC;
           steps++;
+          if (performance.now() - tStep0 > 12) break;
         }
-        if (acc > 8) acc = 0; // 后台标签页回来不补帧雪崩
+        if (acc > 3) acc = 0;
       },
       move(x, y) {
         sim.selected = [...selected];
@@ -151,50 +209,88 @@ async function boot(): Promise<void> {
     };
   }
 
-  let followCam = true; // 默认跟随：否则鼠走远了用户看到空地（按钮可关）
+  let followCam = false;
+  let rwUi: RimWorldUiController | null = null;
+
   const renderer = new Renderer(app, ctrl.view, {
     onSelect(eid) {
       selected.clear();
       if (eid !== null) selected.add(eid);
-      // 点到鼠即取消非鼠选中：详情面板同时只描述一个对象
       if (eid !== null) {
         selBuilding = null;
         selHostile = null;
+        selBase = null;
       }
       renderer.selected = selected;
-      hud.forceNow(); // R3-HUD：交互后立即刷 HUD（不等节流窗）
+      hud.forceNow();
+      rwUi?.forceRefresh();
     },
-    // R1-4 框选：整批替换选中集合（不是叠加——叠加会让「再框一次」无法缩小范围）
     onSelectMany(eids) {
       selected.clear();
       for (const id of eids) selected.add(id);
       selBuilding = null;
       selHostile = null;
+      selBase = null;
       renderer.selected = selected;
       hud.forceNow();
+      rwUi?.forceRefresh();
     },
-    // R3-HUD：点到建筑/敌袭单位 → 详情面板切换目标（清空鼠选中）
     onPickNonPawn(pick) {
       selected.clear();
       renderer.selected = selected;
       selBuilding = pick.buildingId;
       selHostile = pick.hostileId;
       hud.forceNow();
+      rwUi?.forceRefresh();
     },
     onMove(x, y) {
       if (selected.size === 0) return;
       ctrl.move(x, y);
     },
     onUserPan() {
-      // 手动平移即交出镜头控制权：跟随若开着会被 lerp 拉回去，两个力打架
-      if (followCam) {
-        followCam = false;
-        const b = document.getElementById('btn-follow');
-        if (b) b.textContent = '🎯 跟随鼠群：关';
-      }
+      followCam = false;
+    },
+    onCanvasLeftClick(wx, wy) {
+      return rwUi ? rwUi.handleCanvasLeftClick(wx, wy) : false;
+    },
+    onCanvasRightClick(sx, sy, wx, wy) {
+      return rwUi ? rwUi.handleCanvasRightClick(sx, sy, wx, wy) : false;
+    },
+    isLineDragDesignatorActive() {
+      return rwUi ? rwUi.isLineDragDesignatorActive() : false;
+    },
+    onCanvasDragLine(cells) {
+      return rwUi ? rwUi.handleCanvasDragLine(cells) : false;
     },
   });
+  renderer.selected = selected;
   renderer.centerOn(0, 0);
+
+  const doSave = () => {
+    if (!localSim) return;
+    const encoded = encodeSaveDataToFile(snapshotOf(localSim) as unknown as Record<string, unknown>);
+    try {
+      localStorage.setItem(SAVE_KEY, JSON.stringify(encoded));
+      rwUi?.showToast('殖民地存档已保存至浏览器');
+    } catch {
+      rwUi?.showToast('浏览器存储受限');
+    }
+  };
+  const doLoad = () => {
+    try {
+      const raw = localStorage.getItem(SAVE_KEY);
+      if (!raw) {
+        rwUi?.showToast('没有找到存档记录');
+        return;
+      }
+      location.href = `${location.pathname}?save=1`;
+    } catch {
+      rwUi?.showToast('无法读取存档');
+    }
+  };
+  const doNewWorld = () => {
+    location.search = `seed=${Math.floor(Math.random() * 100_000)}`;
+  };
 
   const hud = new Hud(ctrl.view, {
     onPauseToggle() {
@@ -210,27 +306,64 @@ async function boot(): Promise<void> {
       if (followCam) renderer.centerOn(...centroid(ctrl.view));
       return followCam;
     },
-    onNewWorld() {
-      location.search = `seed=${Math.floor(Math.random() * 100000)}`;
+    onNewWorld: doNewWorld,
+    onSave: doSave,
+    onLoad: doLoad,
+  });
+
+  rwUi = new RimWorldUiController({
+    getSim: () => localSim,
+    getSelected: () => selected,
+    setSelected: (eids) => {
+      selected.clear();
+      for (const id of eids) selected.add(id);
+      selBuilding = null;
+      selHostile = null;
+      selBase = null;
+      renderer.selected = selected;
     },
-    onSave() {
-      if (!(ctrl.view instanceof Sim)) return; // 联机模式存档权在服务器
-      // quantity 字段编码为 bigint JSON 包装（{_B:"42"}），存档不残留浮点数
-      const encoded = encodeSaveDataToFile(snapshotOf(ctrl.view) as unknown as Record<string, unknown>);
-      localStorage.setItem(SAVE_KEY, JSON.stringify(encoded));
-      flash('💾 已保存到浏览器');
+    getSelectedBuilding: () => selBuilding,
+    getSelectedHostile: () => selHostile,
+    getSelectedBase: () => selBase,
+    setSelectedBase: (b) => {
+      selBase = b;
     },
-    onLoad() {
-      const raw = localStorage.getItem(SAVE_KEY);
-      if (!raw) {
-        flash('⚠ 没有找到存档');
-        return;
-      }
-      location.href = `${location.pathname}?save=1`;
+    centerCameraOn: (x, y) => {
+      followCam = false;
+      renderer.centerOn(x, y);
+    },
+    getZoomTilePx: () => renderer.TILE,
+    setZoomTilePx: (tilePx) => {
+      renderer.TILE = tilePx;
+    },
+    getMapOverlayMode: () => renderer.mapOverlayMode,
+    setMapOverlayMode: (mode) => {
+      renderer.mapOverlayMode = mode;
+    },
+    getPerfStats: () => ({
+      fps: renderer.smoothedFps,
+      renderMs: renderer.lastRenderCostMs,
+    }),
+    getPaused: () => paused,
+    setPaused: (p) => {
+      paused = p;
+    },
+    getSpeed: () => speed,
+    setSpeed: (s) => {
+      speed = s;
+    },
+    onSave: doSave,
+    onLoad: doLoad,
+    onNewWorld: doNewWorld,
+    issueCommand: (type, args) => {
+      if (remoteCtl) remoteCtl.sendCommand(type, args);
+      else if (localSim) localSim.issueCommand(type, args);
+    },
+    setBlueprintPreview: (preview) => {
+      renderer.blueprintPreview = preview;
     },
   });
 
-  // 相机跟随开关（默认关）；centroid 供开启瞬间直接对准质心
   function centroid(v: WorldView): [number, number] {
     let sx = 0;
     let sy = 0;
@@ -242,59 +375,25 @@ async function boot(): Promise<void> {
     }
     return n ? [sx / n, sy / n] : [0, 0];
   }
+
   addEventListener('keydown', (e) => {
     if (e.code === 'Space') {
       e.preventDefault();
       paused = !paused;
+      rwUi?.forceRefresh();
     }
-    // P1 攻击示例动作（成功率判定演示）：J 键对范围内最近敌袭单位近战
     if (e.code === 'KeyJ' && localSim && heroEid !== null) {
       localSim.directAttack(heroEid);
     }
-    // P2 环境/NPC 交互：E 键（对话中 = 关闭对话）
     if (e.code === 'KeyE' && localSim) {
       if (localSim.dialogue) localSim.closeDialogue();
       else if (heroEid !== null) localSim.interact(heroEid);
     }
   });
-  function flash(text: string): void {
-    const el = document.getElementById('hud-hint')!;
-    el.textContent = text;
-    setTimeout(() => {
-      el.textContent = HINT;
-    }, 2000);
-  }
-  const HINT =
-    'WASD/方向键/摇杆 操控主角｜E 交互（拾取/使用/传送/对话）｜J 攻击｜空格暂停｜拖拽平移·滚轮缩放｜悬停看地块信息';
 
-  // ---- 地块信息面板：固定在左下角，不跟随鼠标；可开关隐藏 ----
-  const tip = document.getElementById('hud-tip')!;
-  let tipVisible = true;
-  document.getElementById('btn-tip')!.onclick = (ev) => {
-    tipVisible = !tipVisible;
-    tip.style.display = tipVisible ? 'block' : 'none';
-    (ev.target as HTMLElement).textContent = `📋 地块信息：${tipVisible ? '开' : '关'}`;
-  };
   app.canvas.addEventListener('mousemove', (e) => {
-    if (!tipVisible) return;
     const w = renderer.screenToWorld(e.clientX, e.clientY);
-    const info = ctrl.view.inspect(w.x, w.y);
-    const lines: string[] = [];
-    lines.push(`<span class="t-name">${info.terrainName}</span> <span class="muted">(${Math.round(info.x)},${Math.round(info.y)})</span>`);
-    // z 高度模型：海拔与立足性
-    if (info.liquid) lines.push('<span class="bad">z=0 · 水面无法立足</span>');
-    else {
-      lines.push(`<span class="ok">z=${info.z}</span><span class="muted">${info.standable ? '· 可立足' : `· 需攀爬 ≥${info.z}`}</span>`);
-    }
-    if (info.treeCanopy) lines.push('<span class="bad">大树树冠</span>');
-    if (info.feature) lines.push(`${info.feature.kind === 'tree' ? '🌳' : '🍓'} ${info.feature.label}`);
-    if (info.buildingName) lines.push(`🏠 ${info.buildingName}`);
-    tip.innerHTML = lines.join('<br>');
-    tip.style.display = 'block';
-  });
-  app.canvas.addEventListener('mouseleave', () => {
-    if (!tipVisible) return;
-    tip.style.display = 'block'; // 离开画布时保留最后一条信息（不隐藏）
+    rwUi?.updateCellHover(w.x, w.y);
   });
 
   let last = performance.now();
@@ -303,88 +402,24 @@ async function boot(): Promise<void> {
     const dt = Math.min(RENDER_DT_CLAMP_SEC, (now - last) / 1000);
     last = now;
     ctrl.tick(dt);
-    // P1 直接操控（本地模式）：合成键盘+摇杆向量 → moveDir（本地 Sim 即权威）。
-    // 键盘向量优先；摇杆仅在键盘为空时兜底（触屏设备）。对话打开时抑制移动输入。
-    if (localSim && heroEid !== null) {
-      const kv = keyboard.vector();
-      const v = kv.x !== 0 || kv.y !== 0 ? kv : joyVec;
-      const hero = localSim.pawnMap.get(heroEid);
-      if (hero && (v.x !== 0 || v.y !== 0) && localSim.dialogue === null) {
-        localSim.moveDir(hero, v.x, v.y, dt);
-      }
-      // 相机跟随主角（死亡后 hero 判空 → 回退质心）
-      if (followCam) {
-        if (hero) renderer.lerpCam(hero.pos.x, hero.pos.y);
-        else {
-          const [cx, cy] = centroid(ctrl.view);
-          renderer.lerpCam(cx, cy);
-        }
-      }
+    const kv = keyboard.vector();
+    const v = kv.x !== 0 || kv.y !== 0 ? kv : joyVec;
+    if (v.x !== 0 || v.y !== 0) {
+      const rect = renderer.viewRect();
+      renderer.centerOn(rect.x + v.x * 14 * dt, rect.y + v.y * 14 * dt);
     } else if (followCam) {
       const [cx, cy] = centroid(ctrl.view);
       renderer.lerpCam(cx, cy);
     }
     renderer.frame(now);
-    // R3-HUD：把非鼠选中一并喂给 HUD（详情面板同时只描述一个对象）
     hud.frame(paused, selected, selBuilding, selHostile);
-    // P2 对话面板：本地模式读 sim.dialogue 渲染（对话状态机在 sim 权威侧）
-    renderDialogue(localSim);
-    // 联机分区块同步（line/net 收尾）：把当前视口上报给服务端做快照裁剪。
-    //
-    // 为什么放在这里而不是镜头事件里：视口同时受**平移、缩放、窗口 resize** 三者影响，
-    // 事件驱动要挂三个入口、漏一个就出现"缩小后请求了一堆看不见的块"或"放大后缺块"。
-    // 每帧一次调用的成本是纯计算（无分配、无序列化）——真正的上行由
-    // RemoteSim.setInterest 内部的区块集合指纹节流挡住，集合没变就不发。
+    rwUi?.frame();
+
     if (remoteCtl !== null) {
-      const v = renderer.viewRect();
-      // 半径取外接圆：矩形视口按圆订阅会多带一点四角，换来"任何缩放/窗口比例下都不漏块"。
-      remoteCtl.setInterest(v.x, v.y, Math.hypot(v.halfW, v.halfH));
+      const vRect = renderer.viewRect();
+      remoteCtl.setInterest(vRect.x, vRect.y, Math.hypot(vRect.halfW, vRect.halfH));
     }
   });
-  void flash;
-}
-
-/** P2 对话面板渲染（本地模式）：读 sim.dialogue + tuning.dialogues 刷 DOM。
- *  用定长 key（npcEid+dialogueId+line 数）做差分，状态没变不碰 DOM（与 HUD 面板同款纪律）。 */
-let dialogueRenderKey = '';
-function renderDialogue(sim: Sim | null): void {
-  const el = document.getElementById('hud-dialogue')!;
-  if (!sim || sim.dialogue === null) {
-    el.hidden = true;
-    dialogueRenderKey = '';
-    return;
-  }
-  const d = sim.dialogue;
-  const def = sim.tuning.dialogues[d.dialogueId];
-  const key = `${d.npcEid}:${d.dialogueId}:${def?.lines.length ?? 0}:${def?.options.length ?? 0}`;
-  if (key === dialogueRenderKey) return; // 无变化，跳过 DOM 重建
-  dialogueRenderKey = key;
-  el.hidden = false;
-  const npc = sim.pawnMap.get(d.npcEid);
-  const name = def?.name ?? npc?.name ?? 'NPC';
-  const line = def?.lines[0] ?? '';
-  (el.querySelector('.dlg-name') as HTMLElement).textContent = `💬 ${name}`;
-  (el.querySelector('.dlg-line') as HTMLElement).textContent = line;
-  const box = el.querySelector('.dlg-options')!;
-  box.innerHTML = '';
-  for (let i = 0; i < (def?.options.length ?? 0); i++) {
-    const opt = def.options[i];
-    const btn = document.createElement('button');
-    btn.className = 'dlg-opt';
-    btn.textContent = opt.label;
-    btn.onclick = () => {
-      sim.chooseOption(i);
-      dialogueRenderKey = ''; // 立即重绘（关对话/换行）
-      renderDialogue(sim);
-    };
-    box.appendChild(btn);
-  }
-  const close = el.querySelector('.dlg-close') as HTMLElement;
-  close.onclick = () => {
-    sim.closeDialogue();
-    dialogueRenderKey = '';
-    renderDialogue(sim);
-  };
 }
 
 boot().catch((err) => {
