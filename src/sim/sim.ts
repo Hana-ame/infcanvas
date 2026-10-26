@@ -6,8 +6,9 @@ import { type Tuning } from './tuning';
 import { World } from './world';
 import { RoutePlanner } from './path-plan';
 import { InfiniteChunkPathfinder } from './hpa-infinite';
-import { initPawnRimWorldProfile, enforceMaxThreeSkills } from './genetics-skills';
+import { initPawnRimWorldProfile } from './genetics-skills';
 import { ensurePawnTriads } from './triad-specialization';
+import { tickPawnBookkeeping } from './pawn-bookkeeping';
 import { SpatialHashGrid } from './spatial-grid';
 import { ensureRimWorldBuildingsRegistered, tickRimWorldBlueprintWork } from './rimworld-work';
 import { isSolidMountainAt, canStepElevationFast, canTraverseElevationWithSlope, clampPathToPlayerFog, hasSlopeAt, SLOPE_LADDER_SPEED_PENALTY_MUL, } from './rooms-power-fog';
@@ -599,86 +600,29 @@ export class Sim implements SimContext {
   issueCommand(type: string, args: Record<string, unknown> = {}, source: 'player' | 'system' = 'player'): void {
     dispatchSimCommand(this, type, args, source);
   }
-  step(dt: number): void {
-    this.time += dt;
-    this.world.now = this.time;
-    this.rebuildSpatialGrids();
-    const hasHostiles = this.hostilesList.length > 0;
-    if (hasHostiles) {
-      for (const h of this.hostilesList) h.inMeleeGrapple = false;
-    }
-    for (const p of this.pawnMap.values()) {
-      if (p.skills) {
-        if (p.skills.length > 3) p.skills = enforceMaxThreeSkills(p.skills);
-        for (const sk of p.skills) {
-          if (sk.cooldown > 0) sk.cooldown = Math.max(0, sk.cooldown - dt);
-        }
-      }
-      if (p.drafted) p.holdUntil = this.time + 10;
-      if (this.playerRimWorldMode && !p.isStranger && (p.needs.mood <= 10 || p.needs.san <= 10)) {
-        triggerColonistMentalBreak(this, p.eid, '长期心情极度低落');
-        continue;
-      }
-      let grappled = false;
-      if (hasHostiles) {
-        for (const h of this.hostilesList) {
-          const dx = h.pos.x - p.pos.x;
-          const dy = h.pos.y - p.pos.y;
-          if (dx * dx + dy * dy <= 2.56) {
-            grappled = true;
-            h.inMeleeGrapple = true;
-          }
-        }
-      }
-      p.inMeleeGrapple = grappled;
-      if (p.attackWindup !== undefined) {
-        p.attackWindup += dt;
-        p.path = [];
-        if (p.attackWindup >= (p.attackWindupTotal ?? 0.8)) {
-          if (p.attackTargetId !== undefined) {
-            const target = this.hostilesList.find((x) => x.id === p.attackTargetId);
-            if (target) {
-              const dmg = this.tuning.pawn.dmg * (this.tuning.pawn.traitDmgMul[p.trait] ?? 1);
-              this.damageHostile(target.id, Math.round(dmg));
-              this.log(`⚔ ${p.name} 蓄力出招命中敌军 #${target.id}！`);
-            }
-          }
-          p.attackWindup = undefined;
-          p.attackTargetId = undefined;
-          p.atkCd = this.tuning.pawn.atkCd;
-        }
-      }
-      if (p.activeWork && p.activeWork.kind !== 'butcher' && p.activeWork.kind !== 'haul_corpse') {
-        p.activeWork.workContinuousSec = (p.activeWork.workContinuousSec ?? 0) + dt;
-        let fatigue = 1.0;
-        if (p.activeWork.workContinuousSec > 10) {
-          fatigue = Math.max(0.2, 1.0 - (p.activeWork.workContinuousSec - 10) * 0.035);
-        }
-        if (p.activeWork.workContinuousSec > 12 && this.rng() < 0.15 * dt) {
-          p.activeWork.workProgress = Math.max(0, p.activeWork.workProgress - 2.5 * dt);
-        }
-        p.activeWork.workProgress += dt * 12 * fatigue;
-        if (p.activeWork.workProgress >= p.activeWork.workTotal) {
-          p.activeWork = undefined;
-        }
-      }
-    }
+  /** 全局环境结算链：跨包 tick（风化/蔓延/屠宰搬运/蓝图施工/捡拾指令）。
+   *  原先在 step() 与 stepChunked() 里各硬编码一份，已收敛为单一实现。 */
+  private tickWorldHooks(dt: number): void {
     tickOutdoorItemWeathering(this, dt);
     tickPlantSpread(this, dt);
     tickRimWorldButcherHaul(this, dt);
     tickRimWorldBlueprintWork(this, dt);
     tickRimWorldScavengeOrders(this, dt);
+  }
+  step(dt: number): void {
+    this.time += dt;
+    this.world.now = this.time;
+    this.rebuildSpatialGrids();
+    tickPawnBookkeeping(this, dt);
+    this.tickWorldHooks(dt);
     for (const sys of this.systems) sys.update?.(dt);
   }
   stepChunked(dt: number, activeChunks: ReadonlySet<number> | null): void {
     this.time += dt;
     this.world.now = this.time;
     this.rebuildSpatialGrids();
-    tickOutdoorItemWeathering(this, dt);
-    tickPlantSpread(this, dt);
-    tickRimWorldButcherHaul(this, dt);
-    tickRimWorldBlueprintWork(this, dt);
-    tickRimWorldScavengeOrders(this, dt);
+    tickPawnBookkeeping(this, dt);
+    this.tickWorldHooks(dt);
     for (const sys of this.systems) {
       if (activeChunks === null) sys.update?.(dt);
       else if (sys.updateChunked) sys.updateChunked(dt, activeChunks);
