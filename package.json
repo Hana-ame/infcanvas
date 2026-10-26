@@ -11,7 +11,8 @@
     "test": "vitest run",
     "play": "tsx scripts/play.ts",
     "server": "tsx src/server/index.ts",
-    "mods": "tsx scripts/mods.ts"
+    "mods": "tsx scripts/mods.ts",
+    "check:frontend": "bash scripts/check-pure-frontend.sh"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

@@ -28,6 +28,7 @@ import {
 import { Renderer } from './render';
 import { Hud } from './hud';
 import { RemoteSim } from './remote';
+import { parseClientMode } from './mode';
 import { makeHeroControl, type HeroControl } from './hero-control';
 import { LocalView } from './local-view';
 import type { WorldView } from './view';
@@ -48,7 +49,11 @@ async function boot() {
   });
   document.getElementById('app')!.appendChild(app.canvas);
 
-  const remoteArg = new URLSearchParams(location.search).get('remote');
+  // 模式解析（本地 / 本地连远程）—— 见 client/mode.ts 的注释。
+  // 「本地模式不使用 ws」是一条硬不变量，本行以下所有 remote 相关的构造、
+  // connect、sendInput 都必须走 mode.kind === 'remote' 分支，本地分支禁触。
+  // 这个不变量由 src/__tests__/mode.test.ts 锁死：URL 判定错、路径误接 ws，测试会红。
+  const mode = parseClientMode(location.search);
   const selected = new Set<Eid>();
   let selBuilding: string | null = null;
   let selHostile: number | null = null;
@@ -73,7 +78,7 @@ async function boot() {
   const keyboard = new KeyboardInput();
   let joyVec = { x: 0, y: 0 };
 
-  if (remoteArg) {
+  if (mode.kind === 'remote') {
     document.title = 'InfCanvas · RimWorld 联机指挥与对抗';
     for (const id of ['btn-save', 'btn-load', 'btn-new']) {
       const el = document.getElementById(id);
@@ -84,7 +89,7 @@ async function boot() {
     remote.onConnectionChange = (connected) => {
       if (banner) banner.hidden = connected;
     };
-    await remote.connect(remoteArg).catch(() => undefined);
+    await remote.connect(mode.url).catch(() => undefined);
     // P3 无感：连上即认领一只鼠，之后 WASD/J/E 与本地模式同键同义。
     // 失败（服务器没起/鉴权失败）时 claim 返回 reason='disconnected'，
     // heroCtl.eid 保持 null = 观察模式，不会出现"能按键却没反应"的假象。
