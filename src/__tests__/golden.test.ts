@@ -40,17 +40,31 @@ import { Sim, fingerprint, fingerprintFields, snapshotOf, loadSim } from '../sim
 import { ModRegistry } from '../mods';
 
 /**
- * 固定场景表：3 个 seed × 固定 tick 数（玩法基线，与 balance/bench 的 900s 对齐）。
+ * 固定场景表：3 个 seed × 固定 tick 数（玩法基线，与 balance/bench 的 900s 对齐），
+ * 外加 1 条**规模档**（24 鼠）。
  *
  * 为什么 ≥3 个 seed：单 seed 只是"这一个地形"的读数。地形由 seed 哈希推导，
  * 不同 seed 的地形/特征/寻路热点完全不同，行为分叉往往只在某类地形上触发。
  * 多 seed = 覆盖多类世界。
+ *
+ * pawns 显式写全（不省略）：场景 key 由 `seed@ticks[@pawns]p` 拼出，
+ * 留空会让 TS 推断出联合类型里缺该属性，key 就会拼成 `42@900@undefinedp`。
  */
-const SCENARIOS = [
-  { seed: 42, ticks: 900 },
-  { seed: 7, ticks: 900 },
-  { seed: 2026, ticks: 900 },
-] as const;
+const SCENARIOS: Array<{ seed: number; ticks: number; pawns: number }> = [
+  { seed: 42, ticks: 900, pawns: 4 },
+  { seed: 7, ticks: 900, pawns: 4 },
+  { seed: 2026, ticks: 900, pawns: 4 },
+  // ⚠ 第 4 条是**规模档**：24 鼠（对齐 bench.ts 的 --pawns=24，玩家真实会遇到的
+  //   殖民规模）。前 3 条都是出厂 4 鼠——4 鼠只占 per-pawn 工作量的 1/6，大量
+  //   「只在人多时才触发」的分叉（群集路径冲突、寻路热点、资源争抢、技能上限）
+  //   在 4 鼠场景里根本不发生。
+  //
+  //   2026-10-26 的教训正是这一条：RimWorld 内容线合并（+70k 行）改变了 24 鼠玩法的
+  //   实测读数（存活鼠 26→20、建筑 149→152、库存 4443→3069），而 golden **一条不红**
+  //   ——因为 golden 从不跑 24 鼠，perf A/B 能看见却只是 continue-on-error 的报告任务。
+  //   现在它进硬门禁：谁改动了 24 鼠规模的行为，这条会红，必须写明为什么变。
+  { seed: 2026, ticks: 900, pawns: 24 },
+];
 
 /**
  * golden 常量表：key = `${seed}@${ticks}`，value = 该场景跑完后的权威状态指纹。
@@ -332,34 +346,48 @@ const GOLDEN: Record<string, string> = {
   '42@900': 'fp_cc302d2f',
   '7@900': 'fp_614b52d2', // R4 audit: herbCost=0 deadlock fix changed simulation
   '2026@900': 'fp_122ecc8d',
+  // ⚠ 首次建立（2026-10-26）——24 鼠规模档，见上方 SCENARIOS 的注释。
+  //   基线来源：本地连跑 3 次同进程 + 3 次跨进程独立 node，均得 fp_0c80ab0c。
+  //   注意这条与 '2026@900' 不是同一世界：4 鼠只占 per-pawn 工作量 1/6，
+  //   24 鼠场景下会触发不同的寻路热点与资源争抢，指纹没有理由相同。
+  '2026@900@24p': 'fp_0c80ab0c',
 };
 
 /** 跑一个场景：固定 seed 跑固定 tick 数，返回指纹（不存档直跑）。 */
-function runStraight(seed: number, ticks: number): Sim {
-  const sim = new Sim({ seed, registry: ModRegistry.default() });
+function runStraight(seed: number, ticks: number, pawns = 4): Sim {
+  const registry = ModRegistry.default();
+  if (pawns !== 4) {
+    // 与 bench.ts:129 同一口径：overrideTuning 改 bootstrap.pawnCount，
+    // 数值进表不改内核。registry 每次新建，不跨场景复用（防上轮残留污染读数）。
+    registry.overrideTuning((t) => {
+      t.bootstrap.pawnCount = pawns;
+    });
+  }
+  const sim = new Sim({ seed, registry });
   sim.run(ticks);
   return sim;
 }
 
 describe('golden-hash 门禁（确定性基线）', () => {
-  for (const { seed, ticks } of SCENARIOS) {
-    const key = `${seed}@${ticks}`;
+  for (const { seed, ticks, pawns } of SCENARIOS) {
+    const key = pawns === 4 ? `${seed}@${ticks}` : `${seed}@${ticks}@${pawns}p`;
+    const label = pawns === 4 ? `${ticks} tick` : `${ticks} tick / ${pawns} 鼠`;
 
-    it(`指纹基线：seed ${seed} 跑 ${ticks} tick ≡ golden 常量`, () => {
-      const sim = runStraight(seed, ticks);
+    it(`指纹基线：seed ${seed} 跑 ${label} ≡ golden 常量`, () => {
+      const sim = runStraight(seed, ticks, pawns);
       const fp = fingerprint(sim);
-      // 期望值取自下方 GOLDEN 表。首次建立门禁时会先失败并把实际值打进
+      // 期望值取自上方 GOLDEN 表。首次建立门禁时会先失败并把实际值打进
       // 控制台/CI 日志 —— 这就是"从日志读回真实指纹"的来源。
       // 失败信息里额外打逐字段摘要：万一 32 位哈希万一碰撞，可人工对账定位字段。
-      expect(fp, `seed=${seed} ${ticks}tick 指纹与 golden 不一致。逐字段：\n${JSON.stringify(fingerprintFields(sim), null, 2)}`).toBe(
+      expect(fp, `seed=${seed} ${label} 指纹与 golden 不一致。逐字段：\n${JSON.stringify(fingerprintFields(sim), null, 2)}`).toBe(
         GOLDEN[key],
       );
     });
 
-    it(`重复跑（同 seed 同 tick）指纹必须一致：seed ${seed}（确定性不变量）`, () => {
+    it(`重复跑（同 seed 同 tick 同规模）指纹必须一致：seed ${seed} ${label}（确定性不变量）`, () => {
       // 同一进程内跑两遍。模拟必须无隐藏的跨局残留/时钟/随机态。
-      const a = fingerprint(runStraight(seed, ticks));
-      const b = fingerprint(runStraight(seed, ticks));
+      const a = fingerprint(runStraight(seed, ticks, pawns));
+      const b = fingerprint(runStraight(seed, ticks, pawns));
       expect(a).toBe(b);
     });
   }
