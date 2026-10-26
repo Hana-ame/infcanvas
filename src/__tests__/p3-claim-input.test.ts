@@ -254,6 +254,36 @@ describe('P3 权威输入消费（每 tick 消费 claim 的鼠）', () => {
     }
   });
 
+  it('松键（input 0,0）→ 停下且不再沿上个方向滑行', async () => {
+    const h = await up();
+    try {
+      const c = await connect(h);
+      try {
+        sendClaim(c, {});
+        const ack = await c.next<Ack>('claimAck');
+        const p = h.sim.pawn(ack.d.eid!)!;
+        const x0 = p.pos.x;
+
+        sendInput(c, 1, 0);
+        await sleep(200); // 4 个 tick
+        const x1 = p.pos.x;
+        expect(x1).toBeGreaterThan(x0); // 先确认它确实在动
+
+        sendInput(c, 0, 0); // 松键
+        await sleep(220); // ≥4 个 tick：足够让 (0,0) 被消费、停下
+        const x2 = p.pos.x;
+        expect(x2).toBeGreaterThanOrEqual(x1);
+
+        await sleep(220); // 再 4 个 tick
+        expect(p.pos.x).toBeCloseTo(x2, 6); // 不再滑行
+      } finally {
+        c.close();
+      }
+    } finally {
+      await h.close();
+    }
+  });
+
   it('未认领的连接发 input 无效：不移动、不偷偷认领', async () => {
     const h = await up();
     try {

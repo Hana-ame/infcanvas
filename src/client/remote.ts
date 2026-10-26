@@ -23,7 +23,7 @@ import type { TileInspect, ChunkTerrain, WorldView } from './view';
 import { TERRAIN_NAME } from './presentation';
 import { buildBuildingDetail, buildColonySummary, buildHostileDetail, buildPawnDetail } from './hud-faces';
 import { K_TAG_FIRE } from '../mods/contracts';
-import type { ClientMsg, FullState, ServerMsg } from '../shared/protocol';
+import type { ClientMsg, ClaimAckMsg, FullState, ServerMsg } from '../shared/protocol';
 import { WATCHDOG_MS } from '../shared/protocol';
 import {
   CHUNK_SIZE,
@@ -92,6 +92,14 @@ export class RemoteSim implements WorldView {
   private hudScratch: Record<string, number> = {};
   _tuning: Tuning = DEFAULT_TUNING;
   connected = false;
+  /**
+   * P3 等 claimAck 的挂起请求队列（FIFO）。
+   *
+   * 服务端对每条 claim 同步应答（claimPawn 在消息处理器里跑完），所以应答顺序
+   * 与上行顺序一致——FIFO 出队即可，不需要按 eid 匹配。重连清空队列，避免
+   * 旧连接的 Promise 永远挂着。
+   */
+  private pendingClaims: ((ack: ClaimAckMsg['d']) => void)[] = [];
 
   private ws: WebSocket | null = null;
   onCmdUp?: (c: { type: string; args?: Record<string, unknown> }) => void; // 测试钩子
@@ -175,6 +183,8 @@ export class RemoteSim implements WorldView {
       ws.onclose = (ev) => {
         this.connected = false;
         this.stopWatchdog();
+        // 断线时把挂起的 claim 请求用失败结果收口：让它们永远挂着会让调用方 await 到天荒地老
+        for (const w of this.pendingClaims.splice(0)) w({ ok: false, reason: 'disconnected' });
         this.onConnectionChange?.(false);
         // 鉴权失败 close(1008)：重连多少次都不会成功，白白耗退避计时器
         if (ev?.code === 1008) return;
@@ -264,6 +274,12 @@ export class RemoteSim implements WorldView {
     // ping：只更新心跳基准（onmessage 已统一刷过），不触碰任何状态。
     // 显式 return 是为了让它不落进下面的 delta/full 分支（ping 没有 d.pawns）。
     if (msg.t === 'ping') return;
+    if (msg.t === 'claimAck') {
+      // FIFO 出队：服务端对每条 claim 同步应答，应答顺序 = 上行顺序
+      const wait = this.pendingClaims.shift();
+      wait?.(msg.d);
+      return;
+    }
     if (msg.t === 'welcome') {
       this._tuning = msg.d.tuning;
       // 客户端本地世界：只做纯函数查询（tile/feature），不参与模拟
@@ -394,6 +410,40 @@ export class RemoteSim implements WorldView {
     const msg: ClientMsg = { t: 'cmd', c: { type, args } };
     this.onCmdUp?.({ type, args });
     this.ws?.send(JSON.stringify(msg));
+  }
+
+  /**
+   * P3 上行高频输入（移动方向 / 一次性动作）：客户端只声明**意图**，
+   * 服务端每 tick 消费最新一份（见 game-server consumeClientInputs）。
+   *
+   * 不走 sendCommand：input 不进 SERVER_COMMANDS 白名单（它不是攻击流量、
+   * 也不是玩法命令），且 20-50Hz 的频率不该碰命令去重逻辑。
+   * 未认领时服务端静默忽略——调用方不必担心"没角色就按了键"。
+   */
+  sendInput(vx: number, vy: number, act?: 'attack' | 'interact'): void {
+    const msg: ClientMsg = { t: 'input', d: { vx, vy, act } };
+    this.ws?.send(JSON.stringify(msg));
+  }
+
+  /**
+   * P3 请求认领一只鼠，等 claimAck（见 game-server claimPawn）。
+   *
+   * eid 缺省 = 服务端分配第一只未认领的鼠——客户端不必知道世界里有多少只鼠。
+   * 失败 reason：taken / noSuchPawn / noFreePawn / disconnected。
+   *
+   * 不缓存结果：认领是低频事件（建连一次、换角色一次），
+   * 缓存反而会和断线释放语义打架。
+   */
+  claim(eid?: number): Promise<ClaimAckMsg['d']> {
+    return new Promise((resolve) => {
+      if (!this.connected || !this.ws) {
+        resolve({ ok: false, reason: 'disconnected' });
+        return;
+      }
+      this.pendingClaims.push(resolve);
+      const msg: ClientMsg = { t: 'claim', d: eid === undefined ? {} : { eid } };
+      this.ws.send(JSON.stringify(msg));
+    });
   }
 
   /**
