@@ -16,7 +16,7 @@ import { createServer, type Server as HttpServer } from 'node:http';
 import { WebSocketServer, WebSocket } from 'ws';
 import { Sim } from '../sim';
 import type { ModRegistry } from '../mods';
-import type { FullState, ServerMsg } from '../shared/protocol';
+import type { ClientMsg, FullState, ServerMsg } from '../shared/protocol';
 import {
   PING_MS,
   SERVER_COMMANDS,
@@ -85,6 +85,35 @@ export interface GameServerHandle {
   /** R1-5 最近一次存档结果（CLI 打印用；null = 还没存过） */
   lastSave(): { name: string; path: string } | null;
   close(): Promise<void>;
+  /**
+   * 开一条本地（同进程）客户端通道。与远程 WS 客户端共用 handleConnection，
+   * 语义逐条一致（见 localConnect 实现处的说明）。
+   */
+  localConnect(): {
+    send(msg: ClientMsg): void;
+    onMessage(cb: (msg: ServerMsg) => void): void;
+    close(): void;
+  };
+}
+
+/**
+ * 连接通道抽象（P3 无感：远程与本地同一套语义）。
+ *
+ * 为什么抽象而不是只用 `ws.WebSocket`：`createGameServer` 要同时服务远程 WS 客户端
+ * 与**同进程本地客户端**（见 localConnect）。两者差别只在传输层，游戏语义完全一致；
+ * 把通道形状收窄到处理器真正用到的四个成员，本地通道就**不依赖 `ws` 包**（node-only），
+ * 在测试或嵌入式环境里也能挂上。
+ *
+ * readyState 用 number：`send()` 只判 `=== WebSocket.OPEN`（=1），本地通道按同一约定。
+ * on 的回调签名故意放宽（...args: unknown[]）——ws 的 'message' 给 (Buffer, isBinary)、
+ * 'close' 给 (code, reason)，本地通道各自只传一个字符串或什么都不传；
+ * 处理器自己用 String(raw) 解析，不需要更窄的类型。
+ */
+interface SockLike {
+  readyState: number;
+  send(data: string): void;
+  close(code?: number, reason?: string): void;
+  on(event: string, cb: (...args: unknown[]) => void): void;
 }
 
 interface ClientCtx {
@@ -95,7 +124,7 @@ interface ClientCtx {
    * 要随存档落盘的持久字段，得是一个稳定、可 JSON 序列化的字符串。
    */
   id: number;
-  sock: WebSocket;
+  sock: SockLike;
   lastPawnJson: Map<string, string>;
   sentEvents: number;
   /**
@@ -318,8 +347,8 @@ export function createGameServer(opts: GameServerOptions): Promise<GameServerHan
    * 不能回 401（HTTP 响应在 upgrade 阶段就该给，那属于 'upgrade' 事件的事）。
    * 未配置 token 时直接放行，保证本地开发行为零变化。
    */
-  wss.on('connection', (sock, req) => {
-    const verdict = authorizeHandshake(opts.serverToken, req.url ?? '/');
+  function handleConnection(sock: SockLike, req?: { url?: string }): void {
+    const verdict = authorizeHandshake(opts.serverToken, req?.url ?? '/');
     if (!verdict.ok) {
       sock.close(1008, verdict.reason ?? 'unauthorized');
       return; // 不入 clients 集合：这个连接从一开始就不存在
@@ -468,7 +497,75 @@ export function createGameServer(opts: GameServerOptions): Promise<GameServerHan
 
     sock.on('close', () => disconnect(ctx));
     sock.on('error', () => disconnect(ctx));
-  });
+  }
+
+  /** 远程 WS 连接入口：与 localConnect 共用同一条 handleConnection。 */
+  wss.on('connection', handleConnection);
+
+  /**
+   * 本地（同进程）客户端通道：不走网络，直接与权威 sim 对接。
+   *
+   * 与远程 WS 客户端**共用 handleConnection**——这是"无感"的核心：同一段
+   * 命令白名单、参数校验、claim 认领、input 消费、区块裁剪、心跳，两种传输
+   * 拿到的是逐条一致的语义，唯一差别是消息走进程内回调而不是 TCP。
+   *
+   * 为什么值得单独留一条通道而不是只用 WS：
+   *  - `ws` 是 node-only；本地通道不依赖它，测试/嵌入式都能用；
+   *  - 无握手、无 JSON 往返延迟、不占端口，是本地调试与无头测试的最短路径；
+   *  - 断线语义一致（close() 走 disconnect → 释放认领），不产生幽灵归属。
+   *
+   * 用法：`const lc = h.localConnect(); lc.send({t:'claim', d:{}}); lc.onMessage(...)`
+   */
+  function localConnect(): {
+    send(msg: ClientMsg): void;
+    onMessage(cb: (msg: ServerMsg) => void): void;
+    close(): void;
+  } {
+    const onMessage: ((raw?: string) => void)[] = [];
+    const onClose: (() => void)[] = [];
+    /** 未挂 onMessage 前到达的下行先缓冲（welcome 在 handleConnection 里立刻发出） */
+    const queued: ServerMsg[] = [];
+    let outbound: ((msg: ServerMsg) => void) | null = null;
+    /** 服务端侧：满足 SockLike，喂给 handleConnection */
+    const serverSide: SockLike = {
+      readyState: WebSocket.OPEN,
+      send: (data) => {
+        let msg: ServerMsg;
+        try {
+          msg = JSON.parse(data) as ServerMsg;
+        } catch {
+          return; // 不合法的下行不该打崩本地通道（与 ws 的错误语义对称）
+        }
+        if (outbound) outbound(msg);
+        else queued.push(msg);
+      },
+      close: () => {
+        if (serverSide.readyState === WebSocket.CLOSED) return;
+        serverSide.readyState = WebSocket.CLOSED;
+        for (const cb of onClose) cb(); // 只触发 'close'
+      },
+      on: (event, cb) => {
+        // 两类回调必须分开存：客户端 send 只该触发 'message'，close 只该触发 'close'。
+        // 混在一个数组里会导致「发一条消息 = 顺手断一次线」，claim 刚写上就被 disconnect 清掉。
+        if (event === 'message') onMessage.push((raw) => cb(raw));
+        else if (event === 'close') onClose.push(() => cb());
+      },
+    };
+    // 注册进连接表：welcome 会立刻下行（此时 onMessage 未挂，进 queued，见上）
+    handleConnection(serverSide);
+    /** 客户端侧：本地调用方持有的句柄 */
+    return {
+      send: (msg) => {
+        if (serverSide.readyState === WebSocket.CLOSED) return;
+        for (const cb of onMessage) cb(JSON.stringify(msg));
+      },
+      onMessage: (cb) => {
+        outbound = cb;
+        for (const m of queued.splice(0)) cb(m); // 补发注册前到达的下行
+      },
+      close: () => serverSide.close(),
+    };
+  }
 
   // ---- 心跳（R1-1）：无条件广播，让客户端能判定链路活性 ----
   // 无条件而非「有变化才发」：看门狗要的是「链路还活着」的证据，
@@ -544,7 +641,13 @@ export function createGameServer(opts: GameServerOptions): Promise<GameServerHan
         ctx.lastInput = null;
         continue;
       }
-      if (inp.vx === 0 && inp.vy === 0) continue; // 无操作意图：不推动、不清零
+      if (inp.vx === 0 && inp.vy === 0) {
+        // 松键 = 停下。必须清 lastInput：继续留着会让鼠按上一个非零方向一直滑
+        // （客户端每帧上报最新方向，松键时上报 (0,0)）。不清零的话"停下"这个
+        // 意图在服务端根本不存在——这是无感的前置条件，不是优化。
+        ctx.lastInput = null;
+        continue;
+      }
       sim.moveDir(p, inp.vx, inp.vy, dt);
     }
   }
@@ -738,6 +841,7 @@ export function createGameServer(opts: GameServerOptions): Promise<GameServerHan
         clientCount: () => clients.size,
         rejectedCommands: () => rejected,
         lastSave: () => lastSaved,
+        localConnect,
         async close(): Promise<void> {
           clearInterval(tickTimer);
           clearInterval(deltaTimer);

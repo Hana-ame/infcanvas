@@ -28,6 +28,7 @@ import {
 import { Renderer } from './render';
 import { Hud } from './hud';
 import { RemoteSim } from './remote';
+import { makeHeroControl, type HeroControl } from './hero-control';
 import { LocalView } from './local-view';
 import type { WorldView } from './view';
 import { KeyboardInput, VirtualJoystick } from './input';
@@ -67,6 +68,8 @@ async function boot() {
   let remoteCtl: RemoteSim | null = null;
   let localSim: Sim | null = null;
   let heroEid: Eid | null = null;
+  /** P3 无感：主角操控的传输无关路径（WASD/J/E 只跟它打交道） */
+  let heroCtl: HeroControl | null = null;
   const keyboard = new KeyboardInput();
   let joyVec = { x: 0, y: 0 };
 
@@ -82,6 +85,16 @@ async function boot() {
       if (banner) banner.hidden = connected;
     };
     await remote.connect(remoteArg).catch(() => undefined);
+    // P3 无感：连上即认领一只鼠，之后 WASD/J/E 与本地模式同键同义。
+    // 失败（服务器没起/鉴权失败）时 claim 返回 reason='disconnected'，
+    // heroCtl.eid 保持 null = 观察模式，不会出现"能按键却没反应"的假象。
+    void remote.claim().then((ack) => {
+      if (ack.ok && typeof ack.eid === 'number') {
+        heroEid = ack.eid;
+        selected.add(ack.eid);
+        heroCtl?.setEid(ack.eid);
+      }
+    });
     ctrl = {
       view: remote,
       tick() {},
@@ -208,6 +221,11 @@ async function boot() {
       paused: () => paused,
     };
   }
+
+  // P3 无感：本地/联机共用一条意图路径。sim 优先（本地模式即使挂着 remoteCtl
+  // 变量也不该误走网络），所以这里传两个、让 hero-control 自己判。
+  heroCtl = makeHeroControl({ sim: localSim, remote: remoteCtl });
+  if (heroEid !== null) heroCtl.setEid(heroEid);
 
   let followCam = false;
   let rwUi: RimWorldUiController | null = null;
@@ -382,12 +400,12 @@ async function boot() {
       paused = !paused;
       rwUi?.forceRefresh();
     }
-    if (e.code === 'KeyJ' && localSim && heroEid !== null) {
-      localSim.directAttack(heroEid);
-    }
-    if (e.code === 'KeyE' && localSim) {
-      if (localSim.dialogue) localSim.closeDialogue();
-      else if (heroEid !== null) localSim.interact(heroEid);
+    // P3 无感：J/E 走同一条意图路径（本地 directAttack/interact，联机上行 input）
+    if (e.code === 'KeyJ') heroCtl?.act('attack');
+    if (e.code === 'KeyE') {
+      // 对话是纯客户端 UI 态（联机模式不存在），所以只有本地分支先看它
+      if (localSim?.dialogue) localSim.closeDialogue();
+      else heroCtl?.act('interact');
     }
   });
 
@@ -405,8 +423,19 @@ async function boot() {
     const kv = keyboard.vector();
     const v = kv.x !== 0 || kv.y !== 0 ? kv : joyVec;
     if (v.x !== 0 || v.y !== 0) {
-      const rect = renderer.viewRect();
-      renderer.centerOn(rect.x + v.x * 14 * dt, rect.y + v.y * 14 * dt);
+      // P3 无感：WASD 驱动主角（本地 moveDir / 联机上行 input），相机跟着主角走。
+      // 这是 input.ts 从 P1 就写下的设计口径（"方向向量喂给 sim.moveDir"），
+      // 此前一直没接线、WASD 一直在平移相机。相机平移另有中键/右键/Ctrl+左键
+      // 拖拽（render.ts 的 pan 分支），不吃 WASD。
+      heroCtl?.move(v.x, v.y, dt);
+      if (heroEid !== null) {
+        for (const q of ctrl.view.pawns()) {
+          if (q.eid === heroEid) {
+            renderer.lerpCam(q.pos.x, q.pos.y, 0.18); // 比默认 0.06 快，追上 4.5 格/秒
+            break;
+          }
+        }
+      }
     } else if (followCam) {
       const [cx, cy] = centroid(ctrl.view);
       renderer.lerpCam(cx, cy);
