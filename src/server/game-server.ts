@@ -23,6 +23,8 @@ import {
   validateAdminArgs,
   validInterest,
   validMoveArgs,
+  validClaim,
+  validInput,
   HUD_SCRATCH_KEYS,
 } from '../shared/protocol';
 import { chunkKeyToXY, chunksForInterest, tileChunkKey, toChunkCoords, type ChunkCoord } from '../shared/chunks';
@@ -86,6 +88,13 @@ export interface GameServerHandle {
 }
 
 interface ClientCtx {
+  /**
+   * P3 客户端编号（从 1 起，每服务器实例自增）。写进 PawnState.controlledBy
+   * 作为归属标记，断线释放时按它匹配（见 releaseClaim）。
+   * 不复用 socket 引用当 key：断线后 socket 已 close，但 controlledBy 是
+   * 要随存档落盘的持久字段，得是一个稳定、可 JSON 序列化的字符串。
+   */
+  id: number;
   sock: WebSocket;
   lastPawnJson: Map<string, string>;
   sentEvents: number;
@@ -137,6 +146,8 @@ export function createGameServer(opts: GameServerOptions): Promise<GameServerHan
   const wss = new WebSocketServer({ server: httpServer });
 
   const clients = new Set<ClientCtx>();
+  /** P3 客户端编号自增器（见 ClientCtx.id）。 */
+  let nextClientId = 1;
   let rejected = 0;
   /** R1-5 最近一次存档元信息（CLI 打印用） */
   let lastSaved: { name: string; path: string } | null = null;
@@ -227,6 +238,81 @@ export function createGameServer(opts: GameServerOptions): Promise<GameServerHan
   }
 
   /**
+   * P3 认领一只鼠（玩家 ↔ pawn 绑定，多人选型 A）。
+   *
+   * eid 缺省 = server 分配一只**未认领**的鼠（首连即分配，客户端不必知道世界里
+   * 有几只鼠）；给了 eid = 认领那只，已被别人占则拒绝 reason='taken'。
+   *
+   * 归属写在 PawnState.controlledBy（types.ts:71），不只记在 ClientCtx——
+   * controlledBy 是持久归属标记，sim-commands.ts:81,391 已按它排除 AI 接管与
+   * 对话主角。只记连接态会让"这只鼠有人"对其他系统和存档都不可见。
+   *
+   * 幂等：先 dropClaim 再认领。不做这一步，客户端反复 claim 会留下一串
+   * 被同一 id 认领的孤儿鼠（受控但没人输入）。
+   */
+  function claimPawn(ctx: ClientCtx, eid?: number): void {
+    const ack = (ok: boolean, extra: { eid?: number; reason?: string } = {}): void =>
+      send(ctx, { t: 'claimAck', d: { ok, ...extra } });
+
+    dropClaim(ctx);
+
+    let target: PawnState | undefined;
+    if (eid === undefined) {
+      // pawns() 是稳定遍历序（按 nextEid 递增），所以"第一只未认领"可预测
+      for (const p of sim.pawns()) {
+        if (p.controlledBy === undefined) {
+          target = p;
+          break;
+        }
+      }
+    } else {
+      target = sim.pawn(eid);
+    }
+
+    if (!target) {
+      ack(false, { reason: eid === undefined ? 'noFreePawn' : 'noSuchPawn' });
+      return;
+    }
+    if (target.controlledBy !== undefined) {
+      ack(false, { reason: 'taken' });
+      return;
+    }
+    target.controlledBy = String(ctx.id);
+    ctx.claimedEid = target.eid;
+    // 进事件流：认领是可见的世界事件（客户端除了 claimAck 之外只有这里能看见
+    // 别人占了谁）。不消费 rng，不影响确定性。
+    sim.log(`🎮 客户端 #${ctx.id} 认领了 ${target.name}（#${target.eid}）`);
+    ack(true, { eid: target.eid });
+  }
+
+  /**
+   * 清掉这条连接当前持有的认领（幂等；**不**动 clients 集合）。
+   *
+   * 归属必须按 id 匹配再清（而不是"这只鼠属于谁就清谁"）：若别的连接已经
+   * 接手，不该把它刚认领的鼠误清掉。
+   */
+  function dropClaim(ctx: ClientCtx): void {
+    const eid = ctx.claimedEid;
+    if (eid === null) return;
+    ctx.claimedEid = null;
+    const p = sim.pawn(eid);
+    if (p && p.controlledBy === String(ctx.id)) p.controlledBy = undefined;
+  }
+
+  /**
+   * 断线清理：释放认领 + 移出连接集合。close 与 error 可能各触发一次，两次都安全。
+   *
+   * 断线即释放是**刻意取舍**，不是遗漏：连接断开后它的输入不再被消费，若不清
+   * controlledBy，那只鼠会被一个已死的 id 永久占住、别人无法认领——重连几轮
+   * 整局可用的鼠就都被幽灵占光了。代价是刷新页面会丢角色；要保留角色得先有
+   * "踢人/移交"命令（未做，P3 边界）。
+   */
+  function disconnect(ctx: ClientCtx): void {
+    dropClaim(ctx);
+    clients.delete(ctx);
+  }
+
+  /**
    * R1-2 握手鉴权。ws 的 'connection' 事件**晚于** upgrade 完成——
    * 此时拿到的已经是握手后的 socket，所以只能立刻 close(1008) 表示拒绝，
    * 不能回 401（HTTP 响应在 upgrade 阶段就该给，那属于 'upgrade' 事件的事）。
@@ -239,6 +325,7 @@ export function createGameServer(opts: GameServerOptions): Promise<GameServerHan
       return; // 不入 clients 集合：这个连接从一开始就不存在
     }
     const ctx: ClientCtx = {
+      id: nextClientId++,
       sock,
       lastPawnJson: new Map(),
       sentEvents: 0,
@@ -297,6 +384,36 @@ export function createGameServer(opts: GameServerOptions): Promise<GameServerHan
         send(ctx, { t: 'interestAck', d: { x: d.x, y: d.y, r: d.r, chunks: keys.length } });
         return;
       }
+
+      /**
+       * claim：认领一只鼠（P3 多人选型 A）。
+       *
+       * **不进命令白名单**——理由与 interest 同：它不改世界状态，只改"这条连接
+       * 绑定了哪只鼠"，且不该计入 rejectedCommands（那是"是否有人在攻击服务器"
+       * 的计数）。坏形状静默丢包：客户端 claim 坏了会表现为"始终观察模式"，
+       * 而不是崩溃。
+       */
+      if (m?.t === 'claim') {
+        if (!validClaim(m.d)) return;
+        claimPawn(ctx, m.d.eid);
+        return;
+      }
+
+      /**
+       * input：高频输入上行（P3，20-50Hz）。客户端只声明**意图**，绝不直写坐标。
+       *
+       * 三道闸：形状校验（validInput：向量有限 + 长度 ≤1，防超大向量把鼠甩飞）；
+       * 认领前置（未认领 = 观察模式，不能操作任何鼠）；覆盖式存储（服务端每 tick
+       * 在 consumeClientInputs 里消费最新一条，20-50Hz 的上行与 tick 解耦）。
+       *
+       * 动作意图（act）与移动意图语义不同：act 是一次性脉冲，消费即清；
+       * vx/vy 是持续意图，直到下一条 input 覆盖——按下不动就等于停住。
+       */
+      if (m?.t === 'input') {
+        if (!validInput(m.d) || ctx.claimedEid === null) return;
+        ctx.lastInput = { vx: m.d.vx, vy: m.d.vy, act: m.d.act };
+        return;
+      }
       if (m?.t !== 'cmd' || typeof m.c?.type !== 'string') {
         rejected++;
         return;
@@ -349,8 +466,8 @@ export function createGameServer(opts: GameServerOptions): Promise<GameServerHan
       sim.issueCommand(type, args, 'player');
     });
 
-    sock.on('close', () => clients.delete(ctx));
-    sock.on('error', () => clients.delete(ctx));
+    sock.on('close', () => disconnect(ctx));
+    sock.on('error', () => disconnect(ctx));
   });
 
   // ---- 心跳（R1-1）：无条件广播，让客户端能判定链路活性 ----
@@ -395,9 +512,48 @@ export function createGameServer(opts: GameServerOptions): Promise<GameServerHan
    * 所以这里的"分片"= **按区块决定工作集**，而"预算"体现为工作集大小本身
    * （客户端订阅半径即可调）。这是刻意不做的取舍，不是遗漏。
    */
+  /**
+   * P3 权威输入消费：把各连接的最新输入意图作用在各自认领的鼠上。
+   *
+   * 在 stepChunked **之前**调用——moveDir 改的是坐标，必须让本 tick 的系统
+   * 轮看到新位置（behavior 的 pathfinding/social 都读 p.pos）；如果放在之后，
+   * 玩家这一 tick 的位移要等到下一 tick 才被系统处理，手感会掉一帧。
+   *
+   * 顺序是确定的：clients 是 Set<ClientCtx>，按 connection 到达序迭代；
+   * 每条连接贡献至多一次 moveDir + 至多一次动作。多个玩家同时打同一只敌袭
+   * 时的伤害结算顺序 = 连接到达序，确定性可接受（不保证"先到先打中"以外的语义）。
+   *
+   * rng 消费：directAttack/interact 走 rollSuccess 会消费权威 rng 单流——这是
+   * 多人玩法的必然代价（玩家动作必须进 rng 序列，否则结果不可回放/不可存档续跑）。
+   * golden 不跑服务器，所以这条路径不进入 golden 指纹。
+   */
+  function consumeClientInputs(dt: number): void {
+    for (const ctx of clients) {
+      const inp = ctx.lastInput;
+      const eid = ctx.claimedEid;
+      if (inp === null || eid === null) continue;
+      const p = sim.pawn(eid);
+      if (!p) continue; // 认领的鼠死了/被移除：input 无害丢弃
+      if (inp.act === 'attack') {
+        sim.directAttack(eid);
+        ctx.lastInput = null; // 动作是一次性脉冲，消费即清
+        continue;
+      }
+      if (inp.act === 'interact') {
+        sim.interact(eid);
+        ctx.lastInput = null;
+        continue;
+      }
+      if (inp.vx === 0 && inp.vy === 0) continue; // 无操作意图：不推动、不清零
+      sim.moveDir(p, inp.vx, inp.vy, dt);
+    }
+  }
+
   const tickTimer = setInterval(() => {
+    const dt = tickMs / 1000;
+    consumeClientInputs(dt);
     const active = activeChunkSet();
-    sim.stepChunked(tickMs / 1000, active);
+    sim.stepChunked(dt, active);
   }, tickMs);
 
   /** 所有连接订阅范围的并集（无订阅者 = null） */
